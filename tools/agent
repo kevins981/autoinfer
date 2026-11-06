@@ -187,7 +187,7 @@ def cmd_start(a):
         "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
         "--name", a.name,
         "--session-id", session_id,
-        "--permission-mode", "dontAsk",
+        "--permission-mode", a.permission_mode,
         "--settings", settings,
         "--disallowedTools", "ListAgents",
         "--strict-mcp-config",
@@ -365,6 +365,8 @@ def main():
                    help="appended to Claude Code's system prompt, in order (repeatable)")
     s.add_argument("--model")
     s.add_argument("--effort")
+    s.add_argument("--permission-mode", default=os.environ.get("AUTOINFER_PERMISSION_MODE", "dontAsk"),
+                   help="must be the same for every agent of a run (default: dontAsk)")
     s.add_argument("--settings", help="default: $AUTOINFER_RUN/agent_settings.json, else tools/agent_settings.json")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--task", help="first message")

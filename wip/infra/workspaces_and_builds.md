@@ -1,5 +1,11 @@
 # Workspaces and builds (spec)
 
+**Implemented 2026-11-06: `tools/ws`** (+ `ws setup-task` and `ws list`), with the task's
+`tasks/<task>/workspace.json` (repo, baseline commit, build targets) and `tasks/<task>/env.sh`.
+The run folder links its task: `$AUTOINFER_RUN/task -> tasks/<task>`. Tested: create in 1.6 s
+(~200 MB), `import vllm` loads the workspace's code, workspaces are isolated, `diff` includes new
+files, `create --from` applies a record's diff, cleanup when creation fails.
+
 How a leader gives each worker its own copy of the engine, how a change gets built, and how the
 same mechanism produces a clean build for an official eval. Shared by all flavors. Written for
 the qwen task (vLLM); a task supplies the specifics (see "What a task provides").

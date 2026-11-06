@@ -1,5 +1,14 @@
 # GPU queue (spec)
 
+**Implemented 2026-11-06: `tools/gpu`.** Tested with fake jobs: FIFO order, the budget check at
+submit and again at the front of the queue, timeout (SIGTERM, 15 s grace, SIGKILL; exit 124),
+leftover background processes of a job killed, cancel of a waiting and of a running job,
+stale tickets of a killed `gpu run` dropped, the ledger and `status`. Exit codes: the job's own,
+124 timeout, 2 budget exhausted, 75 GPUs used by someone outside the run, 130 cancelled.
+Known limit: a job that escapes its session (`setsid`, `nohup ... &` + `disown` is fine) is not
+cleaned up; the next job then sees it as "outside this run" and refuses (exit 75). Agents are
+told not to detach processes from their job.
+
 All GPU work in a run goes through one command, `gpu`. It makes sure only one job uses the GPUs at
 a time, charges each team's budget, and kills jobs that run too long. Shared by all flavors; the
 v1 budget rules are in `flavors/v1/design/budget_and_stopping.md`.
@@ -38,8 +47,12 @@ The team and agent are read from the environment (`AUTOINFER_TEAM`, `AUTOINFER_A
   before starting the next job, so a crashed job can't poison the next one.
 - **Unbudgeted** agents (manager, brainstormers; no `AUTOINFER_TEAM`) still queue, and their time
   is recorded but not charged.
-- **Other users** of the shared GPUs: before starting a job, the queue checks `nvidia-smi` for
-  processes that aren't ours; if there are any, it waits (not charged) and says so in `status`.
+- **Other users come first.** Before starting a job (and while waiting), the queue checks
+  `nvidia-smi` for GPU processes that don't belong to this run. If there are any, it doesn't start
+  the job: `gpu run` exits with code 75 and "GPUs in use by someone outside this run (pid,
+  user, memory): report this to the manager". The agent reports it; the **manager stops the run's
+  GPU work and tells the human** (other people use these GPUs, and we must not compete). The
+  manager doesn't monitor the GPUs itself; it acts on these reports. (Human decision, 2026-11-06.)
 
 ## Budgets
 - The manager writes each round's budgets at the start of the round:

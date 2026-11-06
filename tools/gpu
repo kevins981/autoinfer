@@ -1,0 +1,435 @@
+#!/usr/bin/env python3
+"""gpu: the run's GPU job queue. Every GPU job of an AutoInfer run goes through it.
+
+A job is one command that gets the GPUs exclusively until it exits or hits its timeout.
+Jobs run one at a time, first come first served, and are charged (actual wall minutes) to the
+submitting agent's team budget for the current round. Spec: wip/infra/gpu_queue.md.
+
+Usage:
+  gpu run --timeout MIN [--label L] -- <command...>   # blocks until the job ends (run it in the
+                                                      # background and get notified on exit)
+  gpu status [--json]
+  gpu cancel <job id>
+
+Team and agent come from AUTOINFER_TEAM / AUTOINFER_AGENT (set by `agent start`). No team =
+unbudgeted (recorded, not charged). Budgets: $AUTOINFER_RUN/gpu/budget.json, written by the
+manager each round: {"round": 3, "teams": {"T1": 40, "T2": 40}}.
+
+Exit codes of `gpu run`: the job's own exit code; 124 = killed at its timeout; 2 = budget
+exhausted (job not run); 75 = GPUs in use by someone outside this run (job not run: report this
+to the manager).
+"""
+import argparse, fcntl, json, os, signal, subprocess, sys, time
+from datetime import datetime, timezone
+from pathlib import Path
+
+EXIT_BUDGET, EXIT_FOREIGN, EXIT_TIMEOUT = 2, 75, 124
+FOREIGN_MEM_MIB = 1024        # GPU memory used with no process of ours = someone else is there
+POLL = 2.0
+
+
+def die(msg, code=1):
+    print(f"gpu: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def now_iso(t=None):
+    return datetime.fromtimestamp(t or time.time(), timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def gdir():
+    r = os.environ.get("AUTOINFER_RUN")
+    if not r:
+        die("AUTOINFER_RUN is not set (the run folder)")
+    d = Path(r).resolve() / "gpu"
+    for sub in ("queue", "jobs"):
+        (d / sub).mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().split(")")[-1].split()[0] != "Z"
+    except (ProcessLookupError, FileNotFoundError):
+        return False
+    except PermissionError:
+        return True
+
+
+def read_json(p, default=None):
+    try:
+        return json.loads(Path(p).read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def write_json(p, obj):
+    p = Path(p)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2) + "\n")
+    tmp.replace(p)
+
+
+# ---------------------------------------------------------------- budgets and the ledger
+def budget():
+    return read_json(gdir() / "budget.json", {}) or {}
+
+
+def ledger():
+    out = []
+    p = gdir() / "ledger.jsonl"
+    if p.exists():
+        for line in p.read_text().splitlines():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+    return out
+
+
+def used(team, rnd):
+    return sum(e["gpu_minutes"] for e in ledger() if e.get("team") == team and e.get("round") == rnd)
+
+
+def remaining(team):
+    """None = no limit (unbudgeted agent, or no budget set for this team)."""
+    b = budget()
+    if not team or team not in b.get("teams", {}):
+        return None
+    return b["teams"][team] - used(team, b.get("round"))
+
+
+def check_budget(team, timeout):
+    rem = remaining(team)
+    if rem is not None and rem < timeout:
+        die(f"budget exhausted: team {team} has {rem:.1f} GPU-min left this round, the job asks "
+            f"for up to {timeout:g} (lower --timeout, or do GPU-free work)", EXIT_BUDGET)
+
+
+# ---------------------------------------------------------------- GPU inspection
+def gpu_state():
+    """[(gpu index, memory used MiB)], [(pid, gpu uuid, used MiB)]"""
+    try:
+        mem = subprocess.run(["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=30).stdout
+        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,gpu_uuid,used_memory",
+                               "--format=csv,noheader,nounits"], capture_output=True, text=True,
+                              timeout=30).stdout
+    except (OSError, subprocess.TimeoutExpired) as e:
+        die(f"nvidia-smi failed: {e}")
+    gpus = [tuple(int(x) for x in l.split(",")) for l in mem.strip().splitlines() if l.strip()]
+    procs = []
+    for l in apps.strip().splitlines():
+        parts = [x.strip() for x in l.split(",")]
+        if len(parts) == 3 and parts[0].isdigit():
+            procs.append((int(parts[0]), parts[1], int(parts[2]) if parts[2].isdigit() else 0))
+    return gpus, procs
+
+
+def proc_owner(pid):
+    try:
+        return os.stat(f"/proc/{pid}").st_uid
+    except OSError:
+        return None
+
+
+def proc_session(pid):
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return int(f.read().split(")")[-1].split()[3])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def foreign_usage():
+    """Anything on the GPUs while no job of ours runs = someone else (other users, or other work
+    of the same user outside this run). Returns a description, or None if the GPUs are free."""
+    gpus, procs = gpu_state()
+    if procs:
+        desc = []
+        for pid, uuid, mib in procs:
+            uid = proc_owner(pid)
+            who = "unknown user" if uid is None else ("this user, outside this run" if uid == os.getuid()
+                                                     else f"uid {uid}")
+            desc.append(f"pid {pid} ({who}, {mib} MiB)")
+        return "; ".join(desc)
+    busy = [f"GPU {i}: {m} MiB used" for i, m in gpus if m > FOREIGN_MEM_MIB]
+    return "; ".join(busy) + " (no visible process)" if busy else None
+
+
+# ---------------------------------------------------------------- the queue
+def next_job_id(g):
+    with open(g / "seq.lock", "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        seq = g / "seq"
+        n = int(seq.read_text()) + 1 if seq.exists() else 1
+        seq.write_text(f"{n}\n")
+    return n
+
+
+def live_tickets(g):
+    out = []
+    for t in (g / "queue").glob("*.json"):
+        info = read_json(t)
+        if info and pid_alive(info["pid"]):
+            out.append((info["id"], t, info))
+        else:
+            t.unlink(missing_ok=True)       # its `gpu run` died: drop the stale ticket
+    return sorted(out)
+
+
+class Stop(Exception):
+    pass
+
+
+def on_signal(signum, frame):
+    raise Stop(signal.Signals(signum).name)
+
+
+def group_members(pgid):
+    """Live (non-zombie) processes in process group pgid."""
+    out = []
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/stat") as f:
+                fields = f.read().split(")")[-1].split()
+            if int(fields[2]) == pgid and fields[0] != "Z":
+                out.append(int(d))
+        except (OSError, ValueError, IndexError):
+            pass
+    return out
+
+
+def kill_job(proc, grace=15):
+    """Kill the job's whole process group: SIGTERM, then SIGKILL after `grace` seconds."""
+    pgid = proc.pid
+    for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 10)):
+        proc.poll()                                     # reap the leader if it already exited
+        if not group_members(pgid):
+            return
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            return
+        t0 = time.time()
+        while time.time() - t0 < wait:
+            proc.poll()
+            if not group_members(pgid):
+                return
+            time.sleep(0.2)
+
+
+def cleanup_gpu(sid, log):
+    """Kill GPU processes left behind by the job (same session), then wait for memory to free."""
+    _, procs = gpu_state()
+    for pid, _, _ in procs:
+        if proc_session(pid) == sid:
+            log.write(f"[gpu] killing leftover GPU process {pid}\n")
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    t0 = time.time()
+    while time.time() - t0 < 60:
+        _, procs = gpu_state()
+        if not any(proc_session(p) == sid for p, _, _ in procs):
+            return
+        time.sleep(1)
+
+
+def cmd_run(a):
+    if not a.command:
+        die("no command given (usage: gpu run --timeout MIN -- <command...>)")
+    g = gdir()
+    team = os.environ.get("AUTOINFER_TEAM") or None
+    agent = os.environ.get("AUTOINFER_AGENT", "human")
+    check_budget(team, a.timeout)                       # fail fast
+
+    jid = next_job_id(g)
+    jdir = g / "jobs" / str(jid)
+    jdir.mkdir(parents=True)
+    info = {"id": jid, "pid": os.getpid(), "team": team, "agent": agent, "label": a.label,
+            "timeout_min": a.timeout, "command": a.command, "cwd": os.getcwd(),
+            "submitted": now_iso()}
+    write_json(jdir / "job.json", info)
+    ticket = g / "queue" / f"{jid:08d}.json"
+    write_json(ticket, info)
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, on_signal)
+
+    lockf = open(g / "lock", "w")
+    log_path = jdir / "output.log"
+    proc = None
+    try:
+        # Wait for our turn: the oldest live ticket, and the lock is free.
+        announced = False
+        while True:
+            tickets = live_tickets(g)
+            if tickets and tickets[0][0] == jid:
+                try:
+                    fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    pass
+            if not announced:
+                ahead = [t for t in tickets if t[0] < jid]
+                print(f"[gpu] job {jid} queued ({len(ahead)} ahead)", flush=True)
+                announced = True
+            time.sleep(POLL)
+
+        check_budget(team, a.timeout)                   # exact now: only one job runs at a time
+        foreign = foreign_usage()
+        if foreign:
+            msg = (f"GPUs in use by someone outside this run: {foreign}. The job was NOT run. "
+                   f"Report this to the manager (other people may be using these GPUs; we must "
+                   f"not compete).")
+            info.update({"state": "refused", "reason": foreign, "ended": now_iso()})
+            write_json(jdir / "job.json", info)
+            die(msg, EXIT_FOREIGN)
+
+        start = time.time()
+        info.update({"state": "running", "started": now_iso(start)})
+        write_json(jdir / "job.json", info)
+        write_json(g / "running.json", info)
+        print(f"[gpu] job {jid} started (timeout {a.timeout:g} min); output: {log_path}", flush=True)
+        env = dict(os.environ, AUTOINFER_GPU_JOB=str(jid))
+        with open(log_path, "w") as log:
+            proc = subprocess.Popen(a.command, stdout=log, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+            timed_out = False
+            try:
+                rc = proc.wait(timeout=a.timeout * 60)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                log.write(f"\n[gpu] timeout after {a.timeout:g} min: killing the job\n")
+                log.flush()
+                kill_job(proc)
+                rc = EXIT_TIMEOUT
+            kill_job(proc, grace=5)                 # anything the job left running
+            cleanup_gpu(proc.pid, log)
+        end = time.time()
+        finish(g, info, jdir, start, end, rc, timed_out, team, agent, a.label)
+        proc = None
+        tail = log_path.read_text(errors="replace").splitlines()[-25:]
+        print("\n".join(tail))
+        rem = remaining(team)
+        print(f"[gpu] job {jid} {'TIMED OUT' if timed_out else 'exited'} with code {rc} after "
+              f"{(end - start) / 60:.1f} min" + (f"; team {team}: {rem:.1f} GPU-min left this round"
+                                                if rem is not None else "") +
+              f"\n[gpu] full output: {log_path}", flush=True)
+        sys.exit(rc)
+    except Stop as e:
+        if proc is not None:                            # we were killed/cancelled mid-job: charge it
+            with open(log_path, "a") as log:
+                log.write(f"\n[gpu] cancelled ({e}): killing the job\n")
+                kill_job(proc, grace=5)
+                cleanup_gpu(proc.pid, log)
+            finish(g, info, jdir, start, time.time(), 130, False, team, agent, a.label, cancelled=True)
+        else:
+            info.update({"state": "cancelled", "ended": now_iso()})
+            write_json(jdir / "job.json", info)
+        print(f"[gpu] job {jid} cancelled", file=sys.stderr)
+        sys.exit(130)
+    finally:
+        ticket.unlink(missing_ok=True)
+        r = read_json(g / "running.json")
+        if r and r.get("id") == jid:
+            (g / "running.json").unlink(missing_ok=True)
+        lockf.close()
+
+
+def finish(g, info, jdir, start, end, rc, timed_out, team, agent, label, cancelled=False):
+    b = budget()
+    entry = {"job": info["id"], "round": b.get("round"), "team": team, "agent": agent,
+             "label": label, "start": now_iso(start), "end": now_iso(end),
+             "gpu_minutes": round((end - start) / 60, 3), "exit_code": rc,
+             "timed_out": timed_out, "cancelled": cancelled,
+             "charged": bool(team and team in b.get("teams", {}))}
+    with open(g / "ledger.jsonl", "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.write(json.dumps(entry) + "\n")
+    info.update({"state": "cancelled" if cancelled else ("timed out" if timed_out else "done"),
+                 "ended": now_iso(end), "exit_code": rc, "gpu_minutes": entry["gpu_minutes"]})
+    write_json(jdir / "job.json", info)
+
+
+def cmd_status(a):
+    g = gdir()
+    b = budget()
+    rnd = b.get("round")
+    running = read_json(g / "running.json")
+    if running and not pid_alive(running["pid"]):
+        running = None
+    waiting = [t[2] for t in live_tickets(g) if not running or t[0] != running["id"]]
+    led = [e for e in ledger() if e.get("round") == rnd]
+    teams = {}
+    for e in led:
+        k = e.get("team") or "(unbudgeted)"
+        teams.setdefault(k, {}).setdefault(e["agent"], 0.0)
+        teams[k][e["agent"]] += e["gpu_minutes"]
+    for t in b.get("teams", {}):
+        teams.setdefault(t, {})
+    if a.json:
+        print(json.dumps({"round": rnd, "running": running, "waiting": waiting,
+                          "budgets": b.get("teams", {}),
+                          "used": {t: round(sum(v.values()), 3) for t, v in teams.items()},
+                          "by_agent": teams}, indent=2))
+        return
+    if running:
+        el = (time.time() - datetime.fromisoformat(running["started"]).timestamp()) / 60
+        print(f"RUNNING  job {running['id']}  {running['agent']} ({running['team'] or 'unbudgeted'})"
+              f"  {running.get('label') or ''}  {el:.1f} / {running['timeout_min']:g} min")
+    else:
+        print("RUNNING  none")
+    print(f"WAITING  {len(waiting)}" + "".join(
+        f"\n  job {w['id']}  {w['agent']} ({w['team'] or 'unbudgeted'})  {w.get('label') or ''}"
+        f"  timeout {w['timeout_min']:g} min" for w in waiting))
+    print(f"\nROUND {rnd if rnd is not None else '- (no budget.json)'}   GPU-minutes")
+    for t in sorted(teams):
+        bud = b.get("teams", {}).get(t)
+        u = sum(teams[t].values())
+        line = f"  {t:<14} used {u:6.1f}"
+        if bud is not None:
+            line += f" / {bud:g}   remaining {bud - u:6.1f}"
+        print(line + ("   " + ", ".join(f"{ag} {m:.1f}" for ag, m in sorted(teams[t].items()))
+                      if teams[t] else ""))
+
+
+def cmd_cancel(a):
+    g = gdir()
+    info = read_json(g / "jobs" / str(a.job) / "job.json")
+    if not info:
+        die(f"no job {a.job}")
+    if info.get("state") in ("done", "timed out", "cancelled", "refused"):
+        die(f"job {a.job} already finished ({info['state']})")
+    if not pid_alive(info["pid"]):
+        die(f"job {a.job} is not active")
+    os.kill(info["pid"], signal.SIGTERM)                # its `gpu run` kills the job and charges it
+    print(f"cancelling job {a.job}")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="gpu", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("run")
+    s.add_argument("--timeout", type=float, required=True, help="minutes; the job is killed after")
+    s.add_argument("--label", default=None)
+    s.add_argument("command", nargs=argparse.REMAINDER)
+    s.set_defaults(fn=cmd_run)
+    s = sub.add_parser("status"); s.add_argument("--json", action="store_true"); s.set_defaults(fn=cmd_status)
+    s = sub.add_parser("cancel"); s.add_argument("job", type=int); s.set_defaults(fn=cmd_cancel)
+    a = p.parse_args()
+    if a.cmd == "run" and a.command and a.command[0] == "--":
+        a.command = a.command[1:]
+    if a.cmd == "run" and a.timeout <= 0:
+        die("--timeout must be > 0")
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

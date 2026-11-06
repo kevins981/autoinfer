@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+"""ws: workspaces (independent copies of the engine) for AutoInfer run agents.
+
+A workspace is a git worktree of the task's engine repo at the baseline commit, plus a bank
+record's change.diff, plus the baseline's prebuilt compiled files. Python-only changes need no
+build (the workspace's env.sh puts it first on PYTHONPATH); C++/CUDA changes need `ws build`.
+Spec: wip/infra/workspaces_and_builds.md.
+
+Usage:
+  ws setup-task                   # once per task: our own clone + prebuilt files (in .cache/tasks/)
+  ws create <name> [--from <record id>]
+  ws build <name> [--target T]... # cmake + ninja in <ws>/build, shared ccache
+  ws diff <name>                  # the change vs the baseline (becomes a record's change.diff)
+  ws list
+  ws rm <name>                    # rarely: workspaces are kept as part of the record
+
+The run folder is $AUTOINFER_RUN; its `task` entry (a symlink to tasks/<task>/) says which task.
+Workspaces live in $AUTOINFER_RUN/workspaces/<name>/.
+"""
+import argparse, fcntl, json, os, shutil, subprocess, sys
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent          # autoinfer/
+
+
+def die(msg, code=1):
+    print(f"ws: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def run_dir():
+    r = os.environ.get("AUTOINFER_RUN")
+    if not r:
+        die("AUTOINFER_RUN is not set (the run folder)")
+    return Path(r).resolve()
+
+
+def task_dir():
+    t = run_dir() / "task"
+    if not t.exists():
+        die(f"{t} not found: link the run to its task (ln -s <autoinfer>/tasks/<task> {t})")
+    return t.resolve()
+
+
+def task_cfg():
+    return json.loads((task_dir() / "workspace.json").read_text())
+
+
+def cache_dir():
+    return ROOT / ".cache" / "tasks" / task_dir().name
+
+
+def bare_repo():
+    return cache_dir() / f"{task_cfg()['repo_name']}.git"
+
+
+def ws_dir(name):
+    return run_dir() / "workspaces" / name
+
+
+def sh(cmd, **kw):
+    kw.setdefault("check", True)
+    return subprocess.run(cmd, **kw)
+
+
+def git(repo, *args, **kw):
+    return sh(["git", "-C", str(repo), *args], **kw)
+
+
+@contextmanager
+def lock(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        yield
+
+
+def now():
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+# ------------------------------------------------------------------------------------------
+def cmd_setup_task(a):
+    cfg = task_cfg()
+    cd = cache_dir()
+    cd.mkdir(parents=True, exist_ok=True)
+    with lock(cd / ".lock"):
+        repo = bare_repo()
+        if not repo.exists():
+            print(f"cloning {cfg['source_repo']} -> {repo} (our own copy; the source is only read)")
+            sh(["git", "clone", "--bare", "--no-hardlinks", "--quiet", cfg["source_repo"], str(repo)])
+        full = git(repo, "rev-parse", cfg["baseline_commit"], capture_output=True, text=True).stdout.strip()
+        (cd / "baseline_commit").write_text(full + "\n")
+
+        pre = cd / "prebuilt"
+        if pre.exists():
+            print(f"prebuilt files already in {pre}")
+        else:
+            src = Path(cfg["prebuilt_from"])
+            out = git(src, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory",
+                      "--", cfg["python_package_dir"], capture_output=True, text=True).stdout
+            entries = [e.rstrip("/") for e in out.splitlines() if e and "__pycache__" not in e]
+            entries = sorted(set(entries))
+            # keep only top-most entries (git may list a directory and things inside it)
+            entries = [e for e in entries if not any(e.startswith(o + "/") for o in entries if o != e)]
+            tmp = cd / "prebuilt.tmp"
+            shutil.rmtree(tmp, ignore_errors=True)
+            for e in entries:
+                s, d = src / e, tmp / e
+                d.parent.mkdir(parents=True, exist_ok=True)
+                if s.is_dir():
+                    shutil.copytree(s, d, symlinks=False,
+                                    ignore=shutil.ignore_patterns("__pycache__"))
+                else:
+                    shutil.copy2(s.resolve(), d)       # resolves e.g. the ext/clean symlink
+            (tmp / "MANIFEST").write_text("\n".join(entries) + "\n")
+            # read-only, so a workspace's symlinks can't be used to modify the shared copy
+            sh(["chmod", "-R", "a-w", str(tmp)])
+            os.chmod(tmp, 0o755)
+            tmp.rename(pre)
+            print(f"copied {len(entries)} prebuilt entries into {pre}")
+    print(f"task {task_dir().name} ready: baseline {full[:12]}")
+
+
+def baseline_commit():
+    f = cache_dir() / "baseline_commit"
+    if not f.exists():
+        die("the task is not set up yet: run `ws setup-task` first")
+    return f.read_text().strip()
+
+
+def install_prebuilt(src_tree):
+    """Put the prebuilt files into a worktree: compiled .so files as symlinks (read-only shared
+    copies; `ws build` replaces them), everything else as private copies."""
+    pre = cache_dir() / "prebuilt"
+    for e in (pre / "MANIFEST").read_text().split():
+        s, d = pre / e, src_tree / e
+        d.parent.mkdir(parents=True, exist_ok=True)
+        if s.is_dir():
+            for f in s.rglob("*"):
+                rel = f.relative_to(pre)
+                t = src_tree / rel
+                t.parent.mkdir(parents=True, exist_ok=True)
+                if f.is_dir():
+                    t.mkdir(parents=True, exist_ok=True)
+                elif f.suffix == ".so":
+                    t.symlink_to(f)
+                else:
+                    shutil.copy(f, t)
+                    os.chmod(t, 0o644)
+        elif s.suffix == ".so":
+            d.symlink_to(s)
+        else:
+            shutil.copy(s, d)
+            os.chmod(d, 0o644)
+
+
+def write_env(w, src_tree):
+    env = task_dir() / task_cfg()["env_script"]
+    (w / "env.sh").write_text(
+        f"# Source this to work in workspace {w.name}: the task env + this workspace's code first.\n"
+        f"source {env}\n"
+        f"export AUTOINFER_WS={w}\n"
+        f"export PYTHONPATH={src_tree}${{PYTHONPATH:+:$PYTHONPATH}}\n")
+
+
+def cmd_create(a):
+    w = ws_dir(a.name)
+    if w.exists():
+        die(f"workspace {a.name} already exists ({w})")
+    base = baseline_commit()
+    diff = None
+    if a.from_record:
+        diff = run_dir() / "bank" / a.from_record / "change.diff"
+        if not diff.exists():
+            die(f"{diff} not found")
+    cfg = task_cfg()
+    src_tree = w / cfg["repo_name"]
+    w.mkdir(parents=True)
+    with lock(cache_dir() / ".lock"):
+        git(bare_repo(), "worktree", "add", "--detach", "--quiet", str(src_tree), base)
+    if diff and diff.stat().st_size > 0:
+        r = git(src_tree, "apply", "--binary", "--whitespace=nowarn", str(diff),
+                capture_output=True, text=True, check=False)
+        if r.returncode != 0:
+            remove_ws(w, src_tree)
+            die(f"applying {diff} failed:\n{r.stderr}")
+    try:
+        install_prebuilt(src_tree)
+        write_env(w, src_tree)
+    except BaseException:
+        remove_ws(w, src_tree)
+        raise
+    meta = {"name": a.name, "from": a.from_record or "BASE", "baseline_commit": base,
+            "created": now(), "created_by": os.environ.get("AUTOINFER_AGENT", "human")}
+    (w / "ws.json").write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"created workspace {a.name} from {meta['from']}: {w}\n"
+          f"  code: {src_tree}\n  use:  source {w / 'env.sh'}")
+
+
+def need_ws(name):
+    w = ws_dir(name)
+    if not (w / "ws.json").exists():
+        die(f"no workspace named {name} in this run")
+    return w, json.loads((w / "ws.json").read_text())
+
+
+def cmd_build(a):
+    w, meta = need_ws(a.name)
+    cfg = task_cfg()
+    src_tree = w / cfg["repo_name"]
+    bdir = w / "build"
+    targets = a.target or cfg["build"]["default_targets"]
+    env_sh = w / "env.sh"
+    python = "$ENV_PREFIX/bin/python"
+    cmake = " ".join(cfg["build"]["cmake_args"] + [cfg["build"]["python_arg"].format(python=python)])
+    script = f"""set -eo pipefail
+source {env_sh}
+mkdir -p {bdir}
+cd {bdir}
+if [ ! -f build.ninja ]; then
+  echo "== configuring (first build in this workspace)"
+  cmake -S {src_tree} -B {bdir} {cmake}
+fi
+echo "== building: {' '.join(targets)}"
+ccache -z >/dev/null 2>&1 || true
+ninja -j ${{MAX_JOBS:-16}} {' '.join(targets)}
+ccache -s 2>/dev/null | grep -iE 'hits|misses' | head -4 || true
+"""
+    log = w / "build.log"
+    print(f"building {', '.join(targets)} in {bdir} (log: {log})", flush=True)
+    with open(log, "a") as lf:
+        lf.write(f"\n===== {now()} build {' '.join(targets)}\n")
+        lf.flush()
+        p = subprocess.Popen(["bash", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True)
+        tail = []
+        for line in p.stdout:
+            lf.write(line)
+            tail.append(line)
+            tail = tail[-40:]
+        rc = p.wait()
+    if rc != 0:
+        sys.stdout.write("".join(tail))
+        die(f"build failed (exit {rc}); full log: {log}")
+    # Swap the freshly built libraries in for the prebuilt symlinks.
+    for t in targets:
+        rel = cfg["build"]["target_outputs"].get(t)
+        if not rel:
+            print(f"  note: no known output file for target {t}; nothing installed")
+            continue
+        built = bdir / Path(rel).name
+        if not built.exists():
+            die(f"built file {built} not found")
+        dst = src_tree / rel
+        if dst.is_symlink() or dst.exists():
+            dst.unlink()
+        shutil.copy2(built, dst)
+        print(f"  installed {rel}")
+    print("".join(l for l in tail[-6:] if "hits" in l.lower() or "misses" in l.lower()), end="")
+    print("build ok")
+
+
+def cmd_diff(a):
+    w, meta = need_ws(a.name)
+    src_tree = w / task_cfg()["repo_name"]
+    # Make new (untracked, not ignored) files visible to `git diff` without staging their content.
+    git(src_tree, "add", "--intent-to-add", "--all", capture_output=True)
+    r = git(src_tree, "diff", "--binary", meta["baseline_commit"], capture_output=True)
+    sys.stdout.buffer.write(r.stdout)
+    new = git(src_tree, "diff", "--name-only", "--diff-filter=A", meta["baseline_commit"],
+              capture_output=True, text=True).stdout.split()
+    if new:
+        print(f"ws: note: the diff adds {len(new)} new file(s): " + ", ".join(new[:10]) +
+              (" ..." if len(new) > 10 else "") +
+              "\nws: keep logs, results and scratch files outside the code tree (e.g. in the "
+              "workspace folder), or they end up in the record's change.diff", file=sys.stderr)
+
+
+def cmd_list(a):
+    d = run_dir() / "workspaces"
+    rows = []
+    for w in sorted(d.iterdir()) if d.exists() else []:
+        if not (w / "ws.json").exists():
+            continue
+        meta = json.loads((w / "ws.json").read_text())
+        src_tree = w / task_cfg()["repo_name"]
+        st = git(src_tree, "status", "--porcelain", capture_output=True, text=True, check=False).stdout
+        head = git(src_tree, "rev-parse", "HEAD", capture_output=True, text=True, check=False).stdout.strip()
+        changed = bool(st.strip()) or head != meta["baseline_commit"]
+        rows.append((meta["name"], meta["from"], meta.get("created_by", "-"),
+                     "yes" if (w / "build" / "build.ninja").exists() else "no",
+                     "changed" if changed else "clean", meta["created"]))
+    if not rows:
+        print("no workspaces")
+        return
+    hdr = ("NAME", "FROM", "CREATED BY", "BUILT", "STATE", "CREATED")
+    widths = [max(len(str(r[i])) for r in rows + [hdr]) for i in range(len(hdr))]
+    for r in [hdr] + rows:
+        print("  ".join(str(c).ljust(widths[i]) for i, c in enumerate(r)))
+
+
+def remove_ws(w, src_tree):
+    with lock(cache_dir() / ".lock"):
+        git(bare_repo(), "worktree", "remove", "--force", str(src_tree), check=False,
+            capture_output=True)
+        git(bare_repo(), "worktree", "prune", check=False)
+    shutil.rmtree(w, ignore_errors=True)
+
+
+def cmd_rm(a):
+    w, meta = need_ws(a.name)
+    src_tree = w / task_cfg()["repo_name"]
+    with lock(cache_dir() / ".lock"):
+        git(bare_repo(), "worktree", "remove", "--force", str(src_tree), check=False,
+            capture_output=True)
+        git(bare_repo(), "worktree", "prune", check=False)
+    # prebuilt symlinks point into a read-only folder; removing the links is fine
+    shutil.rmtree(w)
+    print(f"removed workspace {a.name}")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="ws", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("setup-task"); s.set_defaults(fn=cmd_setup_task)
+    s = sub.add_parser("create"); s.add_argument("name")
+    s.add_argument("--from", dest="from_record", help="bank record id (default: the baseline)")
+    s.set_defaults(fn=cmd_create)
+    s = sub.add_parser("build"); s.add_argument("name")
+    s.add_argument("--target", action="append", help="cmake target (default: the task's)")
+    s.set_defaults(fn=cmd_build)
+    s = sub.add_parser("diff"); s.add_argument("name"); s.set_defaults(fn=cmd_diff)
+    s = sub.add_parser("list"); s.set_defaults(fn=cmd_list)
+    s = sub.add_parser("rm"); s.add_argument("name"); s.set_defaults(fn=cmd_rm)
+    a = p.parse_args()
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

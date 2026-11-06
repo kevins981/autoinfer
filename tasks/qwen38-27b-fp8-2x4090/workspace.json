@@ -1,0 +1,20 @@
+{
+  "repo_name": "vllm",
+  "source_repo": "/scratch/kevinsong/learning/qwen38_opt/vllm",
+  "baseline_commit": "4527515cd7",
+  "env_script": "env.sh",
+  "python_package_dir": "vllm",
+  "prebuilt_from": "/scratch/kevinsong/learning/qwen38_opt/vllm",
+  "build": {
+    "cmake_args": ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DVLLM_TARGET_DEVICE=cuda",
+                   "-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache",
+                   "-DCMAKE_CUDA_COMPILER_LAUNCHER=ccache"],
+    "python_arg": "-DVLLM_PYTHON_EXECUTABLE={python}",
+    "default_targets": ["_C_stable_libtorch"],
+    "target_outputs": {
+      "_C_stable_libtorch": "vllm/_C_stable_libtorch.abi3.so",
+      "_moe_C_stable_libtorch": "vllm/_moe_C_stable_libtorch.abi3.so",
+      "cumem_allocator": "vllm/cumem_allocator.abi3.so"
+    }
+  }
+}

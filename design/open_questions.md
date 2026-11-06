@@ -1,6 +1,22 @@
 # Open questions and TODOs
 
-## Agent topology (next discussion topic)
+## Algorithm (v1 pseudocode), in planned order
+- `evaluate()`: who calls it (the leader decides when a candidate deserves an official eval?), proxy
+  vs official evals.
+- Budget and stopping: budget units (official evals / wall time / tokens), when a leader's
+  direction is done, when the run stops.
+- Champion lifecycle: when it changes, comparing candidates built on different starting points,
+  `integrate()`.
+- **Async "new best version" notification**: v1 snapshots the champion at the start of each
+  round. Later: how to tell agents about a new best mid-round without interrupting their work.
+- Directions ↔ persistent leaders across rounds (continue vs new; affinity vs mixing), k vs number
+  of leaders.
+- `initialize()`: who does the profile, bound analysis and ledger; whether the ledger review is a
+  blocking human gate.
+- Human checkpoints (a config knob between human-in-the-loop and autonomous).
+- Failure paths: judge rejection (fix/resubmit?), broken builds, stuck workers or leaders.
+
+## Agent topology
 - Barrier rounds vs. rolling (reassign each leader slot as soon as that leader finishes).
   Leaning: barrier for v1.
 - Who runs `integrate()` (combining wins from several teams)? Leaning: a dedicated worker

@@ -5,22 +5,26 @@ one direction per round, workers that implement, and a trusted evaluator with an
 Bodies marked `TBD` are not designed yet. See `../../design/open_questions.md`.
 
 ## Agents
-- **Manager**: **persistent** (one session for the whole run, with compaction). Owns the search tree, the shared KB (the only writer), the journal, the champion
-  pointer and assignments; scores and selects ideas; talks to the human.
-- **Leaders**: **persistent**: one long-running session each, carrying its context across rounds
-  (with compaction). Each owns one direction (a subtree) per round; plans experiments, keeps a
-  local KB, reports its subtree and proposed insights back. Also brainstorms (exploitation end).
-- **Workers**: implement and test experiments in their own worktree. **Persistent by default** (with
-  compaction): the leader keeps giving follow-ups to the same workers, and decides when to start a
-  fresh one instead (e.g. a new, unrelated experiment, or a worker stuck in a rut).
-- **Brainstormers**: **temporary**: new sessions every round (fresh context is the point), each with a persona (a reasoning
-  method). They see observations, not insights, and may chat with any leader (exploration end).
+- **Manager**: **persistent** (one session for the whole run, with compaction). Owns the search
+  tree, the shared KB (the only writer), the journal, the champion pointer and assignments; scores
+  and selects ideas; talks to the human.
+- **Leaders** (the brain): **persistent**: one long-running session each, carrying its context
+  across rounds (with compaction). Each drives one direction per round: plans experiments, picks
+  starting points, sets up worker workspaces, files experiment records into the bank, keeps a local
+  KB, and reports findings back. Also brainstorms (exploitation end).
+- **Workers** (the arms): implement and test what their leader asks, **confined to the workspace**
+  the leader set up. **Persistent by default** (with compaction): the leader keeps giving follow-ups
+  to the same workers, and decides when to start a fresh one instead (e.g. a new, unrelated
+  experiment, or a worker stuck in a rut).
+- **Brainstormers**: **temporary**: new sessions every round (fresh context is the point), each
+  with a persona (a reasoning method). They see observations, not insights, and may chat with any
+  leader (exploration end).
 - **Judge**: independent; sees only the diff, the rubric and the numbers.
 
 ## What is recorded
 | Store | Contents | Written by |
 |---|---|---|
-| Experiment records (bank) | One per experiment: who ran it (leader/team), baseline, hypothesis, change (git commit), results, and two separate sections: **Observed** (what was measured/seen) and **Interpretation** (what we think it means) | the worker that ran it, finalized by its leader; the evaluator appends official numbers + judge verdict |
+| Experiment records (bank) | One per experiment: who ran it (leader/team), starting commit, hypothesis, change (git commit), results, and two separate sections: **Observed** (what was measured/seen) and **Interpretation** (what we think it means) | the leader, from its workers' results; the evaluator appends official numbers + judge verdict |
 | Search tree | Index of ideas; each node = an idea with its experiments, a summary/conclusion, novelty + upside scores, who proposed it, status (incl. `proposed` = not yet selected) | manager |
 | Shared KB | Understanding of the system not tied to a single idea; each entry cites the experiments behind it | **manager only** (leaders propose insights in their reports) |
 | Local KB | A leader's working notes, hypotheses, plans | that leader |
@@ -30,68 +34,92 @@ Bodies marked `TBD` are not designed yet. See `../../design/open_questions.md`.
 new can draw a different conclusion from the same data. Brainstormers get observations; insights
 are not their starting frame (they may still hear them when chatting with a leader).
 
+## Global state
+These are global variables in the pseudocode: available to every agent that needs them and never
+passed in assignments. (Workers are confined to their workspace, so their leader copies what they
+need into it.)
+```python
+TASK       # task folder: TASK.md (objective, metric, hard constraints, correctness rubric), harness
+FOCUS      # the human's natural-language scope for this run
+CONFIG     # number of leaders, workers per leader, rounds, personas, selection policy, budgets, ...
+LEDGER     # assumptions: frozen vs open
+CHAMPION   # current best version: commit, official numbers, profile.
+           # A PERFORMANCE REFERENCE, NOT A REQUIRED STARTING POINT: agents may start from any bank
+           # entry. v1: synchronous, snapshotted at the start of each round and fixed until the next.
+BANK       # experiment bank: every attempt (git branch/commit + record), pass or fail
+SHARED_KB  # confirmed understanding of the system (written by the manager only)
+TREE       # search tree (manager)
+JOURNAL    # decisions and why (manager)
+```
+
+## Interface
+Every persistent agent (leader, worker) has the same interface:
+```python
+agent.run(task: str) -> report: str
+```
+`task` is free text of any length. It is the same argument for the first assignment and every
+follow-up: a persistent agent just gets another `task`. `report` is free text, with links to bank
+records rather than copies. What differs between roles is the role prompt, which global state the
+agent can see, and where it runs.
+
 ## Algorithm
 ```python
-AutoInfer(task, focus, config):
-    # task:   task folder (TASK.md, harness, baseline engine, correctness rubric)
-    # focus:  natural-language scope from the human ("speed up the FFN layer; keep KV cache, ...")
-    # config: number of leaders, workers per leader, rounds, budgets, ...
-    state = initialize(task, focus)
-    for round in 1..config.max_rounds:
-        directions = brainstorm(state)                  # what to work on next
+AutoInfer():
+    initialize()
+    for round in 1..CONFIG.max_rounds:
+        CHAMPION_snapshot = CHAMPION                    # synchronous: fixed for this round
+        directions = brainstorm()                       # what to work on next
         if directions is empty: break                   # manager thinks the scoped space is exhausted
-        assignments = manager.assign(directions, leaders)
-        results = execute(assignments, state)           # leaders work in parallel; barrier
-        state = collect_and_update(state, results)
-    return finalize(state)                              # final report: champion, tree, journal
+        tasks = manager.assign(directions, leaders)     # one task string per leader
+        reports = execute(tasks)                        # leaders work in parallel; barrier
+        collect_and_update(reports)
+    return finalize()                                   # final report: champion, tree, journal
 ```
 
 ```python
-initialize(task, focus) -> state:
-    champion = evaluate(task.baseline)                  # official eval; also checks the harness works
-    profile  = profile(champion)                        # where the time goes
-    facts    = bound_analysis(task, profile)            # speed-of-light floor + gap breakdown
-    ledger   = assumption_ledger(task, focus)           # frozen vs open assumptions; human reviews
-    tree     = new_tree(root = focus)
-    shared_kb = [facts]; bank = [champion]; journal = []
-    return state(tree, shared_kb, bank, champion, profile, ledger, journal)
+initialize():
+    CHAMPION  = evaluate(TASK.baseline)                 # official eval; also checks the harness works
+    CHAMPION.profile = profile(CHAMPION)                # where the time goes
+    facts     = bound_analysis(TASK, CHAMPION.profile)  # speed-of-light floor + gap breakdown
+    LEDGER    = assumption_ledger(TASK, FOCUS)          # frozen vs open assumptions; human reviews
+    TREE      = new_tree(root = FOCUS)
+    SHARED_KB = [facts]; BANK = [CHAMPION]; JOURNAL = []
 ```
 
 ```python
-brainstorm(state) -> directions:
-    # in:  tree, shared KB, experiment bank, champion + its profile, ledger, focus, selection policy
-    # out: k directions, each = (tree node, rationale, bottleneck addressed,
-    #      starting baseline(s) from the bank, budget)
+brainstorm() -> directions:
+    # out: k directions, each = (tree node, rationale, bottleneck addressed)
 
-    # 1. Leaders: exploitation end. One extra conversation turn to each persistent leader.
-    ideas = [leader.propose_next() for leader in leaders]          # full context
+    # 1. Leaders: exploitation end, full context. Their last reports' "what I'd do next"
+    #    (round 1: ask them with a task).
+    ideas = [leader.next_steps for leader in leaders]
 
     # 2. Manager writes the round briefing: what you'd tell a colleague in an adjacent field.
-    briefing = manager.write_briefing(state)    # problem, facts (profile/bound numbers, not just
-                                                # interpretation), high-level summary of what was
-                                                # tried and observed. Also a status report for the human.
+    briefing = manager.write_briefing()     # problem, facts (profile/bound numbers, not just
+                                            # interpretation), high-level summary of what was
+                                            # tried and observed. Also a status report for the human.
 
     # 3. Brainstormers: exploration end. Fresh sessions, run in parallel, generators are pluggable
     #    (more of them, other models).
-    for persona in config.personas:
-        sample = random_sample(state.bank, n)   # different per brainstormer (AlphaEvolve-style);
-                                                # Observed sections only, no insights
+    for persona in CONFIG.personas:
+        sample = random_sample(BANK, n)     # different per brainstormer (AlphaEvolve-style);
+                                            # Observed sections only, no insights
         ideas += brainstormer(persona, briefing, sample,
-                              tools = [query experiment bank (observations),
+                              tools = [query BANK (observations),
                                        multi-turn chat with any leader]).propose()
 
     # 4. Central scoring: one scorer with full context, on one scale.
-    ideas = manager.dedupe(ideas)               # many proposals of the same idea = weak signal only
+    ideas = manager.dedupe(ideas)           # many proposals of the same idea = weak signal only
     for idea in ideas:
-        idea.novelty, idea.upside = manager.score(idea, state)   # each 1-5
-        idea.proposed_by = generator tag        # persona/model/leader, to learn which generators win
+        idea.novelty, idea.upside = manager.score(idea)   # each 1-5
+        idea.proposed_by = generator tag    # persona/model/leader, to learn which generators win
 
     # 5. Selection: a portfolio, not a ranking.
-    directions = manager.select(ideas, k, config.selection_policy)   # plain text, human-editable,
+    directions = manager.select(ideas, k, CONFIG.selection_policy)   # plain text, human-editable,
                                                                       # e.g. "2 best upside, 1 most novel"
-    state.tree.add(directions, status = assigned)
-    state.tree.add(ideas - directions, status = proposed)            # backlog, visible to the human
-    state.journal.append(why these directions)
+    TREE.add(directions, status = assigned)
+    TREE.add(ideas - directions, status = proposed)                  # backlog, visible to the human
+    JOURNAL.append(why these directions)
 ```
 
 Brainstormer personas: each persona is a **reasoning method**, not a character trait ("be
@@ -106,42 +134,64 @@ creative" does little). Initial set:
 - **Combiner**: take two random past experiments and propose their combination.
 
 ```python
-execute(assignments, state) -> results:                 # one per leader, in parallel
-    leader.run(direction, baselines, budget):
-        local_kb = []
-        loop:
-            experiments = leader.plan(direction, local_kb)  # may add child ideas to its subtree
-            for exp in experiments (in parallel, by workers):
-                candidate = worker.implement(exp, baseline)    # own worktree; cheap proxy tests freely
-                if candidate.promising:
-                    record = evaluate(candidate)               # queued official eval + judge
-                    bank.add(record)                           # every attempt kept, pass or fail
-                local_kb.update(observations)
-            propose_insights(confirmed insights)            # to the manager; cite records + baseline
-            if budget exhausted or leader thinks direction exhausted or manager says stop: break
-        return subtree      # idea nodes, each with experiments, summaries, links to records
+manager.assign(directions, leaders) -> tasks:
+    # One task string per leader:
+    #   what to work on: the direction + rationale
+    #   optional: budget, scope constraints, pointers to related experiments in BANK
+    # NOT included (global): correctness rubric, metric, CHAMPION, BANK, SHARED_KB.
+    # TBD: how directions map to leaders across rounds (continue vs new, affinity vs mixing).
+```
+
+```python
+execute(tasks) -> reports:                      # all leaders in parallel; barrier at the end
+    return parallel([leader.run(task) for leader, task in tasks])
+
+leader.run(task) -> report:
+    loop:
+        plan = leader.plan(task, local_kb)              # next experiments; may revise the plan
+        for exp in plan (in parallel, one worker each):
+            start = leader.pick_start(exp)              # CHAMPION or any BANK entry
+            ws = leader.setup_workspace(worker, start)  # clone/worktree + branch; copy in what the
+                                                        # worker needs (task brief, metric, scripts,
+                                                        # relevant excerpts) as files in the workspace
+            wreport = worker.run(exp.task)              # first task says what to read first;
+                                                        # follow-ups: just another task
+            record = leader.file_record(wreport, ws)    # leader moves branch + record into BANK
+            if leader.wants_official_eval(record):      # TBD (see evaluate / budget)
+                evaluate(record.candidate)              # appends official numbers + verdict
+            local_kb.update(observations)
+        if done (budget / direction exhausted / manager says stop): break   # TBD (budget & stopping)
+    return report:
+        # summary of findings
+        # + experiments run, each linked to its BANK record (candidate commit + performance)
+        # + proposed insights (the manager decides what enters SHARED_KB)
+        # + what I'd do next (feeds the next brainstorm)
+
+worker.run(task) -> report:                     # confined to its workspace
+    # task:   the experiment: what to try, what to measure, when it's done
+    # report: summary + experiment record (Observed / Interpretation) + candidate commit + numbers
 ```
 
 ```python
 evaluate(candidate) -> record:                          # trusted; agents can't modify it
     wait_for_gpu_queue()
     numbers = bench(candidate) + gsm8k(candidate)
-    verdict = judge(candidate.diff, task.rubric, numbers)   # independent agent, sees only the diff
+    verdict = judge(candidate.diff, TASK.rubric, numbers)   # independent agent, sees only the diff
     return append_only_record(candidate, numbers, verdict)
 ```
 
 ```python
-collect_and_update(state, results) -> state:
-    state.tree.merge(results.subtrees); manager may reorganize the tree
-    winners = records that pass the judge and beat the champion
+collect_and_update(reports):
+    TREE.update(reports)                    # manager turns reports into idea nodes + experiments;
+                                            # may reorganize the tree
+    winners = BANK records that pass the judge and beat CHAMPION       # TBD: champion lifecycle
     if winners:
-        state.champion = integrate(state.champion, winners)   # TBD who; re-evaluate combined
-        notify all teams
-        state.profile = profile(state.champion)               # the bottlenecks have changed
-        state.shared_kb.update(bound_analysis(...))
-    state.shared_kb.update(accepted insights from leaders' reports)   # manager is the only writer
-    state.journal.append(round summary)
-    report_to_human(state)
+        CHAMPION = integrate(CHAMPION, winners)   # TBD who; re-evaluate combined
+        CHAMPION.profile = profile(CHAMPION)      # the bottlenecks have changed
+        SHARED_KB.update(bound_analysis(...))
+    SHARED_KB.update(accepted insights from reports)   # manager is the only writer
+    JOURNAL.append(round summary)
+    report_to_human()
 ```
 
 These run throughout, outside the loop:
@@ -157,3 +207,8 @@ These run throughout, outside the loop:
   every round.
 - Two idea scores only, novelty and upside, each 1-5, assigned centrally by the manager.
 - The manager is the only writer of the shared KB.
+- One interface for persistent agents: `run(task: str) -> report: str`.
+- Global state is not passed in assignments. The champion is a performance reference, not a
+  required starting point; v1 snapshots it at the start of each round.
+- Leaders set up worker workspaces, choose starting points, and file experiment records into the
+  bank; workers are confined to their workspace.

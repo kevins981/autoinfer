@@ -13,7 +13,7 @@ records, CHAMPION → a bank record, shared-KB entries → the records they cite
 
 ## 2. One round, phase by phase
 The algorithm in `DESIGN.md` on the left, what each phase produces in the example on the right:
-initialize → snapshot champion → brainstorm (leaders, briefing, brainstormers, scoring, selection)
+initialize → snapshot champion → brainstorm (briefing, brainstormers, scoring, selection)
 → assign → execute (3 teams in parallel) → collect and update → next round.
 
 ![round overview](diagrams/2_round_overview.png)

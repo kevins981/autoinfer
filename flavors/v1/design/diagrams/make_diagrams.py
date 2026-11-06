@@ -148,11 +148,12 @@ def data_structures():
     inputs = [
         ("TASK  (tasks/<task>/)",
          "Objective: output tok/s on ShareGPT, 400 prompts at concurrency 16\n"
-         "Constraints: FP8 weights + FP8 KV; same math (fp reordering OK)\nHarness (frozen): bench, GSM8K-250"),
+         "Constraints: FP8 weights + FP8 KV; same math (fp reordering OK)\nHarness (frozen): bench, GSM8K-250\n"
+         "Baseline profile (provided): where the time goes"),
         ("FOCUS", "\"Reduce FFN latency\""),
         ("CONFIG", "3 teams, <= 3 workers each\nMax 5 rounds, k = 3 directions\n40 GPU-min per team per round\n"
-                   "Personas: first principles, physicist, systems, cross-domain, lit scout, combiner"),
-        ("SEARCH_POLICY", "1. A leader improved the champion -> continue its \"what I'd do next\"\n"
+                   "Brainstormers (persona prompts): systematic engineer, adjacent-field colleague"),
+        ("SEARCH_POLICY", "1. A leader improved the champion -> continue that line\n"
                           "2. Rest by upside; >= 1 slot for a high-novelty idea\n3. Nothing improved -> upside + novelty"),
         ("LEDGER  (assumptions)", "Frozen:: 2x RTX 4090, FP8 W + FP8 KV, model math, ShareGPT workload\n"
                                   "Open:: how the model is split across the 2 GPUs (baseline: TP=2), GEMM kernels, "
@@ -209,11 +210,11 @@ def data_structures():
     # Tree (same height as the bank)
     card(ax, TX, topB, TW, "TREE  (search_tree.md, the index)", "", MANAGER, h=bank_h)
     nodes = [
-        ("N1  Mixed GEMM kernel by tokens/pass", "win", GREEN, "nov 2 . up 4 . by lit scout + Team 1", ["T1-001", "T1-002"]),
-        ("N2  Fuse SiLU*mul into gate/up GEMM", "no gain", "#9e6a00", "nov 2 . up 3 . by cross-domain", ["T2-001"]),
-        ("N3  Sequence-parallel FFN (RS + AG)", "slower", "#b71c1c", "nov 5 . up 2 . by systems (novelty slot)", ["T3-001"]),
-        ("N4  More tokens per weight read", "proposed", "#777777", "nov 3 . up 2 . by first principles", []),
-        ("N5  Split-K for the small down GEMM", "proposed", "#777777", "nov 1 . up 2 . by physicist", []),
+        ("N1  Mixed GEMM kernel by tokens/pass", "win", GREEN, "nov 2 . up 4 . by systematic engineer", ["T1-001", "T1-002"]),
+        ("N2  Fuse SiLU*mul into gate/up GEMM", "no gain", "#9e6a00", "nov 2 . up 3 . by systematic engineer", ["T2-001"]),
+        ("N3  Sequence-parallel FFN (RS + AG)", "slower", "#b71c1c", "nov 5 . up 2 . by adjacent field (novelty slot)", ["T3-001"]),
+        ("N4  More tokens per weight read", "proposed", "#777777", "nov 3 . up 2 . by adjacent field", []),
+        ("N5  Split-K for the small down GEMM", "proposed", "#777777", "nov 1 . up 2 . by systematic engineer", []),
     ]
     ny = topB - 6.5
     root_h = card(ax, TX + 2, ny, TW - 4, "", "@b FOCUS: reduce FFN latency", PLAIN, fs=11)
@@ -251,7 +252,7 @@ def data_structures():
                "@i Entries cite the records behind them.")
     kh = card(ax, RX, ky, RW, "SHARED_KB  (manager only)", kb_body, MANAGER)
     card(ax, RX, ky - kh - 3, RW, "LOCAL KBs  (one per leader)",
-         "Team 1:: crossover table; next: tune the threshold per GEMM shape\n"
+         "Team 1:: crossover table; open: one threshold for all GEMM shapes\n"
          "Team 2:: epilogue fusion saves ~6 us/layer, below bench noise\nTeam 3:: NCCL latency numbers",
          LEADER, h=bank_h - ch - kh - 6)
     for e, dy, rad in (("T1-001", 0, 0.15), ("T3-001", 0, -0.15)):
@@ -264,7 +265,7 @@ def data_structures():
         (TX, BX + BW - TX, "JOURNAL  (decisions, in order, and why)",
          "R1 start:: picked N1, N2 (upside) and N3 (novelty slot; rule 3, nothing improved yet). N4, N5 -> backlog.\n"
          "R1 end:: T1-002 -> champion (+5%). N2 closed (gain < noise). N3 closed (extra NCCL calls cost more on PCIe).\n"
-         "R2 start:: rule 1 -> Team 1 continues (tune the threshold per GEMM shape).", MANAGER, False),
+         "R2 start:: rule 1 -> continue Team 1's line: a brainstormer proposed a threshold per GEMM shape.", MANAGER, False),
         (RX, RW, "GPU QUEUE  (usage, round 1)",
          "Team 1    32 / 40 GPU-min\nTeam 2    22 / 40\nTeam 3    40 / 40  exhausted\n"
          "Manager and brainstormers:\n          unbudgeted, still queued\n\nOne model-loading job at a time.", EVAL, True),
@@ -280,8 +281,8 @@ def data_structures():
     who = ("Manager::  everything; the only writer of TREE, SHARED_KB, JOURNAL and CHAMPION.\n"
            "Leaders::  all global state; write their own local KB; file BANK records.\n"
            "Workers::  only their workspace (the baseline + the starting record's diff + brief files the leader copied in).\n"
-           "Brainstormers::  the manager's briefing + a random sample of BANK records (Observed only); may query BANK, "
-           "chat with leaders, and profile any record through the GPU queue.")
+           "Brainstormers::  everything (TASK incl. the baseline profile, BANK, KBs, TREE, JOURNAL), plus the manager's "
+           "briefing; chat with leaders; profile any record through the GPU queue. Variety comes from the personas.")
     h = card(ax, 2, y, W - 4, "WHO READS WHAT", who, PLAIN)
     finish(fig, ax, W, y - h, "1_global_state.png")
 
@@ -324,8 +325,8 @@ def round_overview():
     def down_arrow(top, h):
         arrow(ax, (L + LW / 2, top - h - 0.2), (L + LW / 2, top - h - 5.8), color="#444444", lw=1.6)
 
-    t, h = row("init", "initialize()  (once)", "Official eval of the baseline, profile, bound analysis, ledger "
-               "(the human reviews it).",
+    t, h = row("init", "initialize()  (once)", "Official eval of the baseline, bound analysis, ledger "
+               "(the human reviews it). The baseline profile comes with the task.",
                simple("@b Baseline (BASE): 656 tok/s, GSM8K 93.2%\n"
                       "Profile: Marlin FP8 GEMMs 49% of kernel time, NCCL all-reduce 27%, GDN 6%, attention 5%.\n"
                       "Gate/up GEMM: 117 us/layer, DRAM-bound at ~80% of peak; tensor pipe ~25% busy.\n"
@@ -338,39 +339,35 @@ def round_overview():
 
     # brainstorm
     ideas = [
-        ("lit scout + Team 1", "Mixed GEMM kernel: FP8 tensor-core for big passes, Marlin for small", "2", "4", "selected -> N1", "sel"),
-        ("cross-domain", "Fuse SiLU*mul (+ FP8 act quant) into the gate/up GEMM epilogue", "2", "3", "selected -> N2", "sel"),
-        ("systems", "Sequence-parallel FFN: reduce-scatter + all-gather", "5", "2", "novelty slot -> N3", "nov"),
-        ("first principles", "Challenge \"one weight read per pass\": more tokens per read", "3", "2", "backlog (N4)", ""),
-        ("physicist", "Split-K for the small down GEMM (~62% of DRAM peak)", "1", "2", "backlog (N5)", ""),
-        ("combiner", "Spec tokens 2 + Triton FP8 backend", "1", "1", "dropped: both tried", ""),
+        ("systematic eng.", "Mixed GEMM kernel: FP8 tensor-core for big passes, Marlin for small", "2", "4", "selected -> N1", "sel"),
+        ("systematic eng.", "Fuse SiLU*mul (+ FP8 act quant) into the gate/up GEMM epilogue", "2", "3", "selected -> N2", "sel"),
+        ("adjacent field", "Sequence-parallel FFN: reduce-scatter + all-gather", "5", "2", "novelty slot -> N3", "nov"),
+        ("adjacent field", "Challenge \"one weight read per pass\": more tokens per read", "3", "2", "backlog (N4)", ""),
+        ("systematic eng.", "Split-K for the small down GEMM (~62% of DRAM peak)", "1", "2", "backlog (N5)", ""),
+        ("adjacent field", "Spec tokens 2 + Triton FP8 backend", "1", "1", "dropped: both tried", ""),
     ]
     tfs_ = 11
     trow = 3.3
     sel_note = ("Selection (search_policy.md rule 3: nothing has improved yet): 2 slots by upside (a, b) + 1 protected "
                 "high-novelty slot (c), even though napkin math is pessimistic about c. d and e stay in the TREE as "
                 "backlog; the JOURNAL records why.")
-    sub_w = (RW - 3) / 2
-    lead_body = ("Team 1: \"Triton FP8 cut TTFT 14% but raised ITL 14%. Use each kernel where it wins.\"\n"
-                 "Teams 2, 3: ...")
     brief_body = ("\"FFN GEMMs are half the time and already near DRAM peak. NCCL over PCIe is 27%. Tried so far: "
                   "spec tokens 2 (+12%), Triton FP8 backend (net -4%) ...\"")
 
     def brainstorm_right(top, measure_only=False, h=None):
-        h1 = max(measure(sub_w, "1. Leaders' next steps", lead_body), measure(sub_w, "2. Briefing (to brainstormers)", brief_body))
+        h1 = measure(RW, "1. Briefing (round 1: task, focus, baseline profile)", brief_body)
         note_lines = wrap(sel_note, RW, 11)
         h2 = 6 + (len(ideas) + 1) * trow + 2 + len(note_lines) * lh(11) + 2
         total = h1 + 3 + h2
         if measure_only:
             return total
         h2 = (h or total) - h1 - 3
-        card(ax, R, top, sub_w, "1. Leaders' next steps", lead_body, LEADER, h=h1)
-        card(ax, R + sub_w + 3, top, sub_w, "2. Briefing (to brainstormers)", brief_body, MANAGER, h=h1)
+        card(ax, R, top, RW, "1. Briefing (round 1: task, focus, baseline profile)", brief_body, MANAGER, h=h1)
         ty = top - h1 - 3
-        card(ax, R, ty, RW, "3-5. Brainstormers propose; the manager scores and selects (k = 3)", "", BRAIN, h=h2)
+        card(ax, R, ty, RW, "2-4. Two brainstormers propose; the manager scores and selects (k = 3)", "", BRAIN, h=h2)
         cols = [R + 2, R + 28, R + RW - 33, R + RW - 27.5, R + RW - 22]
         yy = ty - 6
-        for c, txt in zip(cols, ("persona / source", "idea", "nov", "up", "decision")):
+        for c, txt in zip(cols, ("persona", "idea", "nov", "up", "decision")):
             ax.text(c, yy, txt, fontsize=tfs_, weight="bold", va="center")
         ax.plot([R + 1.5, R + RW - 1.5], [yy - trow / 2, yy - trow / 2], color=BRAIN[1], lw=0.8)
         for i, (src, idea, nov, up, dec, kind) in enumerate(ideas):
@@ -388,12 +385,12 @@ def round_overview():
             ax.text(R + 2, yy, line, fontsize=11, va="top", color="#333333")
             yy -= lh(11)
 
-    bs_left = ("1. Leaders' \"what I'd do next\" (round 1: asked directly).\n\n"
-               "2. The manager writes the briefing: facts + what was tried and observed (also a status report).\n\n"
-               "3. Brainstormers, one per persona: fresh sessions in parallel, each with a random BANK sample "
-               "(Observed only). May query BANK, chat with any leader, and profile any record (GPU queue, unbudgeted).\n\n"
-               "4. The manager dedupes and scores: novelty 1-5, upside 1-5.\n\n"
-               "5. The manager selects k directions with SEARCH_POLICY; the rest go to the TREE as `proposed` (backlog).")
+    bs_left = ("1. The manager writes the briefing: facts + what was tried and observed (also a status report).\n\n"
+               "2. Brainstormers, one per persona in CONFIG (the only idea source): fresh sessions in parallel. "
+               "All can access everything, chat with any leader, and profile any record (GPU queue, unbudgeted). "
+               "Round 1: same inputs for all (task, focus, baseline profile); only the persona differs.\n\n"
+               "3. The manager dedupes and scores: novelty 1-5, upside 1-5.\n\n"
+               "4. The manager selects k directions with SEARCH_POLICY; the rest go to the TREE as `proposed` (backlog).")
     t, h = row("bs", "brainstorm()", bs_left, brainstorm_right)
     down_arrow(t, h)
 
@@ -413,16 +410,16 @@ def round_overview():
                          "W2:: dispatch by tokens/pass; 2 iterations of smoke + bench + nsys (22 GPU-min).\n"
                          "Leader:: files T1-001, T1-002; reviews T1-002's diff: valid -> official eval (7 GPU-min).\n"
                          "@o => 689 tok/s (+5%), GSM8K 93.6%\n"
-                         "Used 32 / 40. Next: tune the threshold per GEMM shape."),
+                         "Used 32 / 40. Left open: one threshold for all GEMM shapes."),
         ("Team 2  (N2)", "W1:: fused SiLU*mul epilogue. Microbench: -6 us/layer. Unofficial bench: +1%, within "
                          "noise (T2-001).\n"
                          "Leader:: not worth an official eval. Stops at a checkpoint: \"gain below noise; revisit if "
                          "the FFN share grows.\"\n"
-                         "Used 22 / 40. Next: fuse the FP8 activation quant too."),
+                         "Used 22 / 40. Left open: the FP8 activation quant is not fused yet."),
         ("Team 3  (N3)", "W1:: RS + AG around the FFN. Unofficial bench: -6% (T3-001).\n"
                          "W2:: nsys: 2 NCCL calls cost ~2x one all-reduce on PCIe.\n"
                          "Budget exhausted (40 / 40): no more GPU jobs, but it still analyzes the profile and writes "
-                         "the report.\nNext: none; close the idea."),
+                         "the report.\nLeft open: nothing; the idea looks closed."),
     ]
     lw3 = (RW - 6) / 3
 
@@ -445,8 +442,8 @@ def round_overview():
                       "@b CHAMPION <- T1-002 (689 tok/s: +5% beats the ~3% noise, and GSM8K holds).\n"
                       "SHARED_KB += K2 [T1-001, T1-002], K3 [T3-001].   JOURNAL: round summary.\n"
                       "Report to the human: what was tried, what was learned, the new champion, the backlog.\n"
-                      "Next round: rule 1 -> Team 1's \"tune the threshold per GEMM shape\" gets a slot. "
-                      "Brainstormers profile the new champion. Combining wins is just another brainstorm idea."))
+                      "Next round: rule 1 -> a slot continues Team 1's line (e.g. a threshold per GEMM shape, if a brainstormer "
+                      "proposes it). Brainstormers profile the new champion. Combining wins is just another brainstorm idea."))
 
     # loop arrow back to "Round r begins"
     ys = t - h / 2
@@ -513,7 +510,7 @@ def inside_team():
     msg("Leader", "GPU", "official eval of T1-002: clean build of baseline + diff, 7 GPU-min", color=OFFICIAL)
     msg("GPU", "BANK", "append: 689 tok/s, GSM8K 93.6%", color=OFFICIAL)
     msg("Leader", "Manager", "report: summary, links to T1-001 and T1-002, proposed insight K2, "
-                             "next: tune the threshold per shape", color=LEADER[1])
+                             "left open: one threshold for all shapes", color=LEADER[1])
     note("GPU", "@b Team 1 used 3 + 22 + 7 = 32 / 40 GPU-min", color=EVAL, w=46)
     for key, name, c, x in lanes:
         ax.plot([x, x], [top - 5, y + 1], color="#a0a0a0", lw=1.1, ls=(0, (2, 3)), zorder=0)

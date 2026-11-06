@@ -13,15 +13,17 @@ concrete example, see [example_round.md](example_round.md).
 - **Leaders** (the brain): **persistent**: one long-running session each, carrying its context
   across rounds (with compaction). Each drives one direction per round: plans experiments, picks
   starting points, sets up worker workspaces, files experiment records into the bank, keeps a local
-  KB, and reports findings back. Also brainstorms (exploitation end). **Responsible for the validity
+  KB, and reports findings back. In v1 leaders don't propose next directions (brainstormers do),
+  but brainstormers may chat with them. **Responsible for the validity
   of everything it submits**: it reviews the raw diff against the task's constraints itself.
 - **Workers** (the arms): implement and test what their leader asks, **confined to the workspace**
   the leader set up. **Persistent by default** (with compaction): the leader keeps giving follow-ups
   to the same workers, and decides when to start a fresh one instead (e.g. a new, unrelated
   experiment, or a worker stuck in a rut).
-- **Brainstormers**: **temporary**: new sessions every round (fresh context is the point), each
-  with a persona (a reasoning method). They see observations, not insights, and may chat with any
-  leader (exploration end).
+- **Brainstormers**: **temporary**: new sessions every round (fresh context is the point). The
+  only source of ideas in v1. Each is defined by a **persona**: a prompt string from
+  `CONFIG.brainstormers`. All of them can access everything (see [Brainstorming](#brainstorming));
+  variety comes from the personas, not from what each one may see.
 
 ## What is recorded
 | Store | Contents | Written by |
@@ -33,8 +35,9 @@ concrete example, see [example_round.md](example_round.md).
 | Journal | The order of decisions and why | manager |
 
 **Observations vs. insights.** Insights close questions; observations leave them open, so someone
-new can draw a different conclusion from the same data. Brainstormers get observations; insights
-are not their starting frame (they may still hear them when chatting with a leader).
+new can draw a different conclusion from the same data. That is why results and conclusions are
+kept separate. (v1 does not hide insights from brainstormers; a persona's prompt may tell it to
+start from the observations.)
 
 ## Experiment record
 One folder per experiment in the bank. Every field is free-form text.
@@ -53,17 +56,18 @@ bank/<id>/                # id by team, e.g. T1-003 (the manager may rename)
   change.diff             # against the task baseline, so it applies to the baseline directly
   (optional) profiles, logs
 ```
-Brainstormers sample records with the conclusion removed (observations, not insights).
 
 ## Global state
 These are global variables in the pseudocode: available to every agent that needs them and never
 passed in assignments. (Workers are confined to their workspace, so their leader copies what they
 need into it.)
 ```python
-TASK       # task folder: TASK.md (objective, metric, hard constraints, correctness criteria), harness
+TASK       # task folder: TASK.md (objective, metric, hard constraints, correctness criteria), harness,
+           # and the baseline's profiling results (provided with the task: what round 1 starts from)
 FOCUS      # the human's natural-language scope for this run
-CONFIG     # number of leaders, max workers per leader (a limit, not a quota), max rounds, personas,
-           # gpu_minutes_per_team_per_round (set by the human per run)
+CONFIG     # number of leaders, max workers per leader (a limit, not a quota), max rounds,
+           # gpu_minutes_per_team_per_round, brainstormers (one persona prompt string each)
+           # (all set by the human per run)
 SEARCH_POLICY  # design/search_policy.md: plain text; how the manager picks what to work on next
                # (portfolio, continuing a winning leader's line, fallback). Isolated variable:
                # a run can override it, and the human can edit it mid-run.
@@ -107,7 +111,7 @@ AutoInfer():
 initialize():
     CHAMPION  = evaluate(TASK.baseline)                 # official eval (record E0, empty diff);
                                                         # also checks the harness works
-    CHAMPION.profile = profile(CHAMPION)                # where the time goes
+    CHAMPION.profile = TASK.baseline_profile            # provided with the task (no profiling here)
     facts     = bound_analysis(TASK, CHAMPION.profile)  # speed-of-light floor + gap breakdown
     LEDGER    = assumption_ledger(TASK, FOCUS)          # frozen vs open assumptions; human reviews
     TREE      = new_tree(root = FOCUS)
@@ -118,51 +122,56 @@ initialize():
 brainstorm() -> directions:
     # out: k directions, each = (tree node, rationale, bottleneck addressed)
 
-    # 1. Leaders: exploitation end, full context. Their last reports' "what I'd do next"
-    #    (round 1: ask them with a task).
-    ideas = [leader.next_steps for leader in leaders]
-
-    # 2. Manager writes the round briefing: what you'd tell a colleague in an adjacent field.
+    # 1. Manager writes the round briefing: what you'd tell a colleague in an adjacent field.
     briefing = manager.write_briefing()     # problem, facts (profile/bound numbers, not just
                                             # interpretation), high-level summary of what was
                                             # tried and observed. Also a status report for the human.
+                                            # Round 1: the task, the focus and the baseline profile.
 
-    # 3. Brainstormers: exploration end. Fresh sessions, run in parallel, generators are pluggable
-    #    (more of them, other models).
-    for persona in CONFIG.personas:
-        sample = random_sample(BANK, n)     # different per brainstormer (AlphaEvolve-style);
-                                            # Observed sections only, no insights
-        ideas += brainstormer(persona, briefing, sample,
-                              tools = [query BANK (observations),
-                                       multi-turn chat with any leader,
+    # 2. Brainstormers: the only idea source in v1. Fresh sessions, run in parallel.
+    for persona in CONFIG.brainstormers:    # a persona = a prompt string
+        ideas += brainstormer(persona, briefing,
+                              access = everything: TASK (incl. the baseline profile), BANK,
+                                       SHARED_KB, TREE, JOURNAL, multi-turn chat with any leader,
                                        profile any record, e.g. a new CHAMPION
                                          (GPU queue, unbudgeted; saved into that
-                                         record's folder so others reuse it)]).propose()
+                                         record's folder so others reuse it)).propose()
 
-    # 4. Central scoring: one scorer with full context, on one scale.
+    # 3. Central scoring: one scorer with full context, on one scale.
     ideas = manager.dedupe(ideas)           # many proposals of the same idea = weak signal only
     for idea in ideas:
         idea.novelty, idea.upside = manager.score(idea)   # each 1-5
-        idea.proposed_by = generator tag    # persona/model/leader, to learn which generators win
+        idea.proposed_by = persona          # to learn which personas win
 
-    # 5. Selection: a portfolio, not a ranking.
+    # 4. Selection: a portfolio, not a ranking.
     directions = manager.select(ideas, k, SEARCH_POLICY)   # e.g. "if a leader improved the champion,
-                                                            # continue its next step; 1 slot most novel"
+                                                            # continue that line; 1 slot most novel"
     TREE.add(directions, status = assigned)
     TREE.add(ideas - directions, status = proposed)                  # backlog, visible to the human
     JOURNAL.append(why these directions)
 ```
 
-Brainstormer personas: each persona is a **reasoning method**, not a character trait ("be
-creative" does little). Initial set:
-- **First principles / assumption challenger** (always included): list the assumptions the
-  current engine makes (from the ledger and beyond) and ask what happens if each is broken; build up
-  from what is truly fixed (hardware limits, the math of the model).
-- **Physicist**: speed-of-light bounds: what must be moved or computed, and what doesn't have to be.
-- **Systems / scheduling**: overlap, batching, pipelining, idle time.
-- **Cross-domain transfer**: how HPC, databases or compilers solve the same shape of problem.
-- **Literature scout**: web search for recent papers and repos.
-- **Combiner**: take two random past experiments and propose their combination.
+### Brainstorming
+- **Defined in CONFIG.** `CONFIG.brainstormers` is a list of persona prompts, one brainstormer
+  each. A persona is just a string for now: what kind of thinker this is and how it works.
+- **Everyone can see everything.** Technically each brainstormer can access all global state,
+  chat with any leader, look at past experiments and profile any record. Variety comes from the
+  personas. If a persona should ignore something (e.g. start from observations only), its prompt
+  says so; nothing enforces it.
+- **Bootstrap (round 1).** There are no experiments, leaders' findings or KB yet, so all
+  brainstormers start from the same inputs: the task, the focus and the **baseline profile that
+  comes with the task**. They differ only by persona. From round 2 on they also have the bank,
+  the KB, the tree and the leaders to talk to.
+- **Default personas** (v1):
+  - **Systematic engineer**: careful and methodical. Works from the profile and the bank: where
+    the time goes, what has been tried, what the numbers imply, what hasn't been covered. Also
+    spots combinations of past wins.
+  - **Smart colleague from an adjacent field**: very capable, not an inference specialist.
+    Explores widely and questions assumptions; aims for surprising ideas that the specialists
+    would not think of.
+- Other personas to try later: first principles / assumption challenger, physicist
+  (speed-of-light bounds), systems / scheduling, cross-domain transfer, literature scout (web
+  search).
 
 ```python
 manager.assign(directions, leaders) -> tasks:
@@ -203,13 +212,13 @@ leader.run(task) -> report:
             local_kb.update(observations)
         if leader reached a useful checkpoint or manager says stop: break
             # out of budget = no new GPU jobs, but GPU-free work may continue.
-            # Need not finish the direction: propose continuing in "what I'd do next".
+            # Need not finish the direction: the report says what was left open.
             # See budget_and_stopping.md
     return report:
         # summary of findings
         # + experiments run, each linked to its BANK record id (+ performance)
         # + proposed insights (the manager decides what enters SHARED_KB)
-        # + what I'd do next (feeds the next brainstorm)
+        # + what was left open (v1: no "what I'd do next"; brainstormers propose directions)
 
 worker.run(task) -> report:                     # confined to its workspace
     # task:   the experiment: what to try, what to measure, when it's done, GPU budget
@@ -241,7 +250,7 @@ collect_and_update(reports):
         # profile the new champion themselves (see brainstorm()); the manager may turn what they
         # find into SHARED_KB entries.
     # No integrate(): combining wins from several teams is just another idea, proposed in the next
-    # brainstorm (e.g. by the combiner persona) and run like any other direction.
+    # brainstorm (e.g. by the systematic engineer) and run like any other direction.
     SHARED_KB.update(accepted insights from reports)   # manager is the only writer
     JOURNAL.append(round summary)
     report_to_human()
@@ -259,6 +268,10 @@ These run throughout, outside the loop:
   persistent by default, and the leader decides when to start a fresh one; brainstormers are new
   every round.
 - What to work on next is decided by `search_policy.md` (an isolated, editable variable).
+- Ideas come only from brainstormers (leaders don't propose next steps). Brainstormers are listed
+  in CONFIG, one persona prompt each; all can access everything, and variety comes from the
+  personas. Default: a systematic engineer and a smart colleague from an adjacent field.
+- The task provides the baseline profile; round 1's brainstormers start from it.
 - Leaders decompose their direction into experiments; max workers per leader is a limit, not a quota.
 - Two idea scores only, novelty and upside, each 1-5, assigned centrally by the manager.
 - The manager is the only writer of the shared KB.

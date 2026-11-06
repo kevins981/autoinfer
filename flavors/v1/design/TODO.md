@@ -17,13 +17,15 @@ Open design items for this flavor's algorithm (`DESIGN.md`). Items shared by all
   - Default budget size per team per round (CONFIG default) for the qwen task.
 - k (directions per round) vs number of leaders. (Continue vs new direction is decided by
   `search_policy.md`.)
-- `initialize()`: who does the profile, bound analysis and ledger; whether the ledger review is a
-  blocking human gate.
+- `initialize()`: who does the bound analysis and ledger; whether the ledger review is a
+  blocking human gate. (The baseline profile comes with the task.)
 - Human checkpoints (a config knob between human-in-the-loop and autonomous).
 - Failure paths: failed review or GSM8K (fix/resubmit?), broken builds, stuck workers or leaders.
 
 ## Agent topology
 - Barrier rounds vs. rolling (reassign each leader slot as soon as that leader finishes).
   Leaning: barrier for v1.
-- Brainstorming details: how many brainstormers and how big the random sample is, whether to use
-  other models, the exact briefing contents, and tuning the default `search_policy.md`.
+- Brainstorming details: the exact persona prompts, whether to use other models, the exact
+  briefing contents, and tuning the default `search_policy.md`. (Decided: personas come from
+  CONFIG, all brainstormers can access everything, round 1 starts from the task's baseline
+  profile; see DESIGN.md.)

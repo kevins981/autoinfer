@@ -241,7 +241,7 @@ def cmd_start(a):
     )
     meta = {
         "name": a.name, "role": a.role, "team": a.team, "parent": me(), "cwd": str(cwd),
-        "pid": proc.pid, "pgid": proc.pid, "session_id": session_id, "model": a.model,
+        "pid": proc.pid, "pgid": proc.pid, "session_id": session_id, "model": a.model, "effort": a.effort,
         "started": now(), "stopped": None, "last_task": None, "last_task_at": None,
     }
     write_meta(d, meta)

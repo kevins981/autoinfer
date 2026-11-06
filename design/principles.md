@@ -26,6 +26,11 @@ These are agreed in discussion. Flavors may differ in *how* they follow them.
    decide baselines, tools and plans. Add structure only where it gives something agents
    wouldn't get on their own, e.g. the mechanisms for diverse, out-of-distribution ideas, or
    trusted evaluation.
+   **Give agents all the data, not just digests** (human, 2026-11-06): raw profiles (nsys
+   SQLite, ncu reports), the code, every record, plus how to query them. Summaries and helper
+   scripts are shortcuts, never the only way in; agents decide what to look at. Prompts suggest
+   ("probably worth checking the raw data and the code") rather than mandate steps, and state
+   what agents are judged on (e.g. brainstormers: how their ideas perform).
 
 ## Task and evaluation
 8. **The task is separate from AutoInfer.** A task folder defines the objective, hardware, hard

@@ -1,7 +1,8 @@
 # Baseline profile: Qwen3.8-27B-FP8 on 2x RTX 4090 (task serve config, FP8 KV)
 
-What round 1 starts from. Observed facts first, then interpretations (marked). Raw data next to
-this file; regenerate with `scripts/profile_nsys.sh`.
+What round 1 starts from. Observed facts first, then interpretations (marked). A summary: the
+raw data next to this file has every kernel launch and every hardware metric, and
+`../PROFILING.md` shows how to query it. Regenerate with `scripts/profile_nsys.sh`.
 
 ## Setup and headline numbers
 - Server: `harness/serve_args.sh` (TP=2, FP8 weights, FP8 KV cache with a 5 GiB KV budget,

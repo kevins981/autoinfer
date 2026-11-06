@@ -1,7 +1,8 @@
 #!/bin/bash
 # nsys profile of a server under load (ShareGPT at c=16), then a kernel-time breakdown.
 #   gpu run --timeout 20 --label prof -- bash profile_nsys.sh <workspace dir> <out dir> [num_prompts=64] [extra serve args]
-# Output in <out dir>: profile.nsys-rep (open in Nsight Systems, or `nsys stats`), kern_sum.csv
+# Output in <out dir>: profile.nsys-rep (open in Nsight Systems, or `nsys stats`), profile.sqlite
+# (all the data; query it with Python, see the task's PROFILING.md), kern_sum.csv
 # (per-kernel totals), breakdown.txt (time by category: GEMM, communication, attention, ...),
 # server.log, bench.log. CUDA graphs are traced per kernel (--cuda-graph-trace=node).
 # Profiling slows things down: use it for where-the-time-goes, not for throughput numbers.
@@ -29,6 +30,7 @@ vllm bench serve --port "$PORT" --backend openai-chat --endpoint /v1/chat/comple
 echo "[prof] bench rc=$?"
 stop_server
 for _ in $(seq 120); do [ -f "$OUT/profile.nsys-rep" ] && break; sleep 2; done
-"$NSYS" stats --report cuda_gpu_kern_sum --format csv --output "$OUT/kern" "$OUT/profile.nsys-rep" >/dev/null 2>&1
+"$NSYS" export --type sqlite --force-overwrite true --output "$OUT/profile.sqlite" "$OUT/profile.nsys-rep" >/dev/null 2>&1
+"$NSYS" stats --report cuda_gpu_kern_sum --format csv --output "$OUT/kern" "$OUT/profile.sqlite" >/dev/null 2>&1
 mv "$OUT/kern_cuda_gpu_kern_sum.csv" "$OUT/kern_sum.csv" 2>/dev/null
 python "$TASK_DIR/scripts/kernel_breakdown.py" "$OUT/kern_sum.csv" | tee "$OUT/breakdown.txt"

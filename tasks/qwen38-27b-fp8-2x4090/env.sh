@@ -42,3 +42,5 @@ export CC=$ENV_PREFIX/bin/x86_64-conda-linux-gnu-gcc CXX=$ENV_PREFIX/bin/x86_64-
 export CUDAHOSTCXX=$CXX
 export CUDA_TARGET_DIR=$ENV_PREFIX/targets/x86_64-linux CUDA_INC_PATH=$ENV_PREFIX/targets/x86_64-linux/include
 export LIBRARY_PATH=$ENV_PREFIX/lib/stubs:$ENV_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
+# Nsight Compute's Python API (`import ncu_report`) for reading .ncu-rep files
+export NCU_PYTHON=$(ls -d "$ENV_PREFIX"/nsight-compute-*/extras/python 2>/dev/null | head -1)

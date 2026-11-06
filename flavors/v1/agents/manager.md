@@ -80,9 +80,12 @@ brainstorm(round) -> directions:
         # the problem; the facts (profile numbers, official numbers: not just interpretations);
         # a high-level summary of what was tried and observed (with record ids).
         # Round 1: the task, the focus and the baseline profile only.
+        # Point to where things are (files, raw data: task/PROFILING.md, code), as starting
+        # points: don't present it as a complete reading list.
 
     # 2. Brainstormers: the only idea source in v1. Fresh sessions, in parallel.
     for persona in CONFIG.brainstormers:            # names of files in flavors/v1/agents/personas/
+        # Brainstormers are told they are judged by how their ideas perform once implemented.
         # how: agent start bs-r<round>-<persona> --role brainstormer --persona <persona> \
         #        --task "Round <round> briefing: <path>. Send your ideas to manager."
         # They can see everything, chat with leaders (usually idle now), and profile records

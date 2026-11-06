@@ -62,6 +62,7 @@ number of draft tokens), max context. The run's task definition may narrow this.
   (`start_server`, `bench`, `gsm8k`, `stop_server`), `example_job.sh`, `profile_nsys.sh` (nsys +
   kernel-time breakdown), `kernel_breakdown.py`, `profile_ncu.sh` (ncu on chosen kernels of a
   live server), `ncu_hotlines.py` (top source lines by stall samples).
+- `PROFILING.md`: what profiling data exists and how to query it (nsys SQLite, ncu Python API).
 - `baseline/`: `PROFILE.md` (start here), `nsys_c16/` (nsys of BASE: report, kernel summary,
   breakdown), `ncu_marlin/` (ncu of the FP8 GEMMs: `marlin_c16.ncu-rep` full metrics,
   `marlin_c16_key.csv` the key numbers, `marlin_c16_src.ncu-rep` source-level with -lineinfo).

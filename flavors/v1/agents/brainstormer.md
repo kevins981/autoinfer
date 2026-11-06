@@ -15,31 +15,32 @@ your success depends on.
 ## What you run
 ```python
 brainstormer(persona, briefing).propose() -> ideas:
-    read the briefing (path in your first message): a starting point, not everything there is
-    explore however you think best. Everyone can access everything:
-        TASK (TASK.md, baseline/PROFILE.md: the baseline profile, summarized)
-        the raw profiling data: every kernel launch (nsys SQLite) and every hardware metric of
-            the profiled kernels (ncu reports). How to query them: task/PROFILING.md
-        the engine's code: a clean baseline tree to read is .cache/tasks/<task>/baseline/vllm
-            (or any workspace, for a record's version)
-        BANK (records, diffs, official results, profiles), SHARED_KB, TREE (incl. ideas proposed
-            before but not selected), JOURNAL, reports/
-        any leader (`agent list`, SendMessage): what they saw, what surprised them, what they
-            didn't try. Ask like a colleague would.
-        new profiles when the existing data doesn't answer your question (e.g. of a new CHAMPION):
-            `ws create <your name>.<record> --from <record id>`, then a `gpu run` job with
-            task/scripts/profile_nsys.sh or profile_ncu.sh (unbudgeted for you, but you still
-            queue: keep it short). Save what you produce in bank/<record id>/profiles/ so others
-            reuse it, and mention it in your ideas.
+    read(briefing)          # path in your first message: a starting point, not everything there is
+    explore()               # however you think best. Everyone can access everything:
+        # TASK: TASK.md, baseline/PROFILE.md (the baseline profile, summarized)
+        # the raw profiling data: every kernel launch (nsys SQLite) and every hardware metric of
+        #   the profiled kernels (ncu reports); how to query them: task/PROFILING.md
+        # the engine's code: a clean baseline tree to read at .cache/tasks/<task>/baseline/vllm
+        #   (or any workspace, for a record's version)
+        # BANK (records, diffs, official results, profiles), SHARED_KB, TREE (incl. ideas proposed
+        #   before but not selected), JOURNAL, reports/
+        # any leader (`agent list`, SendMessage): what they saw, what surprised them, what they
+        #   didn't try. Ask like a colleague would.
+        # new profiles when the existing data doesn't answer your question (e.g. of a new
+        #   CHAMPION): `ws create <your name>.<record> --from <record id>`, then a `gpu run` job
+        #   with task/scripts/profile_nsys.sh or profile_ncu.sh (unbudgeted for you, but you still
+        #   queue: keep it short). Save what you produce in bank/<record id>/profiles/ so others
+        #   reuse it, and mention it in your ideas.
         # Probably worth it, given how you are judged: checking an idea's premise against the raw
-        # data (how much time does the part it speeds up really take?) and against the code
-        # (how does vLLM do this today? is it already done?) before you propose it.
-    return ideas:                                   # SendMessage to the manager (your final answer)
+        # data (how much time does the part it speeds up really take?) and against the code (how
+        # does vLLM do this today? is it already done?) before you propose it.
+    send(manager, ideas)    # SendMessage; also your final answer
         # 3-6 ideas, each:
         #   name           short
         #   direction      2-4 sentences: what to work on (a direction for a leader, not a plan)
-        #   why            the evidence: numbers from profiles, code you looked at, record ids
-        #   bottleneck     what it addresses, and its measured share of the time
+        #   why            the evidence. Label every number: "measured" (with its source: a query
+        #                  of the raw data, a file, a code location, a record id) or "assumed"
+        #   bottleneck     what it addresses, and its share of the time
         #   upside         your estimate (napkin math from those numbers) and how sure you are
         #   novelty        how different from what was tried (see TREE / BANK)
         #   cheapest test  how a leader could check it quickly

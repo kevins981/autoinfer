@@ -33,7 +33,7 @@ initialize():                                       # WITH the human
     #    The most important step of the run: whatever the definition leaves loose, agents will
     #    eventually exploit (reward hacking), and validity reviews can only check what is written.
     #    Dig for what is missing; don't accept the first draft. Read task/TASK.md first.
-    FOCUS = ask the human (if not given)
+    FOCUS = ask_human()                             # if not given
     TASK.definition = define_with_human(TASK, FOCUS):
         # correctness, spelled out: same math as the baseline (where is fp reordering OK?),
         #   precision (FP8 weights, FP8 KV; nothing lower), same sampling, GSM8K must hold
@@ -45,12 +45,15 @@ initialize():                                       # WITH the human
         #   giving up capacity the workload doesn't exercise (max context, KV space) without the
         #   human agreeing; anything tuned to seed 0 or these 400 prompts
     ASSUMPTION_LEDGER = agree_with_human()          # what is frozen and what is open, given FOCUS
-    write(focus.md, task_definition.md, assumption_ledger.md); get the human's OK
+    write(focus.md, task_definition.md, assumption_ledger.md)
+    wait_for_human_ok()
     # (The human decides whether improvements go back into tasks/<task>/ for future runs.)
 
     # 2. Baseline
-    bank/BASE/: record.md ("the task baseline"), empty change.diff
-    run in background: `official_eval BASE`          # ~7 GPU-min, unbudgeted for you; also checks
+    BANK.add(BASE)                                  # bank/BASE/: record.md ("the task baseline"),
+                                                    # empty change.diff
+    official_eval(BASE)                             # background command `official_eval BASE`:
+                                                    # ~7 GPU-min, unbudgeted for you; also checks
                                                     # that the harness works
     CHAMPION = BASE + its official numbers          # write champion.md
     CHAMPION.profile = the baseline profile in task/  # no profiling here
@@ -97,6 +100,10 @@ brainstorm(round) -> directions:
     ideas = dedupe(ideas)                           # many proposals of one idea = weak signal only
     for idea in ideas:
         idea.novelty, idea.upside = score(idea)     # each 1-5
+                                                    # brainstormers label their numbers "measured"
+                                                    # (with a source) or "assumed": an upside built
+                                                    # on assumptions is less certain; ask them
+                                                    # follow-up questions when it matters
         idea.proposed_by = persona                  # to learn which personas win
 
     # 4. Selection: a portfolio, not a ranking.
@@ -126,12 +133,13 @@ assign(directions, leaders) -> tasks:
 ```python
 execute(tasks) -> reports:                          # leaders in parallel; barrier at the end
     # Leaders work on their own and SendMessage you their report when done.
-    while some leader hasn't reported:
-        answer leaders' questions
-        now and then: `agent list`, `gpu status`, bank/ activity
+    while not all_leaders_reported():
+        answer(leaders' questions)
+        check_progress()    # now and then: `agent list`, `gpu status`, bank/ activity
             # slow but active is fine (new jobs, files, records, messages). An agent that seems
             # hung (nothing happening for a long time): ask it; if still stuck, stop or replace it.
-        if a GPU job exits 75 or anyone reports GPUs in use by someone outside the run:
+        if gpu_used_outside_run():  # a GPU job exited 75, or an agent reports GPUs in use
+                                    # by someone outside the run
             stop_gpu_work_and_tell_human()          # see Rules
     return reports                                  # save each to reports/r<round>_<leader>.md
 ```
@@ -141,9 +149,10 @@ collect_and_update(reports, round):
     TREE.update(reports)                            # ideas -> experiments (bank record ids),
                                                     # conclusions; you may reorganize the tree
     best = the BANK record from this round with the best official numbers
-    if best is valid per TASK.definition (check its validity review; skim its diff)
-       and best beats CHAMPION by more than the noise (~3% for the qwen task)
-       and GSM8K holds:
+    if valid(best) and beats(best, CHAMPION) and gates_pass(best):
+        # valid: per TASK.definition (check its validity review; skim its diff)
+        # beats: by more than the noise (~3% for the qwen task)
+        # gates_pass: the task's gates (qwen: GSM8K, p99 latency; in its official results)
         CHAMPION = best                             # write champion.md; starting point doesn't matter
         # No re-profiling here: next round's brainstormers profile the new champion themselves.
     # No integration step: combining wins is just another idea for the next brainstorm.
@@ -158,10 +167,10 @@ collect_and_update(reports, round):
 
 ```python
 finalize():
-    agent stop every agent still alive
+    stop(every agent still alive)                   # `agent stop <name>`
     write(reports/final.md)                         # champion, what was learned, the tree,
                                                     # what is left open
-    commit the run's records; tell the human
+    commit(run records); report_to_human()
 ```
 
 These run throughout, outside the loop:

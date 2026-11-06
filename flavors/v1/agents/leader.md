@@ -12,7 +12,8 @@ leader.run(task) -> report:
     # The direction is intentionally high level and somewhat vague: how to explore it is yours
     # to decide (see "How to lead" below). First think about how to break it into experiments,
     # in what order, and what can run in parallel.
-    read what helps: related BANK records, SHARED_KB, LOCAL_KB, the CHAMPION's profile, the task
+    read(what helps)        # related BANK records, SHARED_KB, LOCAL_KB, the CHAMPION's profile,
+                            # the task, the raw profiling data (task/PROFILING.md), the code
     loop:
         plan = plan(task, LOCAL_KB)                 # next experiments; revise as you learn
         for exp in plan (in parallel, up to CONFIG max workers per leader; fewer is fine):
@@ -42,10 +43,10 @@ leader.run(task) -> report:
                 # typically: the unofficial result beats CHAMPION by more than the noise (~3%)
                 evaluate(record)
             LOCAL_KB.update(observations)
-        if reached a useful checkpoint or the manager says stop: break
+        if useful_checkpoint() or manager_says_stop(): break
             # Out of budget = no new GPU jobs, but GPU-free work (analysis, code, review, the
             # report) may continue. You need not finish the direction: say what was left open.
-    `agent stop` workers you no longer need
+    stop(workers you no longer need)                # `agent stop <name>`
     return report:                                  # SendMessage to the manager
         # summary of findings
         # + every experiment, with its BANK record id and performance

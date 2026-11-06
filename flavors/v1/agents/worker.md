@@ -10,23 +10,24 @@ worker.run(task) -> report:
     # task (from your leader): the experiment: what to try, what to measure, when it's done,
     # your GPU allowance (max GPU-minutes, set by your leader out of the team's budget),
     # what to read first (files in your workspace).
-    read the brief and files the task points to
+    read(task.brief)                                # the brief and files the task points to
     source <workspace>/env.sh                       # before running anything: environment + this
                                                     # workspace's code on PYTHONPATH
-    loop until done (or stuck):
-        estimate first: napkin math (Amdahl, roofline) for what the change should gain
-        change the code in <workspace>/vllm/
+    while not done and not stuck:
+        estimate()          # napkin math first (Amdahl, roofline): what should the change gain?
+        change_code()       # in <workspace>/vllm/
             # Python-only: no build, just restart the server.
             # C++/CUDA: `ws build <workspace name>` as a BACKGROUND command (~2-11 min).
-        test, cheapest first: unit check → microbenchmark with real shapes → one forward pass +
-            profile → short unofficial bench
+        test()              # cheapest first: unit check → microbenchmark with real shapes →
+                            # one forward pass + profile → short unofficial bench
             # GPU: only through `gpu run --timeout <min> -- <script>`, BACKGROUND, within your
             # allowance (`gpu status` shows the minutes you used). Need more? Ask your leader,
             # saying what for; don't just go over it. One job = one script: start the server, wait until ready,
             # run ALL your tests, stop it (server startup is 1.5-4 min of every job).
-        check correctness before trusting a speedup: outputs still match the baseline (e.g. the
-            same text at temperature 0 on a few prompts; kernel outputs within fp tolerance)
-        write down: estimate vs measurement, how measured, where the logs/profiles are
+        check_correctness() # before trusting a speedup: outputs still match the baseline (e.g.
+                            # the same text at temperature 0 on a few prompts; kernel outputs
+                            # within fp tolerance)
+        notes.write()       # estimate vs measurement, how measured, where the logs/profiles are
     return report:                                  # SendMessage to your leader
         # what you changed (the change stays in your workspace; the leader files the record)
         # results = Observed: numbers, how measured, baseline vs change

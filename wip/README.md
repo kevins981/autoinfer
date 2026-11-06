@@ -14,7 +14,7 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
 | 3 | GPU queue: `gpu run/status/cancel`, batch jobs, FIFO, per-team budgets | [infra/gpu_queue.md](infra/gpu_queue.md) | **implemented + tested** (`tools/gpu`) |
 | 4 | Official eval: `official_eval <record>` = fresh workspace + build (CPU) → one GPU job → append to bank | [infra/official_eval.md](infra/official_eval.md) | **implemented, tested** (`tools/official_eval`, `tasks/<task>/harness/`) |
 | 5 | Run folder layout and kickoff: shared `tools/`, run folder, manager as a `--bg` session | [infra/run_layout.md](infra/run_layout.md) | **implemented, tested** (`tools/new_run`, `flavors/v1/config_default.md`) |
-| 6 | Role prompts (`common.md`, manager, leader, worker, brainstormer) | `flavors/v1/agents/*.md`, `flavors/v1/CLAUDE.md` (manager) | **drafted**, not yet exercised in a real run |
+| 6 | Role prompts (`common.md`, manager, leader, worker, brainstormer) | `flavors/v1/agents/*.md` (incl. `manager.md`) | **drafted**, not yet exercised in a real run |
 | 7 | Porting the qwen task (TASK.md, harness, baseline profile) | `tasks/qwen38-27b-fp8-2x4090/` | harness done (eval.sh, serve_args.sh, gsm8k.py, summarize.py); TASK.md + baseline profile TBD |
 
 ## Decisions made along the way (not yet in design/)
@@ -41,6 +41,11 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
   no `pip install`.
 
 ## Progress log
+- 2026-11-06: manager prompt moved to `flavors/v1/agents/manager.md` (consistent with the other
+  roles); `flavors/v1/CLAUDE.md` only points to it. `new_run` passes common + manager prompts via
+  `--append-system-prompt` (tested on a `--bg` session) and excludes both CLAUDE.md files.
+  Human decisions: baseline uses FP8 KV cache; one manager name (`manager`) for all runs is fine
+  for now (one run at a time).
 - 2026-11-06: official eval, run kickoff and role prompts implemented. A real `official_eval BASE`
   took 6.2 min end to end: 630.6 tok/s at c=16, GSM8K 92.8%, MTP acceptance 2.34, GPUs clean
   after. A diff that doesn't apply is recorded as `FAILED at apply_diff`. `new_run` creates the run

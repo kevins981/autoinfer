@@ -48,12 +48,13 @@ def main():
     for f in ("tree.md", "journal.md", "shared_kb.md", "champion.md", "focus.md"):
         (run / f).write_text("")
 
-    # Permission settings: the same mode and deny rules for every agent of the run. The manager
-    # keeps its flavor CLAUDE.md (it is its prompt); other agents exclude both CLAUDE.md files.
+    # Permission settings: the same mode and deny rules for every agent of the run. Every agent,
+    # the manager included, gets its instructions via --append-system-prompt and excludes the
+    # CLAUDE.md files (the flavor CLAUDE.md only points a hand-started manager to its prompts).
     base = json.loads((TOOLS / "agent_settings.json").read_text())
     (run / "agent_settings.json").write_text(json.dumps(base, indent=2) + "\n")
     mgr = json.loads(json.dumps(base))
-    mgr["claudeMdExcludes"] = [str(ROOT / "CLAUDE.md")]
+    mgr["claudeMdExcludes"] = [str(ROOT / "CLAUDE.md"), str(flavor / "CLAUDE.md")]
     (run / "manager_settings.json").write_text(json.dumps(mgr, indent=2) + "\n")
 
     env = dict(os.environ, AUTOINFER_RUN=str(run))
@@ -71,8 +72,12 @@ def main():
     first = (f"You are the manager of a new run. Run folder: {run} (AUTOINFER_RUN is set). "
              f"Task: {a.task}. Start with `agent register manager --role manager`, then begin "
              f"initialize(): greet the human and start defining the task with them.")
+    prompt = "\n\n".join((flavor / "agents" / f).read_text() for f in ("common.md", "manager.md"))
+    prompt += (f"\n\n# Who you are in this run\nYou are `manager` (role manager) of run `{a.run}`; "
+               f"run folder {run}; task {a.task}.\n")
     r = subprocess.run(["claude", "--bg", "--name", "manager", "--permission-mode", "auto",
-                        "--settings", str(run / "manager_settings.json"), first],
+                        "--settings", str(run / "manager_settings.json"),
+                        "--append-system-prompt", prompt, first],
                        cwd=flavor, env=env, capture_output=True, text=True)
     print(r.stdout.strip() or r.stderr.strip())
     if r.returncode != 0:

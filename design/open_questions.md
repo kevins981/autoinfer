@@ -1,6 +1,14 @@
 # Open questions and TODOs
 
 ## Algorithm (v1 pseudocode), in planned order
+- **Leader behavior**: what exactly a leader does with a direction: reviewing past results
+  (BANK, SHARED_KB, its local KB), decomposing into experiments, planning, profiling, choosing
+  starting points, deciding when to stop.
+- **Validation funnel** (TODO): cheap tests before GPU-heavy ones to save GPU time, e.g. napkin
+  math (Amdahl/roofline; record the estimate, since disagreement with the measurement is itself an
+  observation) → microbenchmark with real shapes → single batched forward pass + profile → short
+  unofficial bench → official eval. Caveats: proxies can mislead (only official numbers count),
+  and napkin math can kill good ideas if our model of the system is wrong. Guidance or a gate?
 - `evaluate()`: who calls it (the leader decides when a candidate deserves an official eval?), proxy
   vs official evals.
 - Budget and stopping: budget units (official evals / wall time / tokens), when a leader's
@@ -9,8 +17,8 @@
   `integrate()`.
 - **Async "new best version" notification**: v1 snapshots the champion at the start of each
   round. Later: how to tell agents about a new best mid-round without interrupting their work.
-- Directions ↔ persistent leaders across rounds (continue vs new; affinity vs mixing), k vs number
-  of leaders.
+- k (directions per round) vs number of leaders. (Continue vs new direction is decided by
+  `search_policy.md`.)
 - `initialize()`: who does the profile, bound analysis and ledger; whether the ledger review is a
   blocking human gate.
 - Human checkpoints (a config knob between human-in-the-loop and autonomous).
@@ -45,6 +53,8 @@
 
 ## Task: qwen38-27b-fp8-tp2-4090
 - Port TASK.md, task.yaml and harness from `qwen38_opt/`.
+- Cheap-funnel tools, built once: a microbenchmark harness with real shapes, and a "load once, run
+  one batched forward pass, profile" script.
 - The task requires FP8 KV, so the baseline must be re-measured with
   `--kv-cache-dtype fp8 --kv-cache-memory 5368709120`, and the GSM8K reference re-measured too.
 - Write the correctness rubric for the judge (forbidden: precision changes beyond the task's,

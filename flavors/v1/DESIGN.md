@@ -41,7 +41,10 @@ need into it.)
 ```python
 TASK       # task folder: TASK.md (objective, metric, hard constraints, correctness rubric), harness
 FOCUS      # the human's natural-language scope for this run
-CONFIG     # number of leaders, workers per leader, rounds, personas, selection policy, budgets, ...
+CONFIG     # number of leaders, max workers per leader (a limit, not a quota), rounds, personas, budgets
+SEARCH_POLICY  # search_policy.md: plain text; how the manager picks what to work on next
+               # (portfolio, continuing a winning leader's line, fallback). Isolated variable:
+               # a run can override it, and the human can edit it mid-run.
 LEDGER     # assumptions: frozen vs open
 CHAMPION   # current best version: commit, official numbers, profile.
            # A PERFORMANCE REFERENCE, NOT A REQUIRED STARTING POINT: agents may start from any bank
@@ -115,8 +118,8 @@ brainstorm() -> directions:
         idea.proposed_by = generator tag    # persona/model/leader, to learn which generators win
 
     # 5. Selection: a portfolio, not a ranking.
-    directions = manager.select(ideas, k, CONFIG.selection_policy)   # plain text, human-editable,
-                                                                      # e.g. "2 best upside, 1 most novel"
+    directions = manager.select(ideas, k, SEARCH_POLICY)   # e.g. "if a leader improved the champion,
+                                                            # continue its next step; 1 slot most novel"
     TREE.add(directions, status = assigned)
     TREE.add(ideas - directions, status = proposed)                  # backlog, visible to the human
     JOURNAL.append(why these directions)
@@ -139,7 +142,7 @@ manager.assign(directions, leaders) -> tasks:
     #   what to work on: the direction + rationale
     #   optional: budget, scope constraints, pointers to related experiments in BANK
     # NOT included (global): correctness rubric, metric, CHAMPION, BANK, SHARED_KB.
-    # TBD: how directions map to leaders across rounds (continue vs new, affinity vs mixing).
+    # Which leader continues which line is decided by SEARCH_POLICY.
 ```
 
 ```python
@@ -147,6 +150,10 @@ execute(tasks) -> reports:                      # all leaders in parallel; barri
     return parallel([leader.run(task) for leader, task in tasks])
 
 leader.run(task) -> report:
+    # The direction is high level: the leader first thinks about how to break it into experiments,
+    # in what order, and what can run in parallel (up to CONFIG.max_workers_per_leader; fewer is fine).
+    # TBD: what exactly a leader does (e.g. reviewing past results in BANK/SHARED_KB, planning,
+    # when to profile); see open_questions.md
     loop:
         plan = leader.plan(task, local_kb)              # next experiments; may revise the plan
         for exp in plan (in parallel, one worker each):
@@ -156,6 +163,8 @@ leader.run(task) -> report:
                                                         # relevant excerpts) as files in the workspace
             wreport = worker.run(exp.task)              # first task says what to read first;
                                                         # follow-ups: just another task
+                                                        # TBD: validation funnel (cheap tests before
+                                                        # GPU-heavy ones); see open_questions.md
             record = leader.file_record(wreport, ws)    # leader moves branch + record into BANK
             if leader.wants_official_eval(record):      # TBD (see evaluate / budget)
                 evaluate(record.candidate)              # appends official numbers + verdict
@@ -205,6 +214,8 @@ These run throughout, outside the loop:
 - Agent lifetimes: manager and leaders are persistent (compaction keeps them going); workers are
   persistent by default, and the leader decides when to start a fresh one; brainstormers are new
   every round.
+- What to work on next is decided by `search_policy.md` (an isolated, editable variable).
+- Leaders decompose their direction into experiments; max workers per leader is a limit, not a quota.
 - Two idea scores only, novelty and upside, each 1-5, assigned centrally by the manager.
 - The manager is the only writer of the shared KB.
 - One interface for persistent agents: `run(task: str) -> report: str`.

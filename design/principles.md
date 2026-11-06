@@ -21,8 +21,11 @@ These are agreed in discussion. Flavors may differ in *how* they follow them.
    leader↔leader.
 6. **Keep leaders' contexts clean.** Implementation tokens (code, builds, benchmarks, web research)
    are spent by workers.
-7. **Bet on model capability.** Keep rigid structure and schemas to a minimum (free-form markdown
-   tree and KBs); let agents decide (which baselines, tools, plans).
+7. **Keep it simple; bet on model capability.** Don't over-constrain agents: interfaces are
+   string in, string out (`run(task) -> report`); tree and KBs are free-form markdown; agents
+   decide baselines, tools and plans. Add structure only where it gives something agents
+   wouldn't get on their own, e.g. the mechanisms for diverse, out-of-distribution ideas, or
+   trusted evaluation.
 
 ## Task and evaluation
 8. **The task is separate from AutoInfer.** A task folder defines the objective, hardware, hard

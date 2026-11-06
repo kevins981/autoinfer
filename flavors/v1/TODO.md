@@ -12,9 +12,13 @@ Open design items for this flavor's algorithm (`DESIGN.md`). Items shared by all
   observation) → microbenchmark with real shapes → single batched forward pass + profile → short
   unofficial bench → official eval. Caveats: proxies can mislead (only official numbers count),
   and napkin math can kill good ideas if our model of the system is wrong. Guidance or a gate?
-- `evaluate()`: who calls it (the leader decides when a candidate deserves an official eval?), proxy
-  vs official evals.
-- Budget and stopping: budget units (official evals / wall time / tokens), when a leader's
+- Evaluation follow-ups (see `design/evaluation.md`):
+  - Test cost table: measure the estimated rows, move it to the task folder, let the GPU queue use
+    it for scheduling and budgets.
+  - GPU budget: sizes per leader per round, how the leader splits it among workers, hard cap at
+    the queue vs. guidance only.
+- Budget and stopping: budget units (GPU-minutes is the scarce one for the qwen task; tokens, wall
+  time), when a leader's
   direction is done, when the run stops.
 - Champion lifecycle: when it changes, comparing candidates built on different starting points,
   `integrate()`.
@@ -25,7 +29,7 @@ Open design items for this flavor's algorithm (`DESIGN.md`). Items shared by all
 - `initialize()`: who does the profile, bound analysis and ledger; whether the ledger review is a
   blocking human gate.
 - Human checkpoints (a config knob between human-in-the-loop and autonomous).
-- Failure paths: judge rejection (fix/resubmit?), broken builds, stuck workers or leaders.
+- Failure paths: failed review or GSM8K (fix/resubmit?), broken builds, stuck workers or leaders.
 
 ## Agent topology
 - Barrier rounds vs. rolling (reassign each leader slot as soon as that leader finishes).

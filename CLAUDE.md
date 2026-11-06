@@ -13,7 +13,7 @@ A session the human launches inside `flavors/<flavor>/` is that flavor's **run m
 folder's `CLAUDE.md` holds the manager's instructions, and its `.claude/settings.json` excludes this
 file via `claudeMdExcludes`, so run agents never see design discussion. Every new flavor needs that
 settings file too (copying a flavor copies it). The manager launches the other run agents (leaders,
-workers, judge, ...) with explicit role prompts from `agents/<role>.md` and with both CLAUDE.md
+workers, brainstormers, ...) with explicit role prompts from `agents/<role>.md` and with both CLAUDE.md
 files excluded via `--settings`.
 
 ## What AutoInfer is for
@@ -41,6 +41,7 @@ autoinfer/
     CLAUDE.md          # for agents using this flavor (excludes the top-level CLAUDE.md)
     .claude/settings.json
     DESIGN.md          # the algorithm (pseudocode)
+    design/            # detailed notes per topic (e.g. evaluation.md)
     TODO.md            # open design items for this flavor
     search_policy.md   # (v1) how the manager picks what to work on next
     agents/ tools/ runs/<run>/

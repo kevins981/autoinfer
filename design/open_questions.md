@@ -10,7 +10,7 @@ Flavor-specific TODOs live in each flavor's `TODO.md` (e.g. `flavors/v1/TODO.md`
 - CLAUDE.md scoping (tested 2026-11-05 with claude 2.1.318): `claudeMdExcludes` in
   `flavors/v1/.claude/settings.json` hides the top-level CLAUDE.md for sessions started in
   `flavors/v1/`. Relative `@../` imports of files outside the project are *not* loaded in `-p`
-  mode, so the hard rules are duplicated in each CLAUDE.md. Sub-agents (leaders, workers, judge)
+  mode, so the hard rules are duplicated in each CLAUDE.md. Sub-agents (leaders, workers, brainstormers)
   must exclude *both* CLAUDE.md files (top-level and flavor/manager) via `--settings` and get
   their role prompt explicitly. Untested: the exact launch command, and whether the role prompt
   should repeat the hard rules.
@@ -29,5 +29,5 @@ Flavor-specific TODOs live in each flavor's `TODO.md` (e.g. `flavors/v1/TODO.md`
   one batched forward pass, profile" script.
 - The task requires FP8 KV, so the baseline must be re-measured with
   `--kv-cache-dtype fp8 --kv-cache-memory 5368709120`, and the GSM8K reference re-measured too.
-- Write the correctness rubric for the judge (forbidden: precision changes beyond the task's,
+- Write the correctness criteria (what a validity review checks) (forbidden: precision changes beyond the task's,
   routing/expert changes, sampling or output-length changes, benchmark changes).

@@ -30,11 +30,12 @@ These are agreed in discussion. Flavors may differ in *how* they follow them.
 ## Task and evaluation
 8. **The task is separate from AutoInfer.** A task folder defines the objective, hardware, hard
    constraints (e.g. FP8 weights + FP8 KV cache), allowed and forbidden changes, and the
-   correctness rubric. Its harness is read-only to agents. Serve flags and spec-decode settings are
+   correctness criteria. Its harness is read-only to agents. Serve flags and spec-decode settings are
    allowed if they keep the math the same.
-9. **Trusted evaluation.** Only the evaluator's records count: frozen benchmark + GSM8K + an
-   **independent LLM judge** that reads the raw diff (not the author's description) against the
-   rubric. Records are append-only.
+9. **Trusted evaluation.** Only official records count: frozen harness (benchmark + GSM8K) that
+   agents can't modify, append-only records. Validity (does the diff respect the task's
+   constraints?) is checked by an agent reading the raw diff, not the author's description;
+   flavors decide who (v1: the leader, which is responsible for what it submits).
 10. **The shared GPU goes through a job queue**, both for fair sharing and because a benchmark
     needs exclusive GPUs to be valid.
 

@@ -5,7 +5,7 @@ inference optimizations on a task. A session started directly in this folder is 
 manager; this file is the manager's instructions. The algorithm is in [DESIGN.md](DESIGN.md).
 
 You talk to the human: they give you a task and a focus, ask for status, redirect you, or pause and
-stop work. You launch and manage the other agents (leaders, workers, judge, ...) of a run.
+stop work. You launch and manage the other agents (leaders, workers, brainstormers, ...) of a run.
 
 **When you launch another agent**, give it its role prompt from `agents/<role>.md` explicitly and
 exclude both this file and the top-level `autoinfer/CLAUDE.md` (via `--settings` with

@@ -54,8 +54,8 @@ The layout inside a run folder is still to be decided.
   changes to the human explicitly instead of silently deviating.
 - [design/open_questions.md](design/open_questions.md): undecided items and TODOs shared by all
   flavors (infrastructure, tasks). Flavor-specific TODOs are in each flavor's `design/TODO.md`.
-- [design/agent_runtime.md](design/agent_runtime.md): how agents run on the `claude` CLI
-  (launching, async messaging, event logs); tested findings and what is still open.
+- [wip/](wip/README.md): temporary working area for a design/implementation session: specs of
+  subsystems being built and a progress tracker. Specs move into `design/` once implemented.
 - Each flavor's design lives in its `design/` folder, starting from `DESIGN.md`, e.g.
   [flavors/v1/design/DESIGN.md](flavors/v1/design/DESIGN.md).
 

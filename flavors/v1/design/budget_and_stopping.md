@@ -21,7 +21,7 @@ don't use the GPU directly. **v1 trusts agents to use the queue** (nothing techn
 - Every job carries a team id and a timeout. The queue starts it only if the team's remaining
   budget covers the timeout, and charges the actual time when it finishes. (The timeout also kills
   hung servers, and a team can never overspend.)
-- `gpu_queue status` shows each team's remaining budget and per-worker spending. Leaders use it to
+- `gpu status` shows each team's remaining budget and per-worker spending. Leaders use it to
   monitor; they don't keep their own accounts.
 - Only the team total is enforced; the leader's per-worker split is guidance.
 - Out of budget: new jobs are rejected with "budget exhausted".
@@ -30,8 +30,8 @@ don't use the GPU directly. **v1 trusts agents to use the queue** (nothing techn
 ## Stopping
 - **Leader** (returns its report, ending `leader.run` for this round) whenever it judges it has
   reached a useful checkpoint: the direction is explored enough, worked, or is dead. It doesn't
-  have to finish the whole direction in one go: its report can propose continuing (in "what I'd
-  do next"), and the manager may assign it again next round. Also stops when the manager says so.
+  have to finish the whole direction in one go: its report says what was left open, and a later
+  brainstorm may pick it up. Also stops when the manager says so.
   Running out of budget doesn't force a stop: the leader can still do work that doesn't need the
   GPU (analysis, code, reviewing, writing the report), just no new GPU jobs. Unused budget doesn't
   carry over.

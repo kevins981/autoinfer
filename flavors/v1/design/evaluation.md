@@ -28,27 +28,23 @@ difference is not *who* may use the GPU but *what the result counts for*:
   same server. Recorded append-only in the bank. Only official numbers count (champion, reports).
 
 ## GPU budget
-Workers need the GPU while implementing (does it build, does it serve, is it faster). They get it,
-with a budget:
-- The manager gives each leader a GPU budget per round (in the assignment or CONFIG).
-- The leader splits it among its workers in their tasks, and keeps some for official evals.
-- The queue tags every job with the agent that submitted it and records the cost, so usage is
-  visible.
-- Budget sizes and enforcement (hard cap vs guidance) are TODO.
+Workers need the GPU while implementing (does it build, does it serve, is it faster), so they get
+it within a budget: manager → leader (per round) → workers. See
+[budget_and_stopping.md](budget_and_stopping.md).
 
-## Cost of each kind of test (qwen task; from `qwen38_opt` measurements)
+## Cost of each kind of test (qwen task, approximate)
 Unit: **GPU-minutes of exclusive use of both GPUs** (the model needs both 24 GB GPUs, so any job
 that loads it blocks everything else). Costs are proportional to wall time. Only GPU time is
 counted: CPU work (builds, napkin math, reading code) is plentiful and not budgeted.
-| Test | Cost | Source |
-|---|---|---|
-| Kernel microbenchmark with real shapes (1 GPU, no model) | < 1 min | estimate |
-| Python-only change: restart server | ~1.5 min (warm) | measured |
-| Smoke test: start server + a few prompts | ~2 min | estimate |
-| GSM8K-250 (server up) | ~2 min | measured |
-| Bench c=16, 400 prompts (server up) | ~3 min | measured |
-| nsys profile at c=16 | ~3 min + startup | estimate |
-| **Official eval** (start + bench c=16 + GSM8K-250) | **~7 min** | sum |
+| Test | GPU-minutes |
+|---|---|
+| Kernel microbenchmark with real shapes (1 GPU, no model) | 0.5 |
+| Python-only change: restart server | 1.5 (warm) |
+| Smoke test: start server + a few prompts | 2 |
+| GSM8K-250 (server up) | 2 |
+| Bench c=16, 400 prompts (server up) | 3 |
+| nsys profile at c=16 | 3 + startup |
+| **Official eval** (start + bench c=16 + GSM8K-250) | **7** |
 
 Takeaways:
 - GSM8K-250 is cheaper than the benchmark; server startup is a big share of every job. So GSM8K

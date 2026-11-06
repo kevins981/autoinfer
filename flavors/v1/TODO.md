@@ -12,14 +12,9 @@ Open design items for this flavor's algorithm (`DESIGN.md`). Items shared by all
   observation) → microbenchmark with real shapes → single batched forward pass + profile → short
   unofficial bench → official eval. Caveats: proxies can mislead (only official numbers count),
   and napkin math can kill good ideas if our model of the system is wrong. Guidance or a gate?
-- Evaluation follow-ups (see `design/evaluation.md`):
-  - Test cost table: measure the estimated rows, move it to the task folder, let the GPU queue use
-    it for scheduling and budgets.
-  - GPU budget: sizes per leader per round, how the leader splits it among workers, hard cap at
-    the queue vs. guidance only.
-- Budget and stopping: budget units (GPU-minutes is the scarce one for the qwen task; tokens, wall
-  time), when a leader's
-  direction is done, when the run stops.
+- Evaluation and budget follow-ups (see `design/`):
+  - Move the test cost table to the task folder when the harness is ported.
+  - Default budget size per team per round (CONFIG default) for the qwen task.
 - Champion lifecycle: when it changes, comparing candidates built on different starting points,
   `integrate()`.
 - **Async "new best version" notification**: v1 snapshots the champion at the start of each

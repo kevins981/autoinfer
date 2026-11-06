@@ -42,7 +42,8 @@ need into it.)
 ```python
 TASK       # task folder: TASK.md (objective, metric, hard constraints, correctness criteria), harness
 FOCUS      # the human's natural-language scope for this run
-CONFIG     # number of leaders, max workers per leader (a limit, not a quota), rounds, personas, budgets
+CONFIG     # number of leaders, max workers per leader (a limit, not a quota), max rounds, personas,
+           # gpu_minutes_per_team_per_round (set by the human per run)
 SEARCH_POLICY  # search_policy.md: plain text; how the manager picks what to work on next
                # (portfolio, continuing a winning leader's line, fallback). Isolated variable:
                # a run can override it, and the human can edit it mid-run.
@@ -73,7 +74,8 @@ AutoInfer():
     for round in 1..CONFIG.max_rounds:
         CHAMPION_snapshot = CHAMPION                    # synchronous: fixed for this round
         directions = brainstorm()                       # what to work on next
-        if directions is empty: break                   # manager thinks the scoped space is exhausted
+        if directions is empty: break                   # manager thinks nothing is worth running
+                                                        # (the human can also stop the run any time)
         tasks = manager.assign(directions, leaders)     # one task string per leader
         reports = execute(tasks)                        # leaders work in parallel; barrier
         collect_and_update(reports)
@@ -141,7 +143,8 @@ creative" does little). Initial set:
 manager.assign(directions, leaders) -> tasks:
     # One task string per leader:
     #   what to work on: the direction + rationale
-    #   optional: budget, scope constraints, pointers to related experiments in BANK
+    #   GPU budget for this round (CONFIG default; the manager may adjust it per direction)
+    #   optional: scope constraints, pointers to related experiments in BANK
     # NOT included (global): correctness criteria, metric, CHAMPION, BANK, SHARED_KB.
     # Which leader continues which line is decided by SEARCH_POLICY.
 ```
@@ -172,7 +175,10 @@ leader.run(task) -> report:
             if record.validity.ok and leader.wants_official_eval(record):
                 evaluate(record.candidate)              # appends official numbers
             local_kb.update(observations)
-        if done (budget / direction exhausted / manager says stop): break   # TBD (budget & stopping)
+        if leader reached a useful checkpoint or manager says stop: break
+            # out of budget = no new GPU jobs, but GPU-free work may continue.
+            # Need not finish the direction: propose continuing in "what I'd do next".
+            # See design/budget_and_stopping.md
     return report:
         # summary of findings
         # + experiments run, each linked to its BANK record (candidate commit + performance)
@@ -189,7 +195,7 @@ worker.run(task) -> report:                     # confined to its workspace
 ```python
 evaluate(candidate) -> record:          # OFFICIAL; requested by a leader only, after its review.
                                         # Trusted: frozen harness agents can't modify.
-    job = gpu_queue.submit(official, candidate)   # exclusive GPUs; charged to the leader's budget
+    job = gpu_queue.submit(official, candidate)   # exclusive GPUs; charged to the team's budget
     build(candidate.commit)                       # clean build from the commit
     numbers = bench(c=16, 400 prompts) + gsm8k(n=250)   # one server start; bench also gives
                                                         # MTP acceptance
@@ -235,3 +241,6 @@ These run throughout, outside the loop:
 - The leader reviews validity itself (no separate judge) and is responsible for what it
   submits. Only leaders request official evals; any agent may run unofficial GPU jobs within its
   GPU budget (manager → leader → worker). Official eval = clean build, c=16 bench + GSM8K-250.
+- Budget = GPU-minutes per team per round, enforced (team total only) by the GPU queue; agents are
+  trusted to use the queue. Leaders stop at any useful checkpoint; the run stops at max rounds, when
+  the manager finds nothing worth running, or when the human stops it.

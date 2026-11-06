@@ -16,8 +16,11 @@ Flavor-specific TODOs live in each flavor's `TODO.md` (e.g. `flavors/v1/TODO.md`
   should repeat the hard rules.
 
 ## Infrastructure
-- GPU job queue (fair sharing, exclusive benchmarking) and tiered evaluation: cheap proxy tests
-  agents can run freely vs. rationed official evals.
+- GPU job queue: a wrapper we write; all GPU work goes through it (agents trusted to use it in v1).
+  Needs: jobs tagged with team/agent + timeout, exclusive GPUs, per-team budget accounting with a
+  `status` command, official vs unofficial jobs (official = clean build + frozen harness). v1's
+  requirements: `flavors/v1/design/budget_and_stopping.md`. Also must coexist with other users of
+  the shared GPUs.
 - Experiment bank: proposed as one vLLM git repo (attempt = branch/commit + record file; champion =
   a git ref; teams use `git worktree`). Per-worktree builds: editable install + C++ extension
   reuse, ccache.

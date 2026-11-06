@@ -7,6 +7,9 @@ Flavor-specific TODOs live in each flavor's `design/TODO.md` (e.g. `flavors/v1/d
   in headless mode. Check `SendMessage`/`ListAgents` for local sessions. **Hard requirement**:
   brainstormers hold multi-turn chats with persistent leaders, and the manager talks to running
   leaders.
+- Crash recovery: agent sessions will die (API errors, context limits, server restarts). The
+  launcher should detect this and restart the agent with its last task; agents resume from state on
+  disk (bank, KBs, tree, journal). The algorithm assumes this exists.
 - CLAUDE.md scoping (tested 2026-11-05 with claude 2.1.318): `claudeMdExcludes` in
   `flavors/v1/.claude/settings.json` hides the top-level CLAUDE.md for sessions started in
   `flavors/v1/`. Relative `@../` imports of files outside the project are *not* loaded in `-p`

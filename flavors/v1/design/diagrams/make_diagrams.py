@@ -143,7 +143,7 @@ def data_structures():
 
     # Row A: inputs
     y = -17
-    section(ax, 2, y, "INPUTS  -  set by the human at run start; read-only to agents")
+    section(ax, 2, y, "INPUTS  -  set at run start (TASK definition + ledger agreed by the human and the manager); read-only afterwards")
     y -= 3.6
     inputs = [
         ("TASK  (tasks/<task>/)",
@@ -151,11 +151,11 @@ def data_structures():
          "Constraints: FP8 weights + FP8 KV; same math (fp reordering OK)\nHarness (frozen): bench, GSM8K-250\n"
          "Baseline profile (provided): where the time goes"),
         ("FOCUS", "\"Reduce FFN latency\""),
-        ("CONFIG", "3 teams, <= 3 workers each\nMax 5 rounds, k = 3 directions\n40 GPU-min per team per round\n"
+        ("CONFIG", "3 teams, <= 3 workers each\nMax 5 rounds, 1 direction per team\n40 GPU-min per team per round\nHuman checkpoints: \"short summary each round\"\n"
                    "Brainstormers (persona prompts): systematic engineer, adjacent-field colleague"),
         ("SEARCH_POLICY", "1. A leader improved the champion -> continue that line\n"
                           "2. Rest by upside; >= 1 slot for a high-novelty idea\n3. Nothing improved -> upside + novelty"),
-        ("LEDGER  (assumptions)", "Frozen:: 2x RTX 4090, FP8 W + FP8 KV, model math, ShareGPT workload\n"
+        ("ASSUMPTION LEDGER", "Frozen:: 2x RTX 4090, FP8 W + FP8 KV, model math, ShareGPT workload\n"
                                   "Open:: how the model is split across the 2 GPUs (baseline: TP=2), GEMM kernels, "
                                   "fusion, weight layout, tokens per pass, comm pattern"),
     ]
@@ -325,13 +325,16 @@ def round_overview():
     def down_arrow(top, h):
         arrow(ax, (L + LW / 2, top - h - 0.2), (L + LW / 2, top - h - 5.8), color="#444444", lw=1.6)
 
-    t, h = row("init", "initialize()  (once)", "Official eval of the baseline, bound analysis, ledger "
-               "(the human reviews it). The baseline profile comes with the task.",
-               simple("@b Baseline (BASE): 656 tok/s, GSM8K 93.2%\n"
-                      "Profile: Marlin FP8 GEMMs 49% of kernel time, NCCL all-reduce 27%, GDN 6%, attention 5%.\n"
-                      "Gate/up GEMM: 117 us/layer, DRAM-bound at ~80% of peak; tensor pipe ~25% busy.\n"
-                      "Bound: reading the gate/up weights at peak bandwidth takes ~90 us, so the kernel itself has "
-                      "~25% headroom. The rest must come from fewer bytes per token, or from the other half of the time."))
+    t, h = row("init", "initialize()  (once)", "The manager and the human define the task together (multi-turn; round 1 waits for the "
+               "human's OK). Then the official eval of the baseline. The baseline profile comes with the task.",
+               simple(                      "@b Defining the task (manager <-> human):\n"
+                      "Correctness:: same math (fp reordering OK), FP8 W + FP8 KV, same sampling, GSM8K holds.\n"
+                      "Loopholes the manager asked about:: caching outputs for the 400 fixed prompts; shorter outputs; "
+                      "changing MTP draft tokens, temperature or thinking; shrinking the 128K max context -> all forbidden.\n"
+                      "Assumption ledger:: frozen and open lines agreed (diagram 1).\n"
+                      "@b Baseline (BASE): 656 tok/s, GSM8K 93.2%\n"
+                      "Profile (from the task): Marlin FP8 GEMMs 49% of kernel time, NCCL all-reduce 27%, GDN 6%, attention 5%. "
+                      "Gate/up GEMM: 117 us/layer, DRAM-bound at ~80% of peak; tensor pipe ~25% busy."))
     down_arrow(t, h)
     t, h = row("start", "Round r begins", "CHAMPION goes into every leader's task.",
                simple("CHAMPION = BASE (656 tok/s). Set between rounds. Agents may still start from any BANK record."))
@@ -364,7 +367,7 @@ def round_overview():
         h2 = (h or total) - h1 - 3
         card(ax, R, top, RW, "1. Briefing (round 1: task, focus, baseline profile)", brief_body, MANAGER, h=h1)
         ty = top - h1 - 3
-        card(ax, R, ty, RW, "2-4. Two brainstormers propose; the manager scores and selects (k = 3)", "", BRAIN, h=h2)
+        card(ax, R, ty, RW, "2-4. Two brainstormers propose; the manager scores and selects one per team (3)", "", BRAIN, h=h2)
         cols = [R + 2, R + 28, R + RW - 33, R + RW - 27.5, R + RW - 22]
         yy = ty - 6
         for c, txt in zip(cols, ("persona", "idea", "nov", "up", "decision")):
@@ -390,7 +393,7 @@ def round_overview():
                "All can access everything, chat with any leader, and profile any record (GPU queue, unbudgeted). "
                "Round 1: same inputs for all (task, focus, baseline profile); only the persona differs.\n\n"
                "3. The manager dedupes and scores: novelty 1-5, upside 1-5.\n\n"
-               "4. The manager selects k directions with SEARCH_POLICY; the rest go to the TREE as `proposed` (backlog).")
+               "4. The manager selects one direction per leader with SEARCH_POLICY; the rest go to the TREE as `proposed` (an archive, not a queue: brainstormers may re-propose them later).")
     t, h = row("bs", "brainstorm()", bs_left, brainstorm_right)
     down_arrow(t, h)
 

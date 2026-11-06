@@ -67,11 +67,14 @@ TASK       # task folder: TASK.md (objective, metric, hard constraints, correctn
 FOCUS      # the human's natural-language scope for this run
 CONFIG     # number of leaders, max workers per leader (a limit, not a quota), max rounds,
            # gpu_minutes_per_team_per_round, brainstormers (one persona prompt string each)
-           # (all set by the human per run)
+           # human_checkpoints: free text, e.g. "a short summary after every round" (default),
+           #   "check in every hour", "wait for my OK on each round's directions"
+           # (all set by the human per run). Knobs that steer an agent's behavior are text placed
+           # into that agent's prompt (human_checkpoints -> the manager's prompt), not code paths.
 SEARCH_POLICY  # design/search_policy.md: plain text; how the manager picks what to work on next
                # (portfolio, continuing a winning leader's line, fallback). Isolated variable:
                # a run can override it, and the human can edit it mid-run.
-LEDGER     # assumptions: frozen vs open
+ASSUMPTION_LEDGER  # frozen vs open assumptions; agreed with the human in initialize()
 CHAMPION   # current best version: a BANK record id + its official numbers + profile.
            # A PERFORMANCE REFERENCE, NOT A REQUIRED STARTING POINT: agents may start from any bank
            # entry. v1: synchronous: set between rounds and passed to leaders in each round's task.
@@ -108,19 +111,47 @@ AutoInfer():
 ```
 
 ```python
-initialize():
-    CHAMPION  = evaluate(TASK.baseline)                 # official eval (record E0, empty diff);
+initialize():                                   # run by the manager, WITH the human
+    # 1. Define the task together: a multi-turn conversation, BLOCKING (round 1 waits for the
+    #    human's OK). See "Defining the task" below.
+    TASK.definition, ASSUMPTION_LEDGER = manager.define_task_with_human(TASK, FOCUS)
+    # 2. Baseline
+    CHAMPION  = evaluate(TASK.baseline)                 # official eval (record BASE, empty diff);
                                                         # also checks the harness works
     CHAMPION.profile = TASK.baseline_profile            # provided with the task (no profiling here)
-    facts     = bound_analysis(TASK, CHAMPION.profile)  # speed-of-light floor + gap breakdown
-    LEDGER    = assumption_ledger(TASK, FOCUS)          # frozen vs open assumptions; human reviews
     TREE      = new_tree(root = FOCUS)
-    SHARED_KB = [facts]; BANK = [CHAMPION]; JOURNAL = []
+    SHARED_KB = []; BANK = [CHAMPION]; JOURNAL = []
 ```
+No separate bound analysis: speed-of-light estimates are napkin math that leaders, workers and
+brainstormers do themselves when they need them.
+
+### Defining the task
+The most important step of the run. Whatever the task leaves loose, leaders will eventually find
+and exploit (reward hacking), and the validity review can only check what is written down. So the
+manager and the human build the task definition **together, in a multi-turn conversation**, and
+the manager's job is to dig for what is missing, not to accept the first draft:
+- **Correctness**: what "correct" means, spelled out. E.g. mathematically equivalent to the
+  baseline (is fp reordering OK? where?), precision (FP8 weights, FP8 KV; nothing lower), same
+  sampling settings, GSM8K must hold.
+- **Hard constraints**: what must not change (hardware, model, workload, serving features such
+  as the 128K max context).
+- **Edge cases and loopholes**: the manager actively looks for ways to "win" without a real
+  speedup, and asks the human about each. For the qwen task, e.g.: caching outputs for the fixed
+  benchmark prompts; producing fewer or shorter outputs; changing the number of MTP draft tokens,
+  the temperature, or thinking on/off; shrinking the max context to free memory; anything tuned to
+  seed 0 or to these 400 prompts only.
+- **Assumption ledger**: which assumptions are frozen and which are open for this run (given
+  the focus).
+
+Output: the agreed task definition (correctness criteria, hard constraints, known loopholes) and
+ASSUMPTION_LEDGER, saved with the run; the validity review checks against them. The human decides
+whether improvements go back into `tasks/<task>/` for future runs. Likely packaged as a manager
+skill (a checklist of what to ask about) once we have run it a few times.
 
 ```python
 brainstorm() -> directions:
-    # out: k directions, each = (tree node, rationale, bottleneck addressed)
+    # out: one direction per leader (k = number of leaders), each = (tree node, rationale,
+    #      bottleneck addressed)
 
     # 1. Manager writes the round briefing: what you'd tell a colleague in an adjacent field.
     briefing = manager.write_briefing()     # problem, facts (profile/bound numbers, not just
@@ -144,10 +175,13 @@ brainstorm() -> directions:
         idea.proposed_by = persona          # to learn which personas win
 
     # 4. Selection: a portfolio, not a ranking.
-    directions = manager.select(ideas, k, SEARCH_POLICY)   # e.g. "if a leader improved the champion,
+    directions = manager.select(ideas, len(leaders), SEARCH_POLICY)   # e.g. "if a leader improved the champion,
                                                             # continue that line; 1 slot most novel"
     TREE.add(directions, status = assigned)
-    TREE.add(ideas - directions, status = proposed)                  # backlog, visible to the human
+    TREE.add(ideas - directions, status = proposed, round = r)
+        # backlog = an archive, not a queue: visible to the human and to brainstormers, never
+        # selected directly. The manager selects only from this round's ideas; an old idea comes
+        # back only if a brainstormer proposes it again (updated for what is known now).
     JOURNAL.append(why these directions)
 ```
 
@@ -186,13 +220,14 @@ manager.assign(directions, leaders) -> tasks:
 
 ```python
 execute(tasks) -> reports:                      # all leaders in parallel; barrier at the end
+                                                # while waiting: the manager checks that running
+                                                # leaders make progress (see Decisions: stragglers)
     return parallel([leader.run(task) for leader, task in tasks])
 
 leader.run(task) -> report:
     # The direction is high level: the leader first thinks about how to break it into experiments,
     # in what order, and what can run in parallel (up to CONFIG.max_workers_per_leader; fewer is fine).
-    # TBD: what exactly a leader does (e.g. reviewing past results in BANK/SHARED_KB, planning,
-    # when to profile); see TODO.md
+    # Everything below is the leader's judgment; see "Leader behavior" for its role prompt.
     loop:
         plan = leader.plan(task, local_kb)              # next experiments; may revise the plan
         for exp in plan (in parallel, one worker each):
@@ -202,12 +237,13 @@ leader.run(task) -> report:
                                                         # relevant excerpts) as files in the workspace
             wreport = worker.run(exp.task)              # first task says what to read first and
                                                         # gives a GPU budget; follow-ups: another task
-                                                        # TBD: validation funnel (cheap tests before
-                                                        # GPU-heavy ones); see TODO.md
+                                                        # cheap tests before expensive ones
+                                                        # (guidance; see Leader behavior)
             record = leader.file_record(wreport, ws)    # record.md + diff vs baseline into BANK
             record.validity = leader.review(record.diff, TASK)   # the leader signs off: raw diff vs
                                                                  # hard constraints / correctness
-            if record.validity.ok and leader.wants_official_eval(record):
+            if record.validity.ok and leader.wants_official_eval(record):   # typically: the
+                                                # unofficial result beats CHAMPION by > noise
                 evaluate(record.candidate)              # appends official numbers
             local_kb.update(observations)
         if leader reached a useful checkpoint or manager says stop: break
@@ -226,6 +262,37 @@ worker.run(task) -> report:                     # confined to its workspace
     # through the GPU queue, within its budget
     # report: summary (Observed / Interpretation) + numbers; the change stays in its workspace
 ```
+
+### Leader behavior
+v1 leaves almost everything to the leader. Its role prompt says:
+- **The direction is intentionally high level and somewhat vague.** It is up to you to decide how
+  to explore it: which experiments, in what order, what runs in parallel. The goal is everyone's
+  goal: the best result on the task's metric.
+- **You may go outside the direction, if the evidence says so.** The direction is the
+  brainstorm's best guess, and you will learn things it didn't know. Rule of thumb:
+  - Reshaping it (narrowing, widening, reinterpreting it in its spirit): free.
+  - Pivoting to something outside it: OK when **your own evidence from this round** (a profile, a
+    measurement, a failed experiment) says it is more promising. Say so in the report: what you
+    changed, why, and the evidence.
+  - A new idea with no evidence behind it: don't chase it. Put it in the report as left open; the
+    next brainstorm can pick it up. (Generating ideas is the brainstormers' job.)
+- **What to read first is up to you**: related BANK records, SHARED_KB, your local KB, the
+  CHAMPION's profile, whatever helps.
+- **Be aware of your GPU budget** and allocate it to whatever looks most promising; shift it as
+  results come in.
+- **Up to `CONFIG.max_workers_per_leader` workers in parallel.** A limit, not a quota: use fewer if
+  that is better.
+- **Starting points are your call**: the CHAMPION by default, or any BANK record the experiment
+  builds on.
+- **Workers**: give follow-ups to the same worker by default; start a fresh one for an unrelated
+  experiment or when a worker is stuck in a rut.
+- **Cheap before expensive** (guidance, not a gate): napkin math (Amdahl, roofline) →
+  microbenchmark with real shapes → one batched forward pass + profile → short unofficial bench →
+  official eval. Skip steps when they don't fit; proxies can mislead and napkin math can be wrong
+  about a novel idea. **Record the napkin-math estimate next to the measurement**: a mismatch is
+  itself an observation. (Costs: [evaluation.md](evaluation.md).) Workers get the same guidance.
+- **Official evals cost ~7 GPU-minutes.** Request one after your validity review, typically when
+  the unofficial result beats the CHAMPION by more than the noise (~3%). It is your call.
 
 ```python
 evaluate(candidate) -> record:          # OFFICIAL; requested by a leader only, after its review.
@@ -253,11 +320,12 @@ collect_and_update(reports):
     # brainstorm (e.g. by the systematic engineer) and run like any other direction.
     SHARED_KB.update(accepted insights from reports)   # manager is the only writer
     JOURNAL.append(round summary)
-    report_to_human()
+    report_to_human()                       # as CONFIG.human_checkpoints says (default: a short
+                                            # round summary; no blocking checkpoint)
 ```
 
 These run throughout, outside the loop:
-- **Human ↔ manager at any time**: status, redirect, change the focus or ledger, pause or kill a
+- **Human ↔ manager at any time**: status, redirect, change the focus or the assumption ledger, pause or kill a
   leader. The manager can do the same to leaders in the middle of `execute`.
 - **Asynchronous messages**: manager ↔ leader, leader ↔ worker.
 
@@ -267,12 +335,36 @@ These run throughout, outside the loop:
 - Agent lifetimes: manager and leaders are persistent (compaction keeps them going); workers are
   persistent by default, and the leader decides when to start a fresh one; brainstormers are new
   every round.
+- `initialize()`: the manager and the human define the task in a multi-turn conversation
+  (correctness, hard constraints, loopholes, assumption ledger); round 1 waits for the human's OK.
+  No separate bound analysis.
+- Human checkpoints: the only blocking one by default is the task definition in `initialize()`.
+  Beyond that, `CONFIG.human_checkpoints` is a free-text instruction placed into the manager's
+  prompt (default: a short summary after every round). The human can step in at any time.
+- Failure paths: no special mechanisms. Agents handle failures with judgment plus the existing
+  rules: failed attempts are filed like any other record (an observation); a fixed version is a new
+  record with a new official eval (budget limits retries); only official, valid results with GSM8K
+  holding can become champion; all state is on disk, so a restarted agent resumes from it.
+- Stragglers: no time limit, no rule against slow leaders. While waiting at the barrier, the
+  manager checks that the leaders still running are making progress: they or their workers are
+  actually doing something (new jobs, files, records, messages), not necessarily improving. Slow
+  but active: wait. Hanging: ask, then kill or restart it. (A per-round time limit was considered
+  and deferred: too much complexity for v1.)
+- Running out of tokens or plan usage: the manager stops the run and tells the human.
 - What to work on next is decided by `search_policy.md` (an isolated, editable variable).
+- One direction per leader per round (k = number of leaders).
+- Ideas not selected stay in the tree as `proposed` (with the round): an archive, not a queue.
+  Only this round's ideas are selected; old ones come back only if a brainstormer re-proposes them,
+  so stale ideas never run.
 - Ideas come only from brainstormers (leaders don't propose next steps). Brainstormers are listed
   in CONFIG, one persona prompt each; all can access everything, and variety comes from the
   personas. Default: a systematic engineer and a smart colleague from an adjacent field.
 - The task provides the baseline profile; round 1's brainstormers start from it.
 - Leaders decompose their direction into experiments; max workers per leader is a limit, not a quota.
+  How to explore a direction (what to read, experiments, budget split, starting points, when to
+  request an official eval) is the leader's judgment, guided by its role prompt. Cheap tests
+  before expensive ones is guidance, not a gate. Leaders may leave their direction when their own
+  evidence points elsewhere, and say so; new ideas without evidence go to the next brainstorm.
 - Two idea scores only, novelty and upside, each 1-5, assigned centrally by the manager.
 - The manager is the only writer of the shared KB.
 - One interface for persistent agents: `run(task: str) -> report: str`.

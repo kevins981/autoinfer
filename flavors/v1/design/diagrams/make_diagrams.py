@@ -84,7 +84,7 @@ def data_structures():
         "1. a leader improved the champion ->\n   continue its \"what I'd do next\"\n2. rest by upside; >=1 slot for a\n   high-novelty idea\n3. nothing improved -> upside + novelty",
         HUMAN)
     box(ax, 2, 27, 40, 16.5, "LEDGER  (assumptions)",
-        "frozen: FP8 W + FP8 KV, TP=2,\n  model math, ShareGPT workload\nopen: GEMM kernel choice, fusion,\n  weight layout, tokens per pass,\n  comm pattern (all-reduce vs RS+AG)",
+        "frozen: 2x RTX 4090, FP8 W + FP8 KV,\n  model math, ShareGPT workload\nopen: how the model is split across\n  the 2 GPUs (baseline: TP=2), GEMM\n  kernels, fusion, weight layout,\n  tokens per pass, comm pattern",
         HUMAN)
     ax.text(2, 24, "Human writes these at run start (manager may\npropose ledger changes; the human approves).",
             fontsize=8, va="top", color="#555555", style="italic")
@@ -96,13 +96,13 @@ def data_structures():
         ("FOCUS: reduce FFN latency", None, "#111111"),
         ("+- N1 Mixed GEMM kernel by tokens/pass", "[win]", "#2e7d32"),
         ("|    nov 2 . up 4 . by: lit scout + Team 1", None, "#555555"),
-        ("|    experiments: E1, E2  (E2 = champion)", None, "#555555"),
+        ("|    experiments: T1-001, T1-002  (T1-002 = champion)", None, "#555555"),
         ("+- N2 Fuse SiLU*mul into gate/up GEMM", "[no gain]", "#9e6a00"),
         ("|    nov 2 . up 3 . by: cross-domain", None, "#555555"),
-        ("|    experiments: E3", None, "#555555"),
+        ("|    experiments: T2-001", None, "#555555"),
         ("+- N3 Sequence-parallel FFN (RS + AG)", "[slower]", "#b71c1c"),
         ("|    nov 5 . up 2 . by: systems (novelty slot)", None, "#555555"),
-        ("|    experiments: E4", None, "#555555"),
+        ("|    experiments: T3-001", None, "#555555"),
         ("+- N4 More tokens per weight read", "[proposed]", "#666666"),
         ("|    nov 3 . up 2 . by: first principles", None, "#555555"),
         ("+- N5 Split-K for the small down GEMM", "[proposed]", "#666666"),
@@ -122,20 +122,20 @@ def data_structures():
 
     # Journal
     box(ax, 46, 22, 58, 20, "JOURNAL  (decisions, in order, and why)",
-        "R1 start: picked N1, N2 (upside), N3 (novelty slot,\n   rule 3: nothing improved yet); N4, N5 -> backlog\nR1 end: E2 -> champion (+5%). N2 closed (gain < noise),\n   N3 closed (extra NCCL calls cost more on PCIe)\nR2 start: rule 1 -> Team 1 continues (tune threshold\n   per GEMM shape); ...",
+        "R1 start: picked N1, N2 (upside), N3 (novelty slot,\n   rule 3: nothing improved yet); N4, N5 -> backlog\nR1 end: T1-002 -> champion (+5%). N2 closed (gain < noise),\n   N3 closed (extra NCCL calls cost more on PCIe)\nR2 start: rule 1 -> Team 1 continues (tune threshold\n   per GEMM shape); ...",
         MANAGER, bsize=8.2)
     arrow(ax, (75, 42.3), (75, 46), color=MANAGER[1], ls="--", label="refers to nodes")
 
     # Bank
     bx, by, bw, bh = 108, 22, 48, 89
     box(ax, bx, by, bw, bh, "BANK  (experiment bank)", "", LEADER)
-    ax.text(bx + 1, by + bh - 4.2, "git repo: one branch per attempt + a record file", fontsize=8, color="#333333")
+    ax.text(bx + 1, by + bh - 4.2, "one folder per experiment: record.md + change.diff", fontsize=8, color="#333333")
     recs = [
-        ("E0  baseline (task)", "start: vllm@4527515", "official: 656 tok/s, GSM8K 93.2%", HUMAN),
-        ("E1  Team 1 / W1   start: E0", "microbench Marlin vs FP8 tensor-core GEMM,\nreal FFN shapes, M = 1..2048\nObserved: FP8-TC faster above ~64 tok/pass", None, LEADER),
-        ("E2  Team 1 / W2   start: E0", "dispatch: FP8-TC if tokens/pass >= 64\nreview: valid (leader)", "official: 689 tok/s (+5%), GSM8K 93.6%", LEADER),
-        ("E3  Team 2 / W1   start: E0", "SiLU*mul fused into gate/up epilogue\nunofficial bench: +1% (within noise)\nnot submitted for official eval", None, LEADER),
-        ("E4  Team 3 / W1   start: E0", "reduce-scatter + all-gather around FFN\nunofficial bench: -6%\nObserved: 2 NCCL calls ~ 2x latency of 1", None, LEADER),
+        ("BASE  baseline (task)", "vllm@4527515, empty diff", "official: 656 tok/s, GSM8K 93.2%", HUMAN),
+        ("T1-001  Team 1 / W1   start: BASE", "microbench Marlin vs FP8 tensor-core GEMM,\nreal FFN shapes, M = 1..2048\nObserved: FP8-TC faster above ~64 tok/pass", None, LEADER),
+        ("T1-002  Team 1 / W2   start: BASE", "dispatch: FP8-TC if tokens/pass >= 64\nreview: valid (leader)", "official: 689 tok/s (+5%), GSM8K 93.6%", LEADER),
+        ("T2-001  Team 2 / W1   start: BASE", "SiLU*mul fused into gate/up epilogue\nunofficial bench: +1% (within noise)\nnot submitted for official eval", None, LEADER),
+        ("T3-001  Team 3 / W1   start: BASE", "reduce-scatter + all-gather around FFN\nunofficial bench: -6%\nObserved: 2 NCCL calls ~ 2x latency of 1", None, LEADER),
     ]
     rec_y = {}
     ry = by + bh - 6.5
@@ -144,34 +144,34 @@ def data_structures():
         box(ax, bx + 1.5, ry - h, bw - 3, h, title, body, col, tsize=9, bsize=8)
         if off:
             ax.text(bx + 2.5, ry - h + 1.2, off, fontsize=8, weight="bold", color=OFFICIAL)
-        rec_y[title[:2]] = ry - h / 2
+        rec_y[title.split()[0]] = ry - h / 2
         ry -= h + 1.8
     ax.text(bx + 1, by + 1.2,
-            "record = who, start commit, hypothesis, change,\nObserved / Interpretation, validity review;\nofficial numbers appended by the evaluator",
+            "record = id, team, performance, short summary\n(results = Observed, conclusion = Interpretation),\nvalidity; change.diff is vs the task baseline",
             fontsize=7.8, color="#555555", style="italic")
 
     # Tree -> bank links
-    for n, es in [("N1", ["E1", "E2"]), ("N2", ["E3"]), ("N3", ["E4"])]:
+    for n, es in [("N1", ["T1-001", "T1-002"]), ("N2", ["T2-001"]), ("N3", ["T3-001"])]:
         for e in es:
             arrow(ax, (tx + tw + 0.3, node_y[n]), (bx + 1.4, rec_y[e]), color=MANAGER[1], lw=1.0, rad=-0.05)
 
     # Right column
     rx, rw = 160, 38
-    box(ax, rx, 93, rw, 18, "CHAMPION  (git ref `champion`)",
-        "-> E2: 689 tok/s, GSM8K 93.6%\nprofile: GEMMs 44%, NCCL 30%, ...\nA performance reference, not a\nrequired starting point. Snapshot\nat the start of each round.",
+    box(ax, rx, 93, rw, 18, "CHAMPION  (a bank record id)",
+        "-> T1-002: 689 tok/s, GSM8K 93.6%\nprofile: GEMMs 44%, NCCL 30%, ...\nA performance reference, not a\nrequired starting point. Set between\nrounds; part of every leader's task.",
         MANAGER, bsize=8.2)
-    arrow(ax, (rx - 0.3, 100), (bx + bw - 1.3, rec_y["E2"] + 2), color=MANAGER[1], lw=1.8, rad=0.25)
+    arrow(ax, (rx - 0.3, 100), (bx + bw - 1.3, rec_y["T1-002"] + 2), color=MANAGER[1], lw=1.8, rad=0.25)
     box(ax, rx, 62, rw, 28, "SHARED_KB  (manager only)",
-        "K1 FFN GEMMs are DRAM-bound (~80%\n   of peak): little headroom in the\n   kernel itself. [E0 profile]\nK2 FP8-TC beats Marlin above ~64\n   tokens/pass on sm_89. [E1, E2]\nK3 Extra NCCL calls cost more than\n   they save over PCIe. [E4]",
+        "K1 FFN GEMMs are DRAM-bound (~80%\n   of peak): little headroom in the\n   kernel itself. [BASE profile]\nK2 FP8-TC beats Marlin above ~64\n   tokens/pass on sm_89.\n   [T1-001, T1-002]\nK3 Extra NCCL calls cost more than\n   they save over PCIe. [T3-001]",
         MANAGER, bsize=8.2)
-    arrow(ax, (rx - 0.3, 76), (bx + bw - 1.3, rec_y["E1"]), color=MANAGER[1], lw=1.0, ls="--", rad=0.1)
-    arrow(ax, (rx - 0.3, 66), (bx + bw - 1.3, rec_y["E4"]), color=MANAGER[1], lw=1.0, ls="--", rad=0.1)
+    arrow(ax, (rx - 0.3, 76), (bx + bw - 1.3, rec_y["T1-001"]), color=MANAGER[1], lw=1.0, ls="--", rad=0.1)
+    arrow(ax, (rx - 0.3, 66), (bx + bw - 1.3, rec_y["T3-001"]), color=MANAGER[1], lw=1.0, ls="--", rad=0.1)
     ax.text(rx + 1, 60, "entries cite the records behind them", fontsize=7.8, color="#555555", style="italic")
     box(ax, rx, 37, rw, 20, "Local KBs  (one per leader)",
         "Team 1: crossover table; next: tune\n   threshold per GEMM shape\nTeam 2: epilogue fusion saves ~6 us/\n   layer, below bench noise\nTeam 3: NCCL latency numbers",
         LEADER, bsize=8.2)
     box(ax, rx, 15, rw, 19, "GPU queue usage  (round 1)",
-        "Team 1   32 / 40 GPU-min\nTeam 2   22 / 40\nTeam 3   40 / 40  (exhausted)\nmanager  16  (unbudgeted)\none model-loading job at a time",
+        "Team 1   32 / 40 GPU-min\nTeam 2   22 / 40\nTeam 3   40 / 40  (exhausted)\nmanager, brainstormers:\n         unbudgeted, still queued\none model-loading job at a time",
         EVAL, bsize=8.4, mono=True)
 
     # Who reads what
@@ -179,8 +179,8 @@ def data_structures():
     ax.text(4, 12.5,
             "Manager: everything; the only writer of TREE, SHARED_KB, JOURNAL, CHAMPION.\n"
             "Leaders: all global state (read), their own local KB (write); they file BANK records.\n"
-            "Workers: only their workspace (a git worktree + brief files the leader copied in).\n"
-            "Brainstormers: the manager's briefing + a random sample of BANK records (Observed sections only); may query BANK and chat with leaders.",
+            "Workers: only their workspace (the baseline + the starting record's diff, plus brief files the leader copied in).\n"
+            "Brainstormers: the manager's briefing + a random sample of BANK records (Observed sections only); may query BANK, chat with leaders, and profile any record (GPU queue).",
             fontsize=8.6, va="top", linespacing=1.45)
 
     fig.savefig(os.path.join(HERE, "1_global_state.png"))
@@ -205,7 +205,7 @@ def round_overview():
     # 0. initialize
     phase(129, 14, "initialize()  (once)", "official eval of the baseline,\nprofile, bound analysis, ledger")
     box(ax, R, 129, RW, 14, "",
-        "Baseline E0: 656 tok/s, GSM8K 93.2%.  Profile: Marlin FP8 GEMMs 49% of kernel time, NCCL all-reduce 27%, GDN 6%, attention 5%.\n"
+        "Baseline (BASE): 656 tok/s, GSM8K 93.2%.  Profile: Marlin FP8 GEMMs 49% of kernel time, NCCL all-reduce 27%, GDN 6%, attention 5%.\n"
         "Gate/up GEMM 117 us/layer, DRAM-bound at ~80% of peak bandwidth; tensor pipe ~25% busy.\n"
         "Bound: reading the gate/up weights at peak bandwidth takes ~90 us -> the kernel itself has ~25% headroom; the rest must come from\n"
         "reading fewer bytes per token (more tokens per weight read) or from the other 50% of time.   Ledger reviewed by the human.",
@@ -213,13 +213,13 @@ def round_overview():
     arrow(ax, (L + LW / 2, 129), (L + LW / 2, 125.5))
 
     # round start
-    phase(119, 6, "round r: snapshot CHAMPION", "")
-    box(ax, R, 119, RW, 6, "", "CHAMPION = E0 (656 tok/s). Fixed for the whole round; agents may still start from any BANK record.", MANAGER, bsize=8.6)
+    phase(119, 6, "round r: CHAMPION -> tasks", "")
+    box(ax, R, 119, RW, 6, "", "CHAMPION = BASE (656 tok/s). Set between rounds and included in every leader's task; agents may still start from any BANK record.", MANAGER, bsize=8.6)
     arrow(ax, (L + LW / 2, 119), (L + LW / 2, 116.5))
 
     # brainstorm
     phase(66, 50, "brainstorm()",
-              "1. leaders' \"what I'd do next\"\n   (round 1: asked directly)\n\n2. manager writes the briefing\n   (facts + what was tried and\n   observed; also a status report)\n\n3. brainstormers, one per persona,\n   fresh sessions, in parallel, each\n   with a random BANK sample\n   (Observed only); may query BANK\n   and chat with any leader\n\n4. manager dedupes and scores:\n   novelty 1-5, upside 1-5\n\n5. manager selects k directions\n   with SEARCH_POLICY; the rest\n   -> TREE as `proposed` (backlog)")
+              "1. leaders' \"what I'd do next\"\n   (round 1: asked directly)\n\n2. manager writes the briefing\n   (facts + what was tried and\n   observed; also a status report)\n\n3. brainstormers, one per persona,\n   fresh sessions, in parallel, each\n   with a random BANK sample\n   (Observed only); may query BANK,\n   chat with any leader, and profile\n   any record (GPU queue, unbudgeted)\n\n4. manager dedupes and scores:\n   novelty 1-5, upside 1-5\n\n5. manager selects k directions\n   with SEARCH_POLICY; the rest\n   -> TREE as `proposed` (backlog)")
     # right side of brainstorm
     box(ax, R, 105, 62, 11, "1. Leaders", "Team 1: \"Triton FP8 cut TTFT 14% but raised ITL 14%:\nuse each kernel where it wins.\"  Teams 2, 3: ...", LEADER, tsize=9.5, bsize=8.2)
     box(ax, R + 64, 105, RW - 64, 11, "2. Briefing (to brainstormers)",
@@ -252,7 +252,7 @@ def round_overview():
     phase(52, 10.5, "manager.assign()", "one task string per leader:\ndirection + rationale + GPU budget")
     box(ax, R, 52, RW, 10.5, "",
         "Team 1 <- N1: \"Use the FP8 tensor-core GEMM when a forward pass has many tokens and Marlin otherwise. Why: Triton FP8 cut TTFT 14%\n"
-        "   but raised decode ITL 14%. Budget: 40 GPU-min. Related: E0 profile, the Triton backend sweep.\"\n"
+        "   but raised decode ITL 14%. Budget: 40 GPU-min. Related: BASE profile, the Triton backend sweep.\"\n"
         "Team 2 <- N2 (fused epilogue), Team 3 <- N3 (RS + AG). Not in the task (global): constraints, metric, CHAMPION, BANK, SHARED_KB.",
         MANAGER, bsize=8.4)
     arrow(ax, (L + LW / 2, 52), (L + LW / 2, 48.5))
@@ -263,21 +263,21 @@ def round_overview():
           LEADER)
     lw3 = (RW - 4) / 3
     lanes = [
-        ("Team 1  (N1)", "W1: microbench both kernels on the\n   FFN shapes -> crossover ~64 tok/pass\n   (E1, 3 GPU-min)\nW2: dispatch by tokens/pass, 2 iterations\n   of smoke + bench + nsys (22 GPU-min)\nleader: files E1, E2; reviews E2's diff:\n   valid -> official eval (7 GPU-min)\n   => 689 tok/s (+5%), GSM8K 93.6%\nused 32 / 40.  next: tune threshold\n   per GEMM shape"),
-        ("Team 2  (N2)", "W1: fused SiLU*mul epilogue;\n   microbench: -6 us/layer\n   unofficial bench: +1% (noise)  (E3)\nleader: not worth an official eval;\n   stops at a checkpoint: \"gain below\n   noise; revisit if FFN share grows\"\nused 22 / 40.  next: fuse the FP8\n   activation quant too"),
-        ("Team 3  (N3)", "W1: RS + AG around the FFN;\n   unofficial bench: -6%  (E4)\nW2: nsys: 2 NCCL calls ~ 2x the\n   latency of 1 all-reduce on PCIe\nbudget exhausted (40 / 40): no more\n   GPU jobs, but still analyzes the\n   profile and writes the report\nnext: none, close the idea"),
+        ("Team 1  (N1)", "W1: microbench both kernels on the\n   FFN shapes -> crossover ~64 tok/pass\n   (T1-001, 3 GPU-min)\nW2: dispatch by tokens/pass, 2 iterations\n   of smoke + bench + nsys (22 GPU-min)\nleader: files T1-001, T1-002; reviews T1-002's diff:\n   valid -> official eval (7 GPU-min)\n   => 689 tok/s (+5%), GSM8K 93.6%\nused 32 / 40.  next: tune threshold\n   per GEMM shape"),
+        ("Team 2  (N2)", "W1: fused SiLU*mul epilogue;\n   microbench: -6 us/layer\n   unofficial bench: +1% (noise)  (T2-001)\nleader: not worth an official eval;\n   stops at a checkpoint: \"gain below\n   noise; revisit if FFN share grows\"\nused 22 / 40.  next: fuse the FP8\n   activation quant too"),
+        ("Team 3  (N3)", "W1: RS + AG around the FFN;\n   unofficial bench: -6%  (T3-001)\nW2: nsys: 2 NCCL calls ~ 2x the\n   latency of 1 all-reduce on PCIe\nbudget exhausted (40 / 40): no more\n   GPU jobs, but still analyzes the\n   profile and writes the report\nnext: none, close the idea"),
     ]
     for i, (t, b) in enumerate(lanes):
         box(ax, R + i * (lw3 + 2), 18, lw3, 30, t, b, LEADER, tsize=9.5, bsize=8.1)
     arrow(ax, (L + LW / 2, 18), (L + LW / 2, 15.5))
 
     # collect
-    phase(2, 13.5, "collect_and_update()", "TREE, CHAMPION, re-profile,\nSHARED_KB, JOURNAL,\nreport to the human")
+    phase(2, 13.5, "collect_and_update()", "TREE, promote CHAMPION,\nSHARED_KB, JOURNAL,\nreport to the human")
     box(ax, R, 2, RW, 13.5, "",
-        "TREE: N1 win, N2 no gain, N3 slower (each with its experiments).   CHAMPION <- E2 (689 tok/s); re-profile: GEMMs 44%, NCCL 30%.\n"
-        "SHARED_KB += K2 (\"FP8-TC beats Marlin above ~64 tok/pass\" [E1, E2]), K3 (\"extra NCCL calls cost more over PCIe\" [E4]).\n"
+        "TREE: N1 win, N2 no gain, N3 slower (each with its experiments).   Manager promotes T1-002 (689 tok/s, +5% > noise) to CHAMPION.\n"
+        "SHARED_KB += K2 (\"FP8-TC beats Marlin above ~64 tok/pass\" [T1-001, T1-002]), K3 (\"extra NCCL calls cost more over PCIe\" [T3-001]).\n"
         "JOURNAL: round summary.   Report to the human: what was tried, what was learned, the new champion, the backlog.\n"
-        "Next round: rule 1 (Team 1 improved the champion) -> Team 1's \"tune threshold per GEMM shape\" gets a slot.",
+        "Next round: rule 1 (Team 1 improved the champion) -> Team 1's \"tune threshold per GEMM shape\" gets a slot. Combining wins = a brainstorm idea.",
         MANAGER, bsize=8.4)
     # loop arrow
     ax.plot([L, 3.5, 3.5], [8, 8, 122], color="#555555", lw=1.5)
@@ -316,9 +316,9 @@ def inside_team():
     y = 116
     msg(y, "Manager", "Leader", "task: N1 + rationale + 40 GPU-min")
     y -= 9
-    note(y, "Leader", "reads BANK (E0, Triton sweep), SHARED_KB\nK1, its local KB; plans 2 experiments", w=46, h=7)
+    note(y, "Leader", "reads BANK (BASE, Triton sweep), SHARED_KB\nK1, its local KB; plans 2 experiments", w=46, h=7)
     y -= 9
-    note(y, "Leader", "sets up 2 worktrees from E0 (CHAMPION)\n+ BRIEF.md (metric, scripts, excerpts)", w=46, h=7)
+    note(y, "Leader", "sets up 2 workspaces from CHAMPION (= BASE)\n+ BRIEF.md (metric, scripts, excerpts)", w=46, h=7)
     y -= 8
     msg(y, "Leader", "W1", "\"Microbench Marlin vs FP8-TC, 4 FFN shapes,\nM=1..2048. Read BRIEF.md first. 5 GPU-min\"")
     y -= 9
@@ -334,15 +334,15 @@ def inside_team():
     y -= 6
     msg(y, "W2", "Leader", "report: commit, 690 tok/s unofficial, profile", color=WORKER[1])
     y -= 7
-    msg(y, "Leader", "BANK", "files E1 (microbench) and E2 (dispatch): branch + record (Observed / Interpretation)")
+    msg(y, "Leader", "BANK", "files T1-001 (microbench) and T1-002 (dispatch): record.md + change.diff vs baseline")
     y -= 8
-    note(y, "Leader", "reviews E2's raw diff vs TASK constraints:\nsame math, FP8 W + KV kept -> valid", w=46, h=7)
+    note(y, "Leader", "reviews T1-002's raw diff vs TASK constraints:\nsame math, FP8 W + KV kept -> valid", w=46, h=7)
     y -= 8
-    msg(y, "Leader", "GPU", "official eval of E2 (clean build, 7 GPU-min)", color=OFFICIAL)
+    msg(y, "Leader", "GPU", "official eval of T1-002 (clean build, 7 GPU-min)", color=OFFICIAL)
     y -= 6
     msg(y, "GPU", "BANK", "append: 689 tok/s, GSM8K 93.6%", color=OFFICIAL)
     y -= 7
-    msg(y, "Leader", "Manager", "report: summary, E1/E2 links, proposed insight K2, next: tune threshold per shape", color=LEADER[1])
+    msg(y, "Leader", "Manager", "report: summary, T1-001/T1-002 links, proposed insight K2, next: tune threshold per shape", color=LEADER[1])
     y -= 6
     note(y, "GPU", "Team 1 used 3 + 22 + 7 = 32 / 40", color=EVAL, w=34, h=4.5)
     ax.text(2, 1.5, "Workers only see their worktree. Workers may run any unofficial GPU job within their share; only the leader "

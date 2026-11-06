@@ -8,8 +8,9 @@
 - **Passed as text** in the leader's task ("budget: 40 GPU-minutes"), so the interface stays
   `run(task: str)`. The leader divides it among its workers (in their task text) and its own
   official evals, and monitors it.
-- **The manager's own GPU work** (initial profile, re-profiling the champion, integration) is
-  unbudgeted for now, but still goes through the queue.
+- **The manager and brainstormers** (initial profile; brainstormers profiling the champion or
+  any record) are unbudgeted for now, but still go through the queue: never two model-loading
+  jobs on the GPUs at once.
 - A round takes at least (teams × budget) of GPU wall time, since only one model-loading job runs
   at a time (e.g. 3 teams × 40 min ≥ 2 h per round). The manager tells the human this when the
   run starts.

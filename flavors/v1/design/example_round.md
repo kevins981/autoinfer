@@ -1,6 +1,6 @@
 # v1: an example round, visually
 
-A made-up round 1 on the qwen task (Qwen3.8-27B-FP8, TP=2, 2x RTX 4090) with the focus **"reduce
+A made-up round 1 on the qwen task (Qwen3.8-27B-FP8 on 2x RTX 4090; the baseline uses TP=2) with the focus **"reduce
 FFN latency"**. The profile facts come from `qwen38_opt` (Marlin FP8 GEMMs ~49% of kernel time,
 DRAM-bound at ~80% of peak; NCCL all-reduce ~27%); every result after the baseline is
 **illustrative**, not measured. Regenerate the images with `diagrams/make_diagrams.py`.

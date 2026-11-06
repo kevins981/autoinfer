@@ -26,7 +26,7 @@ concrete example, see [example_round.md](example_round.md).
 ## What is recorded
 | Store | Contents | Written by |
 |---|---|---|
-| Experiment records (bank) | One per experiment: who ran it (leader/team), starting commit, hypothesis, change (git commit), results, the leader's validity review, and two separate sections: **Observed** (what was measured/seen) and **Interpretation** (what we think it means) | the leader, from its workers' results; the evaluator appends official numbers |
+| Experiment records (bank) | One per experiment: id, team, performance, short summary (results = **Observed**, conclusion = **Interpretation**, kept separate), validity review, and a diff against the task baseline. See [Experiment record](#experiment-record) | the leader, from its workers' results; the evaluator appends official numbers |
 | Search tree | Index of ideas; each node = an idea with its experiments, a summary/conclusion, novelty + upside scores, who proposed it, status (incl. `proposed` = not yet selected) | manager |
 | Shared KB | Understanding of the system not tied to a single idea; each entry cites the experiments behind it | **manager only** (leaders propose insights in their reports) |
 | Local KB | A leader's working notes, hypotheses, plans | that leader |
@@ -35,6 +35,25 @@ concrete example, see [example_round.md](example_round.md).
 **Observations vs. insights.** Insights close questions; observations leave them open, so someone
 new can draw a different conclusion from the same data. Brainstormers get observations; insights
 are not their starting frame (they may still hear them when chatting with a leader).
+
+## Experiment record
+One folder per experiment in the bank. Every field is free-form text.
+```
+bank/<id>/                # id by team, e.g. T1-003 (the manager may rename)
+  record.md
+    team:         T1
+    performance:  e.g. "official: 689 tok/s at c=16 (+5% vs E0), GSM8K 93.6%",
+                  or "unofficial: ~+1% (within noise)", or "build failed"
+    summary:      short, for a quick scan:
+                    hypothesis
+                    change         (what was done; "builds on T1-002" if not from the baseline)
+                    results        = Observed: what was measured or seen
+                    conclusion     = Interpretation: what we think it means
+    validity:     the leader's review of the diff against TASK.md
+  change.diff             # against the task baseline, so it applies to the baseline directly
+  (optional) profiles, logs
+```
+Brainstormers sample records with the conclusion removed (observations, not insights).
 
 ## Global state
 These are global variables in the pseudocode: available to every agent that needs them and never
@@ -49,10 +68,11 @@ SEARCH_POLICY  # design/search_policy.md: plain text; how the manager picks what
                # (portfolio, continuing a winning leader's line, fallback). Isolated variable:
                # a run can override it, and the human can edit it mid-run.
 LEDGER     # assumptions: frozen vs open
-CHAMPION   # current best version: commit, official numbers, profile.
+CHAMPION   # current best version: a BANK record id + its official numbers + profile.
            # A PERFORMANCE REFERENCE, NOT A REQUIRED STARTING POINT: agents may start from any bank
-           # entry. v1: synchronous, snapshotted at the start of each round and fixed until the next.
-BANK       # experiment bank: every attempt (git branch/commit + record), pass or fail
+           # entry. v1: synchronous: set between rounds and passed to leaders in each round's task.
+           # (No mid-round "new best" notifications.)
+BANK       # experiment bank: every attempt (record + diff vs the task baseline), pass or fail
 SHARED_KB  # confirmed understanding of the system (written by the manager only)
 TREE       # search tree (manager)
 JOURNAL    # decisions and why (manager)
@@ -85,7 +105,8 @@ AutoInfer():
 
 ```python
 initialize():
-    CHAMPION  = evaluate(TASK.baseline)                 # official eval; also checks the harness works
+    CHAMPION  = evaluate(TASK.baseline)                 # official eval (record E0, empty diff);
+                                                        # also checks the harness works
     CHAMPION.profile = profile(CHAMPION)                # where the time goes
     facts     = bound_analysis(TASK, CHAMPION.profile)  # speed-of-light floor + gap breakdown
     LEDGER    = assumption_ledger(TASK, FOCUS)          # frozen vs open assumptions; human reviews
@@ -113,7 +134,10 @@ brainstorm() -> directions:
                                             # Observed sections only, no insights
         ideas += brainstormer(persona, briefing, sample,
                               tools = [query BANK (observations),
-                                       multi-turn chat with any leader]).propose()
+                                       multi-turn chat with any leader,
+                                       profile any record, e.g. a new CHAMPION
+                                         (GPU queue, unbudgeted; saved into that
+                                         record's folder so others reuse it)]).propose()
 
     # 4. Central scoring: one scorer with full context, on one scale.
     ideas = manager.dedupe(ideas)           # many proposals of the same idea = weak signal only
@@ -145,8 +169,9 @@ manager.assign(directions, leaders) -> tasks:
     # One task string per leader:
     #   what to work on: the direction + rationale
     #   GPU budget for this round (CONFIG default; the manager may adjust it per direction)
+    #   the current CHAMPION (record id + official numbers): the reference to beat
     #   optional: scope constraints, pointers to related experiments in BANK
-    # NOT included (global): correctness criteria, metric, CHAMPION, BANK, SHARED_KB.
+    # NOT included (global, read on demand): correctness criteria, metric, BANK, SHARED_KB.
     # Which leader continues which line is decided by SEARCH_POLICY.
 ```
 
@@ -163,14 +188,14 @@ leader.run(task) -> report:
         plan = leader.plan(task, local_kb)              # next experiments; may revise the plan
         for exp in plan (in parallel, one worker each):
             start = leader.pick_start(exp)              # CHAMPION or any BANK entry
-            ws = leader.setup_workspace(worker, start)  # clone/worktree + branch; copy in what the
+            ws = leader.setup_workspace(worker, start)  # baseline + start's diff; copy in what the
                                                         # worker needs (task brief, metric, scripts,
                                                         # relevant excerpts) as files in the workspace
             wreport = worker.run(exp.task)              # first task says what to read first and
                                                         # gives a GPU budget; follow-ups: another task
                                                         # TBD: validation funnel (cheap tests before
                                                         # GPU-heavy ones); see TODO.md
-            record = leader.file_record(wreport, ws)    # leader moves branch + record into BANK
+            record = leader.file_record(wreport, ws)    # record.md + diff vs baseline into BANK
             record.validity = leader.review(record.diff, TASK)   # the leader signs off: raw diff vs
                                                                  # hard constraints / correctness
             if record.validity.ok and leader.wants_official_eval(record):
@@ -182,7 +207,7 @@ leader.run(task) -> report:
             # See budget_and_stopping.md
     return report:
         # summary of findings
-        # + experiments run, each linked to its BANK record (candidate commit + performance)
+        # + experiments run, each linked to its BANK record id (+ performance)
         # + proposed insights (the manager decides what enters SHARED_KB)
         # + what I'd do next (feeds the next brainstorm)
 
@@ -190,14 +215,14 @@ worker.run(task) -> report:                     # confined to its workspace
     # task:   the experiment: what to try, what to measure, when it's done, GPU budget
     # may submit unofficial GPU jobs (smoke tests, microbenchmarks, short benches, profiles)
     # through the GPU queue, within its budget
-    # report: summary + experiment record (Observed / Interpretation) + candidate commit + numbers
+    # report: summary (Observed / Interpretation) + numbers; the change stays in its workspace
 ```
 
 ```python
 evaluate(candidate) -> record:          # OFFICIAL; requested by a leader only, after its review.
                                         # Trusted: frozen harness agents can't modify.
     job = gpu_queue.submit(official, candidate)   # exclusive GPUs; charged to the team's budget
-    build(candidate.commit)                       # clean build from the commit
+    build(TASK.baseline + candidate.diff)         # clean build: the baseline + the record's diff
     numbers = bench(c=16, 400 prompts) + gsm8k(n=250)   # one server start; bench also gives
                                                         # MTP acceptance
     return append_only_record(candidate, numbers) # only official numbers count
@@ -209,11 +234,14 @@ costs and an end-to-end example: [evaluation.md](evaluation.md).
 collect_and_update(reports):
     TREE.update(reports)                    # manager turns reports into idea nodes + experiments;
                                             # may reorganize the tree
-    winners = BANK records with official numbers that beat CHAMPION     # TBD: champion lifecycle
-    if winners:
-        CHAMPION = integrate(CHAMPION, winners)   # TBD who; re-evaluate combined
-        CHAMPION.profile = profile(CHAMPION)      # the bottlenecks have changed
-        SHARED_KB.update(bound_analysis(...))
+    best = the BANK record from this round with the best official numbers
+    if best beats CHAMPION by more than the noise (~3% for the qwen task) and GSM8K holds:
+        CHAMPION = best                           # manager promotes; starting point doesn't matter
+        # No re-profiling here: the bottlenecks have changed, and next round's brainstormers
+        # profile the new champion themselves (see brainstorm()); the manager may turn what they
+        # find into SHARED_KB entries.
+    # No integrate(): combining wins from several teams is just another idea, proposed in the next
+    # brainstorm (e.g. by the combiner persona) and run like any other direction.
     SHARED_KB.update(accepted insights from reports)   # manager is the only writer
     JOURNAL.append(round summary)
     report_to_human()
@@ -235,8 +263,14 @@ These run throughout, outside the loop:
 - Two idea scores only, novelty and upside, each 1-5, assigned centrally by the manager.
 - The manager is the only writer of the shared KB.
 - One interface for persistent agents: `run(task: str) -> report: str`.
-- Global state is not passed in assignments. The champion is a performance reference, not a
-  required starting point; v1 snapshots it at the start of each round.
+- Global state is not passed in assignments, except the champion: it is part of each round's
+  task to every leader (synchronous; no mid-round notifications). The champion is a performance
+  reference, not a required starting point.
+- The manager promotes a new champion between rounds: the round's best official result, if it
+  beats the champion by more than the noise and GSM8K holds. No special integration step:
+  combinations come from brainstorming.
+- Bank records: id (by team), team, performance (string), short summary, validity review, and a
+  diff against the task baseline (no branches).
 - Leaders set up worker workspaces, choose starting points, and file experiment records into the
   bank; workers are confined to their workspace.
 - The leader reviews validity itself (no separate judge) and is responsible for what it

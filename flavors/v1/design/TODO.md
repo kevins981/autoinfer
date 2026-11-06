@@ -15,10 +15,6 @@ Open design items for this flavor's algorithm (`DESIGN.md`). Items shared by all
 - Evaluation and budget follow-ups (see `evaluation.md`, `budget_and_stopping.md`):
   - Move the test cost table to the task folder when the harness is ported.
   - Default budget size per team per round (CONFIG default) for the qwen task.
-- Champion lifecycle: when it changes, comparing candidates built on different starting points,
-  `integrate()`.
-- **Async "new best version" notification**: v1 snapshots the champion at the start of each
-  round. Later: how to tell agents about a new best mid-round without interrupting their work.
 - k (directions per round) vs number of leaders. (Continue vs new direction is decided by
   `search_policy.md`.)
 - `initialize()`: who does the profile, bound analysis and ledger; whether the ledger review is a
@@ -29,7 +25,5 @@ Open design items for this flavor's algorithm (`DESIGN.md`). Items shared by all
 ## Agent topology
 - Barrier rounds vs. rolling (reassign each leader slot as soon as that leader finishes).
   Leaning: barrier for v1.
-- Who runs `integrate()` (combining wins from several teams)? Leaning: a dedicated worker
-  delegated by the manager.
 - Brainstorming details: how many brainstormers and how big the random sample is, whether to use
   other models, the exact briefing contents, and tuning the default `search_policy.md`.

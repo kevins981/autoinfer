@@ -23,8 +23,8 @@ difference is not *who* may use the GPU but *what the result counts for*:
 - **Unofficial** (any agent, including workers, within a GPU budget): whatever it needs to keep
   optimizing: smoke tests, microbenchmarks, benches, nsys/ncu profiles. Used to develop and to decide what is worth an official
   eval. Never counts.
-- **Official** (requested by the leader only, after its validity review): clean build from a
-  commit, frozen harness the agents can't modify, exclusive GPUs, c=16 bench + GSM8K-250 on the
+- **Official** (requested by the leader only, after its validity review): clean build of the
+  task baseline + the record's diff, frozen harness the agents can't modify, exclusive GPUs, c=16 bench + GSM8K-250 on the
   same server. Recorded append-only in the bank. Only official numbers count (champion, reports).
 
 ## GPU budget
@@ -60,11 +60,11 @@ ported), measure the estimated rows, and let the GPU queue use it for scheduling
 ## Example: one experiment end to end
 Direction (leader): "overlap the TP all-reduce with the next GEMM." The leader decomposes it; one
 experiment for worker W: "implement the overlap for the down-proj all-reduce; budget 30
-GPU-minutes; done when you have a commit with c=16 numbers and a profile."
+GPU-minutes; done when you have a working change with c=16 numbers and a profile."
 1. W does napkin math (all-reduce is ~27% of kernel time; how much can overlap?) - free.
 2. W implements; microbenchmarks the overlapped pair with real shapes - < 1 min.
 3. W starts a server, smoke tests, checks T=0 outputs on a few prompts match the baseline - ~2 min.
 4. W runs a short unofficial bench + nsys profile - ~6 min. Repeats 2-4 while iterating.
-5. W reports: commit, numbers, profile, Observed/Interpretation.
+5. W reports: numbers, profile, Observed/Interpretation; the change is in its workspace.
 6. The leader files the record, reviews the raw diff for validity, and if it is promising,
    requests an official eval (~7 min). The official numbers and GSM8K are appended to the record.

@@ -1,5 +1,16 @@
 # Agent runtime: launching agents and messaging between them
 
+**Implemented 2026-11-06: `tools/agent` (start / register / list / send / stop) and
+`tools/agent_settings.json` (default permissions).** Tested with haiku agents: start, busy/idle
+and cost in `list`, a brainstormer finding a leader with `agent list` and holding a 2-question
+`SendMessage` chat with it by bare name, `send` to an idle agent, `stop`, `send` to a stopped
+agent refused. Settings verified in the init event: dontAsk mode, no ListAgents, no MCP servers,
+auto-memory off, the AutoInfer CLAUDE.md files not loaded. **Not tested**: the deny rules (sudo,
+writes to $HOME/qwen38_opt), because asking a test agent to try them was itself blocked; they use
+the documented rule syntax. Extra commands beyond the spec: `register` (adds an already running
+session such as the manager to `agent list`), `send` (the human's/manager's way to drop a message
+into an inbox).
+
 How AutoInfer's agents run on top of the `claude` CLI. This applies to all flavors. Tested
 2026-11-06 with claude 2.1.319, using haiku for the cheap tests.
 

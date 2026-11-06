@@ -21,8 +21,8 @@ the model computes.
 ## Hardware and software
 2x RTX 4090 (sm_89, 24 GB each, FP8 tensor cores), **no GPU peer-to-peer** (PCIe through the
 host), 48 CPU cores, 125 GB RAM, shared server. CUDA 13.0 toolkit (driver 580: no newer),
-torch 2.14 + cu130, vLLM at commit `4527515cd7` (`workspace.json`). Details and the profile:
-`baseline/PROFILE.md`.
+torch 2.14 + cu130, vLLM at commit `4527515cd7` (`workspace.json`). Raw profiles of the baseline:
+`baseline/` (how to query them: `PROFILING.md`).
 
 ## Baseline server
 `harness/serve_args.sh`: TP=2, max context 131072, max 16 sequences, GPU memory utilization
@@ -63,8 +63,8 @@ number of draft tokens), max context. The run's task definition may narrow this.
   kernel-time breakdown), `kernel_breakdown.py`, `profile_ncu.sh` (ncu on chosen kernels of a
   live server), `ncu_hotlines.py` (top source lines by stall samples).
 - `PROFILING.md`: what profiling data exists and how to query it (nsys SQLite, ncu Python API).
-- `baseline/`: `PROFILE.md` (start here), `nsys_c16/` (nsys of BASE: report, kernel summary,
-  breakdown), `ncu_marlin/` (ncu of the FP8 GEMMs: `marlin_c16.ncu-rep` full metrics,
+- `baseline/`: raw profiles of BASE: `nsys_c16/` (nsys report + SQLite, kernel summary,
+  breakdown by category), `ncu_marlin/` (ncu of the FP8 GEMMs: `marlin_c16.ncu-rep` full metrics,
   `marlin_c16_key.csv` the key numbers, `marlin_c16_src.ncu-rep` source-level with -lineinfo).
 - `env.sh`, `workspace.json`: environment and workspace setup (used by `ws`).
 - Profiling tools: `ncu` (Nsight Compute, in the env; works without root), `nsys` (Nsight

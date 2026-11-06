@@ -1,0 +1,20 @@
+{
+  "id": 1,
+  "pid": 3085097,
+  "team": null,
+  "agent": "manager",
+  "label": "official:BASE",
+  "timeout_min": 20.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-1/workspaces/eval-BASE-1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-1/bank/BASE/official/1"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-1",
+  "submitted": "2026-11-06T21:39:50+00:00",
+  "state": "done",
+  "started": "2026-11-06T21:39:50+00:00",
+  "ended": "2026-11-06T21:45:35+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 5.759
+}

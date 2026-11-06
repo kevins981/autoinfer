@@ -17,9 +17,10 @@ your success depends on.
 brainstormer(persona, briefing).propose() -> ideas:
     read(briefing)          # path in your first message: a starting point, not everything there is
     explore()               # however you think best. Everyone can access everything:
-        # TASK: TASK.md, baseline/PROFILE.md (the baseline profile, summarized)
-        # the raw profiling data: every kernel launch (nsys SQLite) and every hardware metric of
-        #   the profiled kernels (ncu reports); how to query them: task/PROFILING.md
+        # TASK: TASK.md (objective, constraints, hardware)
+        # the raw profiling data of the baseline (task/baseline/): every kernel launch (nsys
+        #   SQLite) and every hardware metric of the profiled kernels (ncu reports). Nobody has
+        #   analyzed it for you. What exists and how to query it: task/PROFILING.md
         # the engine's code: a clean baseline tree to read at .cache/tasks/<task>/baseline/vllm
         #   (or any workspace, for a record's version)
         # BANK (records, diffs, official results, profiles), SHARED_KB, TREE (incl. ideas proposed

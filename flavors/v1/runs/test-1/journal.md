@@ -1,0 +1,3 @@
+- 2026-11-06T21:39:38+00:00 run started; task definition written per human answers (focus: FFN).
+- r1: selected one direction for T1: all-reduce speedup + L2 prefetch of gate_up in AR window (see brainstorm/r1/scores.md). PP=2, Marlin tuning, k=3 archived.
+- human clarified: FFN is the goal, not a code-location restriction.

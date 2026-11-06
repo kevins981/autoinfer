@@ -15,7 +15,7 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
 | 4 | Official eval: `official_eval <record>` = fresh workspace + build (CPU) → one GPU job → append to bank | [infra/official_eval.md](infra/official_eval.md) | **implemented, tested** (`tools/official_eval`, `tasks/<task>/harness/`) |
 | 5 | Run folder layout and kickoff: the flavor's `tools/`, run folder, manager as a `--bg` session | [infra/run_layout.md](infra/run_layout.md) | **implemented, tested** (`tools/new_run`, `flavors/v1/config_default.md`) |
 | 6 | Role prompts (`common.md`, manager, leader, worker, brainstormer) | `flavors/v1/agents/*.md` (incl. `manager.md`) | **drafted**, not yet exercised in a real run |
-| 7 | Porting the qwen task (TASK.md, harness, baseline profile) | `tasks/qwen38-27b-fp8-2x4090/` | **done, tested**: TASK.md, harness (with gates), scripts/ (lib.sh, example job, nsys + ncu profiling), baseline/PROFILE.md |
+| 7 | Porting the qwen task (TASK.md, harness, baseline profile) | `tasks/qwen38-27b-fp8-2x4090/` | **done, tested**: TASK.md, harness (with gates), scripts/ (lib.sh, example job, nsys + ncu profiling), baseline/ raw profiles + PROFILING.md (how to query; no summary: agents analyze the data themselves, human decision) |
 
 ## Decisions made along the way (not yet in design/)
 - Permissions (human decision, 2026-11-06): agents run in **`--permission-mode auto`** (Claude's

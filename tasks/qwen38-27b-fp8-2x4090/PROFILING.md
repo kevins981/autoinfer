@@ -1,10 +1,19 @@
 # Profiling data: what exists and how to query it
 
-The baseline's profiles are in `baseline/` (summary: `baseline/PROFILE.md`). The summaries are
-a starting point, not all there is: the raw files hold every kernel launch and every hardware
-metric, and you can query them however you like (Python is easiest). Make new profiles of any
-workspace with `scripts/profile_nsys.sh` and `scripts/profile_ncu.sh` (GPU jobs); they produce
-the same kinds of files. `source <workspace>/env.sh` (or the task's `env.sh`) first.
+Raw profiles of the baseline (record BASE) are in `baseline/`; nobody has analyzed them for
+you. They hold every kernel launch and every hardware metric of the profiled kernels: query them
+however you like (Python is easiest). Make new profiles of any workspace with
+`scripts/profile_nsys.sh` and `scripts/profile_ncu.sh` (GPU jobs); they produce the same kinds
+of files. `source <workspace>/env.sh` (or the task's `env.sh`) first.
+
+What was profiled:
+- `baseline/nsys_c16/`: the BASE server (`harness/serve_args.sh`: TP=2, FP8 KV, MTP 2 draft
+  tokens) under 64 ShareGPT prompts at concurrency 16, both GPUs, CUDA graphs traced per kernel
+  (`--cuda-graph-trace=node`), capture limited to the benchmark (~27 s). `server.log` and
+  `bench.log` are next to it.
+- `baseline/ncu_marlin/`: 12 consecutive launches of the Marlin FP8 GEMM kernel during steady
+  c=16 decode (3 layers x the 4 weight GEMMs of a layer), full metric set, GPU 0. Measured in an
+  earlier setup with a bf16 KV cache (the kernels and their shapes are the same).
 
 ## nsys (Nsight Systems): the timeline. `baseline/nsys_c16/`
 - `profile.nsys-rep`: the report (64 ShareGPT prompts at c=16, ~27 s, both GPUs, CUDA graphs
@@ -29,16 +38,15 @@ the same kinds of files. `source <workspace>/env.sh` (or the task's `env.sh`) fi
                AND k.start BETWEEN ? AND ? ORDER BY k.start""", (t0, t1)).fetchall()
   ```
   Use `demangledName` for full template names (e.g. to tell Marlin GEMM shapes apart by grid
-  size or template arguments). Baseline facts from this: each GPU is ~93-95% kernel-busy;
-  per GPU, Marlin ~13 s and all-reduce ~6.5 s of the 27 s window.
+  size or template arguments).
 - CLI: `nsys stats --report <name> profile.nsys-rep` (`nsys stats --help-reports` lists
   reports, e.g. cuda_gpu_kern_sum, cuda_api_sum, cuda_gpu_trace); `nsys analyze`.
   nsys is `/usr/local/cuda-12.6/bin/nsys` (2024.5).
 
 ## ncu (Nsight Compute): per-kernel hardware metrics. `baseline/ncu_marlin/`
-- `marlin_c16.ncu-rep`: 12 Marlin launches (3 layers x 4 FP8 GEMMs) during c=16 decode, full
-  metric set (~1700 metrics per kernel: DRAM/L2/L1 traffic and throughput, tensor-pipe use,
-  stall reasons, occupancy, ...). `marlin_c16_key.csv`: the key metrics. `marlin_c16_src.ncu-rep`:
+- `marlin_c16.ncu-rep`: the report (~1700 metrics per kernel: DRAM/L2/L1 traffic and
+  throughput, tensor-pipe use, stall reasons, occupancy, ...). `marlin_c16_key.csv`: a few key
+  metrics per launch as CSV. `marlin_c16_src.ncu-rep`:
   built with -lineinfo, source imported (per-source-line and per-SASS stall samples).
 - Python: `ncu_report` (Nsight Compute's API):
   ```python

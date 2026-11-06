@@ -1,0 +1,19 @@
+{
+  "id": 2,
+  "pid": 3087227,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "arbench1",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-1/scratch_T1/job1.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-1/scratch_T1",
+  "submitted": "2026-11-06T21:41:32+00:00",
+  "state": "timed out",
+  "started": "2026-11-06T21:45:36+00:00",
+  "ended": "2026-11-06T21:53:38+00:00",
+  "exit_code": 124,
+  "gpu_minutes": 8.024
+}

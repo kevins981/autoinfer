@@ -56,7 +56,8 @@ initialize():                                       # WITH the human
                                                     # ~7 GPU-min, unbudgeted for you; also checks
                                                     # that the harness works
     CHAMPION = BASE + its official numbers          # write champion.md
-    CHAMPION.profile = the baseline profile in task/  # no profiling here
+    CHAMPION.profile = task/baseline/               # raw profiles that come with the task
+                                                    # (task/PROFILING.md); no profiling here
     TREE = new_tree(root = FOCUS); SHARED_KB = []; JOURNAL = ["run started: ..."]
 
     # 3. Tell the human the plan: rounds, leaders, workers, budgets. One GPU job runs at a time,
@@ -82,7 +83,8 @@ brainstorm(round) -> directions:
     briefing = write(brainstorm/r<round>/briefing.md):
         # the problem; the facts (profile numbers, official numbers: not just interpretations);
         # a high-level summary of what was tried and observed (with record ids).
-        # Round 1: the task, the focus and the baseline profile only.
+        # Round 1: the task, the focus and where the baseline's raw profiles are. Brainstormers
+        # analyze the data themselves: don't pre-digest it into conclusions for them.
         # Point to where things are (files, raw data: task/PROFILING.md, code), as starting
         # points: don't present it as a complete reading list.
 

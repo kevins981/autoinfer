@@ -49,13 +49,11 @@ initialize():                                       # WITH the human
     wait_for_human_ok()
     # (The human decides whether improvements go back into tasks/<task>/ for future runs.)
 
-    # 2. Baseline
-    BANK.add(BASE)                                  # bank/BASE/: record.md ("the task baseline"),
-                                                    # empty change.diff
-    official_eval(BASE)                             # background command `official_eval BASE`:
-                                                    # ~7 GPU-min, unbudgeted for you; also checks
-                                                    # that the harness works
-    CHAMPION = BASE + its official numbers          # write champion.md
+    # 2. Baseline: it comes with the task. new_run put its official result in bank/BASE/
+    #    (from task/baseline/official/) and wrote champion.md = BASE. Don't re-measure it.
+    #    Only if bank/BASE/ has no official result: `official_eval BASE` (background, ~7 GPU-min,
+    #    unbudgeted), then write champion.md.
+    CHAMPION = BASE + its official numbers
     CHAMPION.profile = task/baseline/               # raw profiles that come with the task
                                                     # (task/PROFILING.md); no profiling here
     TREE = new_tree(root = FOCUS); SHARED_KB = []; JOURNAL = ["run started: ..."]

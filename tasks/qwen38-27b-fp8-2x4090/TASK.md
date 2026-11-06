@@ -11,9 +11,10 @@ the model computes.
   ShareGPT (400 prompts, input mean ~260 tokens incl. chat template, output = the reference reply
   length, mean ~228), `/v1/chat/completions`, temperature 0, seed 0, closed loop with 16
   concurrent requests. One trial (run-to-run noise ~0.5% CV; treat < 3% as noise).
-- **Score**: output tok/s. **Baseline (record BASE): 630.6 tok/s**.
+- **Score**: output tok/s. **Baseline (record BASE): 631.4 tok/s** (its official result ships with
+  the task: `baseline/official/`, `results.json`; runs don't re-measure it).
 - **Latency guard**: a result is invalid if TTFT p99 or TPOT p99 is more than 20% worse than
-  BASE's (BASE: TTFT p99 1355 ms, TPOT p99 41.2 ms). Other latencies are reported, not constrained.
+  BASE's (BASE: TTFT p99 1487 ms, TPOT p99 48.4 ms; p99s vary ~±15% between runs of BASE). Other latencies are reported, not constrained.
 - **Accuracy gate**: GSM8K-250 (fixed questions, temperature 0, thinking off) must be
   **>= 89.6%** (BASE 92.8%, standard error ±1.6; the gate is 2 SE below). A safety net: lossy
   changes are forbidden anyway (below).

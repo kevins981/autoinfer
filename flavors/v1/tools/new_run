@@ -45,6 +45,34 @@ def write_settings(run, flavor):
     (run / "manager_settings.json").write_text(json.dumps(mgr, indent=2) + "\n")
 
 
+def seed_base(run, task):
+    """bank/BASE from the task's shipped official result (task/baseline/official/), so runs don't
+    re-measure the baseline. Without one, the manager runs `official_eval BASE` itself."""
+    src = task / "baseline" / "official"
+    base = run / "bank" / "BASE"
+    base.mkdir(parents=True)
+    (base / "change.diff").write_text("")
+    line = "(none shipped with the task: run `official_eval BASE`)"
+    if (src / "results.json").exists():
+        shutil.copytree(src, base / "official" / "1")
+        r = json.loads((src / "results.json").read_text())
+        line = (f"official #1 (shipped with the task, task/baseline/official/): "
+                f"{r['output_throughput']:.1f} tok/s at c=16, GSM8K {100 * r['gsm8k_accuracy']:.1f}%, "
+                f"MTP acceptance {r.get('mtp_acceptance_length')}, TTFT p50/p99 "
+                f"{r['median_ttft_ms']:.0f}/{r['p99_ttft_ms']:.0f} ms, TPOT p50/p99 "
+                f"{r['median_tpot_ms']:.1f}/{r['p99_tpot_ms']:.1f} ms (official/1/results.json)")
+        (run / "champion.md").write_text(f"# Champion\nBASE (the task baseline): {line}\n")
+    (base / "record.md").write_text(
+        "team:         -\n"
+        "performance:  official results below\n"
+        "summary:\n"
+        "  hypothesis: none: the task baseline\n"
+        "  change:     none (empty change.diff); serve args = task/harness/serve_args.sh\n"
+        "  results:    see official/\n"
+        "  conclusion: the reference for every comparison and for the latency gates\n"
+        "validity:     the task baseline by definition\n\n" + line + "\n")
+
+
 def main():
     p = argparse.ArgumentParser(prog="new_run", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -85,6 +113,7 @@ def main():
         shutil.copy(flavor / "design" / "search_policy.md", run / "search_policy.md")
         for f in ("tree.md", "journal.md", "shared_kb.md", "champion.md", "focus.md"):
             (run / f).write_text("")
+        seed_base(run, task)
         write_settings(run, flavor)
         env = dict(os.environ, AUTOINFER_RUN=str(run))
         r = subprocess.run([str(TOOLS / "ws"), "setup-task"], env=env, capture_output=True,

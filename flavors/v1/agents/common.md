@@ -20,9 +20,9 @@ Global variables of the pseudocode: available to every agent that needs them (re
 demand), never copied into assignments. Only the owner writes each one.
 ```python
 TASK               # task/ (read-only): TASK.md (objective, metric, constraints), harness/ (the
-                   # frozen official eval), scripts/ (helpers for GPU jobs), baseline/ (raw
-                   # nsys/ncu profiles of the baseline; PROFILING.md: what exists and how to query
-                   # it). The engine's baseline code, to read: .cache/tasks/<task>/baseline/vllm
+                   # frozen official eval), scripts/ (helpers for GPU jobs), baseline/
+                   # (official/: the baseline's official result; raw nsys/ncu profiles;
+                   # PROFILING.md: what exists and how to query it). The engine's baseline code, to read: .cache/tasks/<task>/baseline/vllm
 TASK.definition    # task_definition.md: the agreed correctness criteria, hard constraints and
                    # known loopholes. What a validity review checks against.        owner: manager
 ASSUMPTION_LEDGER  # assumption_ledger.md: what is frozen and what is open in this run. owner: manager

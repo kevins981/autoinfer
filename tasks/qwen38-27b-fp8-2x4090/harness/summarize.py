@@ -4,6 +4,8 @@ import json, re, sys
 from pathlib import Path
 
 SPEC = "vllm:spec_decode_num_"
+GSM8K_MIN = 0.896          # TASK.md accuracy gate
+LATENCY_MAX_WORSE = 0.20   # TASK.md latency guard (p99 TTFT / TPOT vs BASE)
 
 
 def read_metrics(path):
@@ -29,6 +31,8 @@ def main():
     if not res["ok"]:
         res["failed_stage"] = (d / "failed_stage").read_text().strip()
     b = d / "bench_c16.json"
+    if not b.exists():                              # unofficial benches (scripts/lib.sh): bench.json
+        b = d / "bench.json"
     if b.exists():
         r = json.loads(b.read_text())
         res.update({k: r.get(k) for k in (
@@ -46,10 +50,16 @@ def main():
         gj = json.loads(g.read_text())
         res["gsm8k_accuracy"] = round(gj["accuracy"], 4)
         res["gsm8k_no_answer"] = gj["no_answer"]
+    # Gates (TASK.md): GSM8K >= 89.6%; TTFT p99 and TPOT p99 at most 20% worse than BASE.
+    if "gsm8k_accuracy" in res:
+        res["gate_gsm8k"] = "pass" if res["gsm8k_accuracy"] >= GSM8K_MIN else "FAIL"
     if len(sys.argv) > 2 and Path(sys.argv[2]).exists() and res.get("output_throughput"):
         base = json.loads(Path(sys.argv[2]).read_text())
         if base.get("output_throughput"):
             res["vs_baseline_pct"] = round(100 * (res["output_throughput"] / base["output_throughput"] - 1), 2)
+        worse = {k: res[k] / base[k] for k in ("p99_ttft_ms", "p99_tpot_ms") if base.get(k) and res.get(k)}
+        res["p99_vs_baseline"] = {k: round(v, 3) for k, v in worse.items()}
+        res["gate_latency"] = "pass" if all(v <= 1 + LATENCY_MAX_WORSE for v in worse.values()) else "FAIL"
     (d / "results.json").write_text(json.dumps(res, indent=2) + "\n")
     print(json.dumps(res, indent=2))
 

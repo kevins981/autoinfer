@@ -15,7 +15,7 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
 | 4 | Official eval: `official_eval <record>` = fresh workspace + build (CPU) → one GPU job → append to bank | [infra/official_eval.md](infra/official_eval.md) | **implemented, tested** (`tools/official_eval`, `tasks/<task>/harness/`) |
 | 5 | Run folder layout and kickoff: the flavor's `tools/`, run folder, manager as a `--bg` session | [infra/run_layout.md](infra/run_layout.md) | **implemented, tested** (`tools/new_run`, `flavors/v1/config_default.md`) |
 | 6 | Role prompts (`common.md`, manager, leader, worker, brainstormer) | `flavors/v1/agents/*.md` (incl. `manager.md`) | **drafted**, not yet exercised in a real run |
-| 7 | Porting the qwen task (TASK.md, harness, baseline profile) | `tasks/qwen38-27b-fp8-2x4090/` | harness done (eval.sh, serve_args.sh, gsm8k.py, summarize.py); TASK.md + baseline profile TBD |
+| 7 | Porting the qwen task (TASK.md, harness, baseline profile) | `tasks/qwen38-27b-fp8-2x4090/` | **done, tested**: TASK.md, harness (with gates), scripts/ (lib.sh, example job, nsys + ncu profiling), baseline/PROFILE.md |
 
 ## Decisions made along the way (not yet in design/)
 - Permissions (human decision, 2026-11-06): agents run in **`--permission-mode auto`** (Claude's
@@ -42,6 +42,14 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
   no `pip install`.
 
 ## Progress log
+- 2026-11-06: qwen task ported. TASK.md = the baseline definition (human: fixed = model, FP8
+  weights, FP8 KV, sampling; everything else open incl. spec decode; metric output tok/s at c=16;
+  latency guard p99 TTFT/TPOT <= +20% vs BASE; GSM8K-250 >= 89.6%); the manager and human refine
+  it per run. summarize.py/official_eval report the gates. Baseline re-profiled with FP8 KV
+  (nsys: Marlin 50.8%, NCCL 28.3%); ncu Marlin reports reused from qwen38_opt. Helper scripts for
+  agents' GPU jobs tested through the queue (example job 2.2 min, nsys 2.4 min, ncu 4.9 min).
+  Prompts: GPU budget section (team budget from the manager, per-worker allowances set by the
+  leader, ask for more up the chain).
 - 2026-11-06: role prompts rewritten around the DESIGN.md pseudocode (human request): manager.md
   has the whole algorithm, leader/worker/brainstormer their own functions, common.md the global
   state (mapped to files), interface and record format. Brainstormer personas are files in

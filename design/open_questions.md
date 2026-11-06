@@ -29,7 +29,7 @@ Flavor-specific TODOs live in each flavor's `design/TODO.md` (e.g. `flavors/v1/d
 - Layout of a run folder.
 
 ## Task: qwen38-27b-fp8-2x4090
-- Port TASK.md, task.yaml and harness from `qwen38_opt/`.
+- Done 2026-11-06: qwen task ported (TASK.md, harness, scripts/, baseline/PROFILE.md).
 - Cheap-funnel tools, built once: a microbenchmark harness with real shapes, and a "load once, run
   one batched forward pass, profile" script.
 - The task requires FP8 KV, so the baseline must be re-measured with

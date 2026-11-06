@@ -71,9 +71,12 @@ evaluate(record):                                   # OFFICIAL; only leaders req
     measurement, a failed experiment) says it is more promising. Say so in the report.
   - A new idea with no evidence behind it: don't chase it. Report it as left open; the next
     brainstorm can pick it up (generating ideas is the brainstormers' job).
-- **GPU budget**: `gpu status` shows what is left. Split it among your workers (in their tasks)
-  and your official evals, and shift it to whatever looks most promising as results come in.
-  Brief workers to batch several tests per server start (startup is 1.5-4 min of every job).
+- **GPU budget: yours to manage.** Give each worker a maximum number of GPU-minutes in its task,
+  keep some for official evals (~7 min each), and move minutes to whatever looks most promising
+  as results come in. Workers may ask you for more; decide with the evidence they give (or say
+  no). You may ask the manager for more for your team, with your reasons. `gpu status` shows
+  your team's remaining budget and each worker's use. Brief workers to batch several tests per
+  server start (startup is 1.5-4 min of every job).
 - **Cheap before expensive** (guidance, not a gate): napkin math → microbenchmark with real
   shapes → one forward pass + profile → short unofficial bench → official eval. Make workers
   record the estimate next to the measurement: a mismatch is itself an observation.

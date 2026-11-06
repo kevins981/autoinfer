@@ -1,0 +1,39 @@
+total kernel time 51.04 s (both GPUs), 116 kernels
+
+ share   time s     calls  category
+ 50.8%    25.91    316928  FP8 weight GEMM (Marlin)
+ 28.3%    14.43    154280  all-reduce / all-gather (NCCL)
+ 10.7%     5.45    105682  other GEMM (cutlass/cublas: lm_head, small bf16 GEMMs)
+  6.2%     3.17    147306  GDN / linear attention (delta rule, conv1d)
+  2.2%     1.10    211622  attention (full) + KV cache write
+  0.9%     0.44    199326  other
+  0.8%     0.42    120510  norms, activations, rope, gating
+  0.2%     0.13     15422  sampling / spec-decode bookkeeping
+
+top 25 kernels:
+ share    avg us     calls  name
+ 25.7%      88.3    148770  ncclDevKernel_AllReduce_Sum_bf16_RING_LL(ncclDevKernelArgsStorage<(unsigned long)4096>)
+ 14.1%     318.9     22490  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+ 11.4%      47.0    123630  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+ 10.7%     133.0     41210  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  6.6%     263.4     12838  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x2_tn_align8>(T1::Params)
+  6.3%      58.4     55288  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  4.3%      45.3     48096  void <unnamed>::gdn_decode_post_conv_mtp_kernel<float, (int)3, (bool)0>(const __nv_bfloat16 *, const __nv_bflo
+  4.0%      56.4     36480  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  2.5%     234.2      5510  ncclDevKernel_AllGather_RING_LL(ncclDevKernelArgsStorage<(unsigned long)4096>)
+  1.8%    1503.0       622  ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f_tn
+  1.6%      41.1     19890  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  1.6%     119.7      6630  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  1.1%       3.8    145464  kernel_cutlass_kernel_flashinfernormkernelsfused_add_rmsnormFusedAddRMSNormKernel_object_at__tensorptrbf16gmem
+  1.1%      48.7     11310  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  0.8%      19.5     20400  void flashinfer::BatchPrefillWithPagedKVCacheKernel<(bool)1, flashinfer::KernelTraits<(flashinfer::MaskMode)1,
+  0.8%      82.9      4704  fused_sigmoid_gating_delta_rule_update_kernel
+  0.7%      85.5      3966  void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64x64_32x6_tn_align8>(T1::Params)
+  0.6%       4.2     72732  void vllm::act_and_mul_kernel<c10::BFloat16, __nv_bfloat162, &vllm::silu_kernel<c10::BFloat16>, &vllm::packed_
+  0.5%      23.3     10464  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x1_tn_align8>(T1::Params)
+  0.5%       7.7     30144  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_64x1_tn_align8>(T1::Params)
+  0.4%    1329.1       166  std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16,
+  0.4%       3.5     52800  _causal_conv1d_update_kernel
+  0.2%      25.7      4800  chunk_fwd_kernel_o
+  0.2%       3.5     33774  void at::native::elementwise_kernel<(int)128, (int)4, void at::native::gpu_kernel_impl_nocast<at::native::dire
+  0.2%       1.8     47276  void cublasLt::splitKreduce_kernel<(int)32, (int)16, int, __nv_bfloat16, __nv_bfloat16, float, __nv_bfloat16, 

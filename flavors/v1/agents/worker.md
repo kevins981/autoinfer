@@ -8,7 +8,8 @@ task, then usually follow-ups as new messages.
 ```python
 worker.run(task) -> report:
     # task (from your leader): the experiment: what to try, what to measure, when it's done,
-    # your GPU budget (part of the team's), what to read first (files in your workspace).
+    # your GPU allowance (max GPU-minutes, set by your leader out of the team's budget),
+    # what to read first (files in your workspace).
     read the brief and files the task points to
     source <workspace>/env.sh                       # before running anything: environment + this
                                                     # workspace's code on PYTHONPATH
@@ -20,7 +21,8 @@ worker.run(task) -> report:
         test, cheapest first: unit check → microbenchmark with real shapes → one forward pass +
             profile → short unofficial bench
             # GPU: only through `gpu run --timeout <min> -- <script>`, BACKGROUND, within your
-            # budget (`gpu status`). One job = one script: start the server, wait until ready,
+            # allowance (`gpu status` shows the minutes you used). Need more? Ask your leader,
+            # saying what for; don't just go over it. One job = one script: start the server, wait until ready,
             # run ALL your tests, stop it (server startup is 1.5-4 min of every job).
         check correctness before trusting a speedup: outputs still match the baseline (e.g. the
             same text at temperature 0 on a few prompts; kernel outputs within fp tolerance)
@@ -41,4 +43,4 @@ worker.run(task) -> report:
 - Ask your leader when the task is unclear, or when you suspect a change may break the task's
   rules (TASK.definition), before building on it.
 - Exit 75 from `gpu run` (GPUs used by someone outside the run): stop GPU work and tell your
-  leader. Exit 76 (budget used up): tell your leader, continue GPU-free work.
+  leader. Exit 76 (the team's budget is used up): tell your leader, continue GPU-free work.

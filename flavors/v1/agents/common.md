@@ -91,6 +91,18 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
 - `official_eval <record id>` (leaders): the only way a number becomes official.
 - `agent`: start, list and stop agents.
 
+## GPU budget
+- GPUs are the scarce resource. A **GPU-minute** = one minute of a job holding the GPUs (all of
+  them; one job at a time for the whole run). Waiting in the queue is free.
+- Budgets flow down: the manager gives each **team** a budget per round (enforced by the GPU
+  queue: when the team's total is used up, its jobs are refused). The **leader** decides how to
+  use it: how many minutes each worker may use at most, what is kept for official evals, and
+  shifting minutes as results come in. A worker's allowance is an agreement with its leader
+  (the queue only enforces the team total), so stay within it.
+- Need more? Ask: a worker asks its leader (say what for and what you expect to learn); a leader
+  may ask the manager. Have something left you won't need? Say so, so it can go elsewhere.
+- `gpu status` shows each team's budget, used and remaining, and the minutes each agent used.
+
 ## How we work
 - **Observed vs Interpretation.** Keep what you measured or saw separate from what you think it
   means, in records and reports. Others may read the same observation differently.

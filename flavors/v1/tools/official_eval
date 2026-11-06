@@ -145,7 +145,8 @@ def main():
     vs = f" ({res['vs_baseline_pct']:+.1f}% vs BASE)" if "vs_baseline_pct" in res else ""
     line = (f"official #{n} ({now()[:16]}): {res['output_throughput']:.1f} tok/s at c=16{vs}, "
             f"GSM8K {100 * res['gsm8k_accuracy']:.1f}%, MTP acceptance {res.get('mtp_acceptance_length', 'n/a')}, "
-            f"TTFT p50 {res['median_ttft_ms']:.0f} ms, TPOT p50 {res['median_tpot_ms']:.1f} ms "
+            f"TTFT p50 {res['median_ttft_ms']:.0f} ms, TPOT p50 {res['median_tpot_ms']:.1f} ms; "
+            f"gates: GSM8K {res.get('gate_gsm8k', 'n/a')}, latency {res.get('gate_latency', 'n/a')} "
             f"(official/{n}/results.json)")
     record(line, 0)
 

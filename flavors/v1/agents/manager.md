@@ -37,11 +37,13 @@ initialize():                                       # WITH the human
     TASK.definition = define_with_human(TASK, FOCUS):
         # correctness, spelled out: same math as the baseline (where is fp reordering OK?),
         #   precision (FP8 weights, FP8 KV; nothing lower), same sampling, GSM8K must hold
-        # hard constraints: hardware, model, workload, serving features (e.g. the 128K max context)
+        # hard constraints: start from TASK.md's fixed / open lists; settle what it leaves open
+        #   for this run (e.g. must one 128K request still fit? which serving flags may change?)
         # loopholes: actively look for ways to "win" without a real speedup and ask about each,
         #   e.g. caching outputs for the fixed benchmark prompts; fewer or shorter outputs;
-        #   changing the number of MTP draft tokens, the temperature or thinking on/off;
-        #   shrinking the max context to free memory; anything tuned to seed 0 or these 400 prompts
+        #   changing the temperature or thinking on/off; speculative decoding that is not exact;
+        #   giving up capacity the workload doesn't exercise (max context, KV space) without the
+        #   human agreeing; anything tuned to seed 0 or these 400 prompts
     ASSUMPTION_LEDGER = agree_with_human()          # what is frozen and what is open, given FOCUS
     write(focus.md, task_definition.md, assumption_ledger.md); get the human's OK
     # (The human decides whether improvements go back into tasks/<task>/ for future runs.)
@@ -62,7 +64,9 @@ initialize():                                       # WITH the human
 set_budgets(round):
     # gpu/budget.json = {"round": round, "teams": {"T1": <minutes>, ...}}
     # from CONFIG's GPU budget per team per round; you may give a promising direction more and
-    # a long shot less. The GPU queue enforces it (team totals only).
+    # a long shot less. The GPU queue enforces it (team totals only). Leaders manage their team's
+    # minutes (per-worker allowances are theirs to set). A leader may ask you for more mid-round:
+    # grant it (edit budget.json) if the evidence justifies it.
 ```
 
 ```python

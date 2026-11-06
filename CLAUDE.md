@@ -36,7 +36,7 @@ same model (floating-point reordering is fine; changing the math, e.g. dropping 
 autoinfer/
   CLAUDE.md            # this file: for designer agents
   design/              # design notes, split by topic (index below)
-  tasks/<task>/        # TASK.md, task.yaml, harness/ (read-only to run agents), baseline/
+  tasks/<task>/        # TASK.md, harness/, scripts/ (read-only to run agents), baseline/
   flavors/<flavor>/
     CLAUDE.md          # points a hand-started manager to agents/manager.md
     config_default.md  # default run config (copied into each run)

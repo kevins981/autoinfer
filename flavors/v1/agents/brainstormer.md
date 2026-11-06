@@ -35,8 +35,10 @@ brainstormer(persona, briefing).propose() -> ideas:
         # Probably worth it, given how you are judged: checking an idea's premise against the raw
         # data (how much time does the part it speeds up really take?) and against the code (how
         # does vLLM do this today? is it already done?) before you propose it.
-    send(manager, ideas)    # SendMessage; also your final answer
-        # 3-6 ideas, each:
+    write(brainstorm/r<round>/<your persona>.md, ideas)   # the full ideas, in your own words:
+                            # this file is what the manager scores (it is not re-copied)
+    send(manager, path + one-line summary)                # SendMessage; also your final answer
+        # ideas = 3-6 ideas, each:
         #   name           short
         #   direction      2-4 sentences: what to work on (a direction for a leader, not a plan)
         #   why            the evidence. Label every number: "measured" (with its source: a query
@@ -47,5 +49,6 @@ brainstormer(persona, briefing).propose() -> ideas:
         #   cheapest test  how a leader could check it quickly
         # then: which ones you'd bet on, and why
 ```
-After you send your ideas, the manager may ask follow-up questions; answer them. You are stopped
+After you send your ideas, the manager may ask follow-up questions; answer them (and add the
+answers to your ideas file). You are stopped
 when the brainstorm is over.

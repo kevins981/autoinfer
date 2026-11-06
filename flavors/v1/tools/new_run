@@ -2,12 +2,18 @@
 """new_run: create a run folder and start its manager as a background Claude session.
 
 Usage: new_run <run name> --task <task> [--no-start]
+       new_run <run name> --resume ["<note for the new manager>"]
   e.g. flavors/v1/tools/new_run ffn-latency-1 --task qwen38-27b-fp8-2x4090
+       flavors/v1/tools/new_run ffn-latency-1 --resume "Paused before scoring round 1."
 
 Creates runs/<run>/ in this flavor (task link, config.md, search_policy.md, folders), prepares
 the task (`ws setup-task`), then starts the manager in the flavor folder with AUTOINFER_RUN set
 and the run's permission settings. Talk to it with `claude attach <id>` (printed at the end).
 The first time, run `claude` once in the flavor folder and accept the trust prompt.
+
+--resume starts a NEW manager session on an existing run (e.g. after a crash, or to pick up a
+model change in config.md): it rebuilds its picture from the run's files. Stop the old manager
+first (`claude stop <id>`): session names are machine-global.
 """
 import argparse, json, os, shutil, subprocess, sys
 from pathlib import Path
@@ -22,36 +28,12 @@ def die(msg):
     sys.exit(1)
 
 
-def main():
-    p = argparse.ArgumentParser(prog="new_run", description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("run")
-    p.add_argument("--task", required=True)
-    p.add_argument("--no-start", action="store_true", help="only create the folder")
-    a = p.parse_args()
-
-    flavor = FLAVOR
-    task = ROOT / "tasks" / a.task
-    if not task.is_dir():
-        die(f"no task {task}")
-    run = flavor / "runs" / a.run
-    if run.exists():
-        die(f"{run} already exists (to resume it, start a manager there yourself)")
-    run.mkdir(parents=True)
-    (run / "task").symlink_to(os.path.relpath(task, run))
-    for d in ("agents", "bank", "brainstorm", "reports", "local_kb", "gpu", "workspaces"):
-        (run / d).mkdir()
-    shutil.copy(flavor / "config_default.md", run / "config.md")
-    shutil.copy(flavor / "design" / "search_policy.md", run / "search_policy.md")
-    for f in ("tree.md", "journal.md", "shared_kb.md", "champion.md", "focus.md"):
-        (run / f).write_text("")
-
+def write_settings(run, flavor):
     # Permission settings: the same mode and deny rules for every agent of the run. Every agent,
     # the manager included, gets its instructions via --append-system-prompt and excludes the
     # CLAUDE.md files (the flavor CLAUDE.md only points a hand-started manager to its prompts).
     base = json.loads((TOOLS / "agent_settings.json").read_text())
     (run / "agent_settings.json").write_text(json.dumps(base, indent=2) + "\n")
-    env = dict(os.environ, AUTOINFER_RUN=str(run))
     mgr = json.loads(json.dumps(base))
     mgr["claudeMdExcludes"] = [str(ROOT / "CLAUDE.md"), str(flavor / "CLAUDE.md")]
     # The manager's env must live in its settings: `claude --bg` hands the session to a spare
@@ -62,27 +44,71 @@ def main():
                   "PATH": f"{TOOLS}:{os.environ.get('PATH', '')}"}
     (run / "manager_settings.json").write_text(json.dumps(mgr, indent=2) + "\n")
 
-    r = subprocess.run([str(TOOLS / "ws"), "setup-task"], env=env, capture_output=True, text=True)
-    print(r.stdout.strip())
-    if r.returncode != 0:
-        die(f"ws setup-task failed:\n{r.stderr}")
-    print(f"created run folder {run}")
-    if a.no_start:
-        return
 
-    env.update({"AUTOINFER_AGENT": "manager", "AUTOINFER_ROLE": "manager",
-                "PATH": f"{TOOLS}:{env.get('PATH', '')}"})
+def main():
+    p = argparse.ArgumentParser(prog="new_run", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("run")
+    p.add_argument("--task", help="task name in tasks/ (required for a new run)")
+    p.add_argument("--no-start", action="store_true", help="only create the folder")
+    p.add_argument("--resume", nargs="?", const="", metavar="NOTE",
+                   help="start a new manager on an existing run (optional note for it)")
+    a = p.parse_args()
+
+    flavor = FLAVOR
+    run = flavor / "runs" / a.run
+    if a.resume is not None:
+        if not run.is_dir():
+            die(f"no run {run}")
+        task_name = (run / "task").resolve().name
+        write_settings(run, flavor)
+        first = (f"You are a NEW manager session resuming run `{a.run}`. Run folder: {run} "
+                 f"(AUTOINFER_RUN is set). Task: {task_name}. Run `agent register manager --role "
+                 f"manager`, then follow the 'Resuming a run' step of AutoInfer(): rebuild your "
+                 f"picture from the files, tell the human where things stand, and continue.")
+        if a.resume:
+            first += f"\nNote from the human: {a.resume}"
+    else:
+        if not a.task:
+            die("--task is required for a new run")
+        task_name = a.task
+        task = ROOT / "tasks" / a.task
+        if not task.is_dir():
+            die(f"no task {task}")
+        if run.exists():
+            die(f"{run} already exists (to resume it: new_run {a.run} --resume)")
+        run.mkdir(parents=True)
+        (run / "task").symlink_to(os.path.relpath(task, run))
+        for d in ("agents", "bank", "brainstorm", "reports", "local_kb", "gpu", "workspaces"):
+            (run / d).mkdir()
+        shutil.copy(flavor / "config_default.md", run / "config.md")
+        shutil.copy(flavor / "design" / "search_policy.md", run / "search_policy.md")
+        for f in ("tree.md", "journal.md", "shared_kb.md", "champion.md", "focus.md"):
+            (run / f).write_text("")
+        write_settings(run, flavor)
+        env = dict(os.environ, AUTOINFER_RUN=str(run))
+        r = subprocess.run([str(TOOLS / "ws"), "setup-task"], env=env, capture_output=True,
+                           text=True)
+        print(r.stdout.strip())
+        if r.returncode != 0:
+            die(f"ws setup-task failed:\n{r.stderr}")
+        print(f"created run folder {run}")
+        if a.no_start:
+            return
+        first = (f"You are the manager of a new run. Run folder: {run} (AUTOINFER_RUN is set). "
+                 f"Task: {a.task}. Start with `agent register manager --role manager`, then begin "
+                 f"initialize(): greet the human and start defining the task with them.")
+
+    env = dict(os.environ, AUTOINFER_RUN=str(run), AUTOINFER_AGENT="manager",
+               AUTOINFER_ROLE="manager", PATH=f"{TOOLS}:{os.environ.get('PATH', '')}")
     env.pop("AUTOINFER_TEAM", None)
-    first = (f"You are the manager of a new run. Run folder: {run} (AUTOINFER_RUN is set). "
-             f"Task: {a.task}. Start with `agent register manager --role manager`, then begin "
-             f"initialize(): greet the human and start defining the task with them.")
     import importlib.machinery
     agent_mod = importlib.machinery.SourceFileLoader("agent_tool", str(TOOLS / "agent")).load_module()
     mgr_model, mgr_effort = agent_mod.role_model("manager", run)
     print(f"manager: {mgr_model} / {mgr_effort} (config.md)")
     prompt = "\n\n".join((flavor / "agents" / f).read_text() for f in ("common.md", "manager.md"))
     prompt += (f"\n\n# Who you are in this run\nYou are `manager` (role manager) of run `{a.run}`; "
-               f"run folder {run}; task {a.task}.\n")
+               f"run folder {run}; task {task_name}.\n")
     r = subprocess.run(["claude", "--bg", "--name", "manager", "--permission-mode", "auto",
                         "--model", mgr_model, "--effort", mgr_effort,
                         "--autocompact", os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),

@@ -94,8 +94,9 @@ brainstorm(round) -> directions:
         # how: agent start bs-r<round>-<persona> --role brainstormer --persona <persona> \
         #        --task "Round <round> briefing: <path>. Send your ideas to manager."
         # They can see everything, chat with leaders (usually idle now), and profile records
-        # (GPU queue, unbudgeted). Give them time. Their ideas arrive as messages; save each
-        # to brainstorm/r<round>/<name>.md. Then `agent stop` each brainstormer.
+        # (GPU queue, unbudgeted). Give them time. Each writes its ideas to
+        # brainstorm/r<round>/<persona>.md and messages you the path: read that file as is (don't
+        # rewrite or condense it). Then `agent stop` each brainstormer.
         ideas += brainstormer(persona, briefing).propose()
 
     # 3. Scoring: you, with full context, on one scale.

@@ -1,18 +1,28 @@
 #!/usr/bin/env python3
-"""official_eval: the only way a number becomes official. Spec: design/infra/official_eval.md.
+"""official_eval: the only way a number becomes official (leaders, after their validity review).
 
 Usage: official_eval <record id> [--timeout MIN]
+  e.g. official_eval T1-004
 
-1. Prepare (CPU, not charged): a fresh workspace eval-<id>-<n> from the baseline + the record's
-   change.diff only; `ws build` if the diff touches compiled code.
-2. Measure: one GPU job (`gpu run --label official:<id>`, charged to your team) running the task's
-   frozen harness: server from that workspace, bench, GSM8K.
-3. Record: bank/<id>/official/<n>/ (results.json, logs, provenance.json) + one line appended to
-   bank/<id>/record.md. Append-only; failures are recorded too.
+What it does, from $AUTOINFER_RUN/bank/<record id>/ (needs change.diff; serve_args.txt optional):
+1. Prepare (CPU, not charged): a fresh workspace eval-<id>-<n> = the baseline + the record's
+   change.diff ONLY (nothing else from your workspace is used); `ws build` if the diff touches
+   compiled code (adds ~2-11 min).
+2. Measure: one GPU job (`gpu run --label official:<id>`, charged to your team, ~7 GPU-min) that
+   runs the task's frozen harness (tasks/<task>/harness/eval.sh): starts the server from that
+   workspace with the task's serve flags (+ the record's serve_args.txt), runs the benchmark
+   (qwen task: ShareGPT, 400 prompts, concurrency 16) and the accuracy gate (GSM8K-250), stops it.
+3. Record: bank/<id>/official/<n>/ (results.json, logs, provenance.json) and one line appended
+   to bank/<id>/record.md, e.g. "official #1 (...): 662.0 tok/s at c=16 (+5.0% vs BASE), GSM8K
+   93.2%, ...". Append-only; failures (diff doesn't apply, build, server start, bench) are
+   recorded too, with the stage and logs.
 
-Blocks until done (~10 min with a warm cache; longer if it must build): run it as a background
-command. Exit codes: 0 = measured; 1 = the eval failed (recorded); 2 = budget exhausted and 75 =
-GPUs used outside the run (both: nothing recorded, see `gpu`).
+Blocks until done (~7 min with a warm cache, plus queue time and any build): run it as a
+BACKGROUND Bash command. A fixed version of a change is a new record, not a re-eval.
+
+Exit codes: 0 = measured; 1 = the eval failed (recorded in the record); 76 = your team's budget
+is exhausted and 75 = GPUs used by someone outside the run (both: nothing run, nothing recorded;
+for 75, tell the manager).
 """
 import argparse, hashlib, json, os, subprocess, sys, time
 from datetime import datetime, timezone
@@ -110,7 +120,7 @@ def main():
     print(f"official eval #{n} of {a.record}: queued on the GPUs", flush=True)
     r = subprocess.run(cmd, capture_output=True, text=True)
     (out / "gpu_job.log").write_text(r.stdout + r.stderr)
-    if r.returncode in (2, 75):                         # not run at all: nothing to record
+    if r.returncode in (75, 76):                        # not run at all: nothing to record
         for f in out.iterdir():
             f.unlink()
         out.rmdir()

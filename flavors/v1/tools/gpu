@@ -15,15 +15,16 @@ Team and agent come from AUTOINFER_TEAM / AUTOINFER_AGENT (set by `agent start`)
 unbudgeted (recorded, not charged). Budgets: $AUTOINFER_RUN/gpu/budget.json, written by the
 manager each round: {"round": 3, "teams": {"T1": 40, "T2": 40}}.
 
-Exit codes of `gpu run`: the job's own exit code; 124 = killed at its timeout; 2 = budget
-exhausted (job not run); 75 = GPUs in use by someone outside this run (job not run: report this
+Exit codes of `gpu run`: the job's own exit code; 124 = killed at its timeout; 76 = budget
+exhausted (job not run); 2 = bad arguments (job not run); 75 = GPUs in use by someone outside this run (job not run: report this
 to the manager).
+`gpu <command> --help` explains each command, with examples.
 """
 import argparse, fcntl, json, os, signal, subprocess, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 
-EXIT_BUDGET, EXIT_FOREIGN, EXIT_TIMEOUT = 2, 75, 124
+EXIT_BUDGET, EXIT_FOREIGN, EXIT_TIMEOUT = 76, 75, 124   # (2 = usage error, from argparse)
 FOREIGN_MEM_MIB = 1024        # GPU memory used with no process of ours = someone else is there
 POLL = 2.0
 
@@ -416,16 +417,55 @@ def main():
     p = argparse.ArgumentParser(prog="gpu", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("run")
-    s.add_argument("--timeout", type=float, required=True, help="minutes; the job is killed after")
-    s.add_argument("--label", default=None)
-    s.add_argument("command", nargs=argparse.REMAINDER)
+    R = argparse.RawDescriptionHelpFormatter
+    s = sub.add_parser("run", formatter_class=R, help="run one GPU job (blocks until it ends)",
+                       description="""Run one command with exclusive use of all GPUs of the machine.
+
+Waits in the queue (first come, first served), then runs the command and blocks until it exits
+or reaches --timeout. Run it as a BACKGROUND Bash command: you are notified when it ends, and
+waiting can take a while. Your team is charged the actual minutes (queue time is free). The job
+is admitted only if your team's remaining budget covers --timeout, checked when you submit and
+again when it reaches the front of the queue.
+
+One job = one script: start the server, wait until it is ready, run all your tests, stop it.
+Everything the job started is killed when it ends or times out (don't detach anything with
+setsid/nohup/daemons). The output is printed and also saved in $AUTOINFER_RUN/gpu/jobs/<id>/output.log.""",
+                       epilog="""exit codes:
+  <the command's own>   the job ran
+  124                   killed at --timeout
+  76                    your team's budget can't cover --timeout: not run (lower --timeout, or do
+                        GPU-free work; `gpu status` shows what is left)
+  75                    GPUs in use by someone outside this run: not run. Stop GPU work and tell
+                        the manager (other people use these GPUs; we don't compete)
+  130                   cancelled (gpu cancel)
+  2                     bad arguments: not run
+
+examples:
+  gpu run --timeout 15 --label smoke-T1-003 -- bash $AUTOINFER_RUN/workspaces/x/smoke.sh
+  gpu run --timeout 5 -- python microbench.py --m 16 --n 17408 --k 5120""")
+    s.add_argument("--timeout", type=float, required=True, metavar="MIN",
+                   help="minutes; the job is killed after this. Also what the budget check needs "
+                        "to cover, so don't overestimate it wildly")
+    s.add_argument("--label", default=None, help="short name shown in `gpu status` and the ledger")
+    s.add_argument("command", nargs=argparse.REMAINDER,
+                   help="after `--`: the command to run (a script path is easiest)")
     s.set_defaults(fn=cmd_run)
-    s = sub.add_parser("status"); s.add_argument("--json", action="store_true"); s.set_defaults(fn=cmd_status)
-    s = sub.add_parser("cancel"); s.add_argument("job", type=int); s.set_defaults(fn=cmd_cancel)
+    s = sub.add_parser("status", formatter_class=R, help="running job, queue, budgets",
+                       description="Show the running job, the waiting jobs, and each team's GPU budget "
+                                   "for this round: budget, used, remaining (minutes).")
+    s.add_argument("--json", action="store_true", help="machine-readable output")
+    s.set_defaults(fn=cmd_status)
+    s = sub.add_parser("cancel", formatter_class=R, help="cancel a waiting job or kill a running one",
+                       description="Cancel a waiting job, or kill a running one (it is charged for the "
+                                   "minutes it ran). The job's `gpu run` exits with 130.",
+                       epilog="example: gpu cancel 12      (job ids are in `gpu status`)")
+    s.add_argument("job", type=int, help="job id, from `gpu status`")
+    s.set_defaults(fn=cmd_cancel)
     a = p.parse_args()
     if a.cmd == "run" and a.command and a.command[0] == "--":
         a.command = a.command[1:]
+    if a.cmd == "run" and not a.command:
+        p.error("gpu run: give the command after --, e.g. gpu run --timeout 10 -- bash job.sh")
     if a.cmd == "run" and a.timeout <= 0:
         die("--timeout must be > 0")
     a.fn(a)

@@ -4,7 +4,7 @@
 submit and again at the front of the queue, timeout (SIGTERM, 15 s grace, SIGKILL; exit 124),
 leftover background processes of a job killed, cancel of a waiting and of a running job,
 stale tickets of a killed `gpu run` dropped, the ledger and `status`. Exit codes: the job's own,
-124 timeout, 2 budget exhausted, 75 GPUs used by someone outside the run, 130 cancelled.
+124 timeout, 76 budget exhausted (was 2; changed because argparse usage errors also exit 2), 75 GPUs used by someone outside the run, 130 cancelled.
 Known limit: a job that escapes its session (`setsid`, `nohup ... &` + `disown` is fine) is not
 cleaned up; the next job then sees it as "outside this run" and refuses (exit 75). Agents are
 told not to detach processes from their job.

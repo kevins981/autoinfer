@@ -2,12 +2,13 @@
 
 Shared by all flavors; on every agent's PATH. `$AUTOINFER_RUN` is the run folder;
 `$AUTOINFER_AGENT` / `$AUTOINFER_TEAM` say who you are (set when you were started).
-This text is meant to be included in every agent's common instructions.
+Agents get the essentials in `agents/common.md`; every tool's `--help` (and `<tool> <command>
+--help`) explains each command, with examples.
 
 ## `agent`: who is who
 - `agent list`: the run's agents (name, role, team, parent, busy/idle, current task, last activity).
   Use it to find who to talk to; then talk with `SendMessage` to the bare name it shows.
-- `agent start <name> --role R [--team T] [--cwd DIR] [--task-file F]`: start a new agent
+- `agent start <name> --role R [--team T] [--cwd DIR] [--persona P] [--task-file F]`: start a new agent
   (manager and leaders). It gets the flavor's `agents/common.md` + `agents/<role>.md` as its
   instructions (override with `--prompt-file`), and the task file as its first message.
   Model and effort come from the role's line in the run's `config.md` (override with
@@ -36,7 +37,7 @@ This text is meant to be included in every agent's common instructions.
 - **One job = one script**: e.g. start the server, smoke test, bench, profile, stop the server.
   Everything the job started is killed when it ends or times out, so batch several tests per
   server start, and don't detach processes from the job (`setsid`, daemons).
-- Exit codes: the command's own; 124 = timed out; 2 = your team's budget is exhausted (do GPU-free
+- Exit codes: the command's own; 124 = timed out; 76 = your team's budget is exhausted (do GPU-free
   work); **75 = the GPUs are used by someone outside this run: stop GPU work and report it to the
   manager** (other people use these GPUs; we must not compete).
 - `gpu status`: the running job, the queue, and each team's budget, used and remaining this round.

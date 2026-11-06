@@ -2,6 +2,9 @@
 
 The baseline AutoInfer algorithm: one run manager, round-based brainstorming, leaders that each own
 one direction per round, workers that implement, and a trusted evaluator.
+**The role prompts in [../agents/](../agents/) carry this pseudocode, split by role** (the manager
+gets all of it, each other role its own functions, `common.md` the global state and interface),
+with comments on how each step is done. Keep them in sync when the algorithm changes.
 Bodies marked `TBD` are not designed yet. See [TODO.md](TODO.md). Detailed notes per topic are in
 this folder (e.g. [evaluation.md](evaluation.md)). For a visual walkthrough of one round with a
 concrete example, see [example_round.md](example_round.md).
@@ -21,8 +24,8 @@ concrete example, see [example_round.md](example_round.md).
   to the same workers, and decides when to start a fresh one instead (e.g. a new, unrelated
   experiment, or a worker stuck in a rut).
 - **Brainstormers**: **temporary**: new sessions every round (fresh context is the point). The
-  only source of ideas in v1. Each is defined by a **persona**: a prompt string from
-  `CONFIG.brainstormers`. All of them can access everything (see [Brainstorming](#brainstorming));
+  only source of ideas in v1. Each is defined by a **persona**: a prompt file in
+  `agents/personas/`, listed in `CONFIG.brainstormers`. All of them can access everything (see [Brainstorming](#brainstorming));
   variety comes from the personas, not from what each one may see.
 
 ## What is recorded
@@ -66,7 +69,7 @@ TASK       # task folder: TASK.md (objective, metric, hard constraints, correctn
            # and the baseline's profiling results (provided with the task: what round 1 starts from)
 FOCUS      # the human's natural-language scope for this run
 CONFIG     # number of leaders, max workers per leader (a limit, not a quota), max rounds,
-           # gpu_minutes_per_team_per_round, brainstormers (one persona prompt string each)
+           # gpu_minutes_per_team_per_round, brainstormers (one persona file each, in agents/personas/)
            # human_checkpoints: free text, e.g. "a short summary after every round" (default),
            #   "check in every hour", "wait for my OK on each round's directions"
            # (all set by the human per run). Knobs that steer an agent's behavior are text placed
@@ -160,7 +163,7 @@ brainstorm() -> directions:
                                             # Round 1: the task, the focus and the baseline profile.
 
     # 2. Brainstormers: the only idea source in v1. Fresh sessions, run in parallel.
-    for persona in CONFIG.brainstormers:    # a persona = a prompt string
+    for persona in CONFIG.brainstormers:    # a persona = a prompt file in agents/personas/
         ideas += brainstormer(persona, briefing,
                               access = everything: TASK (incl. the baseline profile), BANK,
                                        SHARED_KB, TREE, JOURNAL, multi-turn chat with any leader,
@@ -187,7 +190,8 @@ brainstorm() -> directions:
 
 ### Brainstorming
 - **Defined in CONFIG.** `CONFIG.brainstormers` is a list of persona prompts, one brainstormer
-  each. A persona is just a string for now: what kind of thinker this is and how it works.
+  each. A persona is a short prompt file (`agents/personas/<name>.md`): what kind of thinker this is
+  and how it works. `agent start --persona <name>` appends it to the brainstormer's prompt.
 - **Everyone can see everything.** Technically each brainstormer can access all global state,
   chat with any leader, look at past experiments and profile any record. Variety comes from the
   personas. If a persona should ignore something (e.g. start from observations only), its prompt

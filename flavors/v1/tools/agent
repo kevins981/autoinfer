@@ -13,12 +13,14 @@ Every agent is a folder $AUTOINFER_RUN/agents/<name>/ and a headless `claude -p`
   err.log       its stderr
 
 Usage:
-  agent start <name> --role R [--team T] [--cwd DIR] [--prompt-file F]... [--model M] [--autocompact TOKENS]
-              [--effort E] [--task TEXT | --task-file F] [--settings FILE]
+  agent start <name> --role R [--team T] [--cwd DIR] [--persona P] [--task TEXT | --task-file F]
+              [--model M] [--effort E] [--autocompact TOKENS] [--prompt-file F]... [--settings FILE]
   agent register <name> --role R [--team T]   # an already running session (e.g. the manager)
   agent list [--all] [--json]
   agent send <name> (TEXT | -f FILE)          # append to its inbox ("[from <sender>]" header)
   agent stop <name>
+
+`agent <command> --help` explains each command, with examples.
 """
 import argparse, json, os, signal, subprocess, sys, time, uuid
 from datetime import datetime, timezone
@@ -166,6 +168,13 @@ def cmd_start(a):
         missing = [str(f) for f in prompt_files if not f.exists()]
         if missing:
             die(f"no --prompt-file given and default prompts not found: {', '.join(missing)}")
+    if a.persona:
+        pf = Path(a.persona)
+        if not pf.exists():
+            pf = Path(__file__).resolve().parents[1] / "agents" / "personas" / f"{a.persona.removesuffix('.md')}.md"
+        if not pf.exists():
+            die(f"persona {a.persona} not found (a file, or a name in the flavor's agents/personas/)")
+        prompt_files = list(prompt_files) + [pf]
     for pf in prompt_files:
         parts.append(Path(pf).read_text().rstrip() + "\n")
     parts.append(
@@ -368,7 +377,7 @@ def role_model(role, run=None):
     """(model, effort) for a role from the run's config.md ("  - <role>: <model> / <effort>" under
     the "models" item); defaults opus / medium. Explicit, so the user's default model doesn't apply."""
     import re
-    model, effort = "opus", "medium"
+    model, effort = "claude-opus-5-5", "medium"
     cfg = Path(run or os.environ.get("AUTOINFER_RUN", ".")) / "config.md"
     if cfg.exists():
         m = re.search(rf"^\s*-\s*{re.escape(role)}\s*:\s*([\w.\[\]-]+)\s*(?:/\s*(\w+))?\s*$",
@@ -383,45 +392,73 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("start", help="launch a new headless agent")
-    s.add_argument("name")
-    s.add_argument("--role", required=True)
-    s.add_argument("--team")
-    s.add_argument("--cwd")
+    R = argparse.RawDescriptionHelpFormatter
+    s = sub.add_parser("start", formatter_class=R, help="launch a new agent",
+                       description="""Launch a new agent: a headless Claude Code session that keeps running (idle when it
+has nothing to do) until someone runs `agent stop`. It gets the flavor's agents/common.md +
+agents/<role>.md as its instructions, a "who you are" section (name, role, team, you as its
+parent), and --task / --task-file as its first message. Model and effort come from the role's
+line in the run's config.md. You are its parent: it reports back to you with SendMessage.
+Returns immediately; talk to it with SendMessage (its name), check it with `agent list`.""",
+                       epilog="""examples:
+  agent start leader-1 --role leader --team T1 --task-file $AUTOINFER_RUN/brainstorm/r1/task_leader-1.md
+  agent start leader-1.w1 --role worker --team T1 --cwd $AUTOINFER_RUN/workspaces/leader-1.fused-ar \\
+      --task-file $AUTOINFER_RUN/workspaces/leader-1.fused-ar/task.md
+  agent start bs-r2-systematic --role brainstormer --persona systematic_engineer \\
+      --task "Briefing: $AUTOINFER_RUN/brainstorm/r2/briefing.md. Send your ideas to manager."
+""")
+    s.add_argument("name", help="unique in the run, e.g. leader-1, leader-1.w2, bs-r3-systematic")
+    s.add_argument("--role", required=True, help="manager, leader, worker or brainstormer (picks the prompt)")
+    s.add_argument("--team", help="team id (e.g. T1): GPU jobs are charged to it. Workers: the leader's team")
+    s.add_argument("--cwd", help="working directory (workers: their workspace; default: the run folder)")
+    s.add_argument("--persona", help="brainstormers: a persona name from the flavor's agents/personas/ "
+                                     "(or a file), appended to the prompt")
     s.add_argument("--prompt-file", action="append",
-                   help="appended to Claude Code's system prompt, in order (repeatable); default: "
-                        "the flavor's agents/common.md + agents/<role>.md")
-    s.add_argument("--model", help="default: the role's model in the run's config.md, else opus")
+                   help="replace the default prompts (repeatable, in order); rarely needed")
+    s.add_argument("--model", help="default: the role's model in the run's config.md, else claude-opus-5-5")
     s.add_argument("--effort", help="default: the role's effort in config.md, else medium")
     s.add_argument("--autocompact", default=os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),
                    help="context size (tokens) at which the agent auto-compacts, or 'auto' "
                         "(default: 400000, or $AUTOINFER_AUTOCOMPACT)")
     s.add_argument("--permission-mode", default=os.environ.get("AUTOINFER_PERMISSION_MODE", "auto"),
                    help="must be the same for every agent of a run (default: auto)")
-    s.add_argument("--settings", help="default: $AUTOINFER_RUN/agent_settings.json, else tools/agent_settings.json")
+    s.add_argument("--settings", help="Claude Code settings file (default: $AUTOINFER_RUN/agent_settings.json)")
     g = s.add_mutually_exclusive_group()
-    g.add_argument("--task", help="first message")
-    g.add_argument("--task-file", help="first message, from a file")
+    g.add_argument("--task", help="first message (text)")
+    g.add_argument("--task-file", help="first message, from a file (better for long tasks)")
     s.set_defaults(fn=cmd_start)
 
-    s = sub.add_parser("register", help="add an already running session (e.g. the manager)")
+    s = sub.add_parser("register", help="add an already running session (the manager does this once)",
+                       description="Add an already running Claude session to the run's agent list, so "
+                                   "`agent list` shows it (the manager runs this once at the start).",
+                       epilog="example: agent register manager --role manager")
     s.add_argument("name")
     s.add_argument("--role", required=True)
     s.add_argument("--team")
     s.set_defaults(fn=cmd_register)
 
-    s = sub.add_parser("list", help="the run's agents")
+    s = sub.add_parser("list", help="who is in the run",
+                       description="List the run's agents: name (use it with SendMessage), role, team, "
+                                   "parent, busy/idle, cost so far, current task, last activity.")
     s.add_argument("--all", action="store_true", help="include stopped agents")
-    s.add_argument("--json", action="store_true")
+    s.add_argument("--json", action="store_true", help="machine-readable output")
     s.set_defaults(fn=cmd_list)
 
-    s = sub.add_parser("send", help="append a message to an agent's inbox")
+    s = sub.add_parser("send", help="put a message into an agent's inbox (for the human)",
+                       description="Append a message to an agent's inbox (with a [from <sender>] header). "
+                                   "Agents should use SendMessage instead; this is for the human or "
+                                   "scripts.",
+                       epilog="examples:  agent send leader-1 \"status?\"      agent send leader-1 -f msg.md")
     s.add_argument("name")
-    s.add_argument("-f", "--file")
-    s.add_argument("text", nargs="*")
+    s.add_argument("-f", "--file", help="message from a file")
+    s.add_argument("text", nargs="*", help="message text")
     s.set_defaults(fn=cmd_send)
 
-    s = sub.add_parser("stop", help="kill an agent's process")
+    s = sub.add_parser("stop", help="stop an agent",
+                       description="Stop an agent's process (and anything it started). Its folder, "
+                                   "events and workspaces stay. Agents never exit on their own: stop "
+                                   "the ones you started when they are no longer needed.",
+                       epilog="example: agent stop leader-1.w2")
     s.add_argument("name")
     s.set_defaults(fn=cmd_stop)
 

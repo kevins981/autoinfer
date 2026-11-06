@@ -47,7 +47,7 @@ Bash command). Three steps:
   `summarize.py` (→ `results.json`, with `vs_baseline_pct` against BASE's latest successful eval).
 - The **clients** (bench, GSM8K) run from a clean baseline tree prepared by `ws setup-task`, not
   from the record's workspace.
-- Exit codes: 0 measured, 1 failed (recorded), 2/75 GPU job not run (nothing recorded).
+- Exit codes: 0 measured, 1 failed (recorded), 76/75 GPU job not run (nothing recorded).
 - Tested: BASE eval in 6.2 min (630.6 tok/s, GSM8K 92.8%); a diff that doesn't apply is recorded
   as a failure; the build check flags `csrc/`, `cmake/`, `CMakeLists.txt`.
 

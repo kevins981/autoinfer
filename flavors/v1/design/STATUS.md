@@ -42,6 +42,13 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
   no `pip install`.
 
 ## Progress log
+- 2026-11-06: role prompts rewritten around the DESIGN.md pseudocode (human request): manager.md
+  has the whole algorithm, leader/worker/brainstormer their own functions, common.md the global
+  state (mapped to files), interface and record format. Brainstormer personas are files in
+  `agents/personas/` (`agent start --persona`). Defaults: 1 leader, 2 workers, 5 rounds,
+  80 GPU-min per team per round (sized in config_default.md), full model ids. Tool help: every
+  subcommand has a description and examples; `gpu run` budget-exhausted exit code is now 76
+  (2 is argparse's usage error).
 - 2026-11-06: per-role model/effort in `config.md` (human: manager + leaders Opus 5.5 medium,
   workers Sonnet 5.5 medium; brainstormers Opus medium, my choice), read by `agent start` and
   `new_run`, so it doesn't depend on agents passing flags. Explicit, because the user's

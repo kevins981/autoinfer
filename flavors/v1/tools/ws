@@ -16,6 +16,7 @@ Usage:
 
 The run folder is $AUTOINFER_RUN; its `task` entry (a symlink to tasks/<task>/) says which task.
 Workspaces live in $AUTOINFER_RUN/workspaces/<name>/.
+`ws <command> --help` explains each command, with examples.
 """
 import argparse, fcntl, json, os, shutil, subprocess, sys
 from contextlib import contextmanager
@@ -333,16 +334,57 @@ def main():
     p = argparse.ArgumentParser(prog="ws", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("setup-task"); s.set_defaults(fn=cmd_setup_task)
-    s = sub.add_parser("create"); s.add_argument("name")
-    s.add_argument("--from", dest="from_record", help="bank record id (default: the baseline)")
+    R = argparse.RawDescriptionHelpFormatter
+    s = sub.add_parser("setup-task", formatter_class=R, help="once per task (done by new_run)",
+                       description="Prepare the task's engine once: our own git clone at the baseline "
+                                   "commit, the baseline's prebuilt compiled files, and a clean "
+                                   "baseline tree for trusted clients. Idempotent. `new_run` does this.")
+    s.set_defaults(fn=cmd_setup_task)
+    s = sub.add_parser("create", formatter_class=R, help="new workspace (seconds)",
+                       description="""Create $AUTOINFER_RUN/workspaces/<name>/: a full, independent copy of the engine
+at the baseline + a bank record's change.diff, with the baseline's compiled files (so Python-only
+work needs no build). Takes a few seconds.
+
+Layout:  <ws>/vllm/      the code (a git worktree; edit here)
+         <ws>/env.sh     `source` it before running anything: environment + this code on PYTHONPATH
+         <ws>/ws.json    where it came from
+Keep notes, logs and results in <ws>/ (outside vllm/), or they end up in the diff.""",
+                       epilog="""examples:
+  ws create leader-1.fused-ar                  # from the baseline
+  ws create leader-1.fused-ar-v2 --from T1-003 # baseline + record T1-003's change.diff""")
+    s.add_argument("name", help="workspace name, e.g. <leader>.<experiment>")
+    s.add_argument("--from", dest="from_record", metavar="RECORD",
+                   help="bank record id to start from (default: the baseline)")
     s.set_defaults(fn=cmd_create)
-    s = sub.add_parser("build"); s.add_argument("name")
-    s.add_argument("--target", action="append", help="cmake target (default: the task's)")
+    s = sub.add_parser("build", formatter_class=R, help="build C++/CUDA changes",
+                       description="""Build the workspace's compiled code (cmake + ninja in <ws>/build, shared ccache)
+and install the built libraries into the workspace. Only needed after C++/CUDA changes
+(csrc/, CMake files); Python-only changes need no build. Log: <ws>/build.log.
+
+Time: ~2 min for a workspace's first build with a warm cache, ~11 min cold; later builds are
+incremental. Run it as a BACKGROUND Bash command (it can exceed the 10-minute command limit).""",
+                       epilog="example: ws build leader-1.fused-ar")
+    s.add_argument("name", help="workspace name")
+    s.add_argument("--target", action="append", help="cmake target (repeatable; default: the task's, "
+                                                     "see tasks/<task>/workspace.json)")
     s.set_defaults(fn=cmd_build)
-    s = sub.add_parser("diff"); s.add_argument("name"); s.set_defaults(fn=cmd_diff)
-    s = sub.add_parser("list"); s.set_defaults(fn=cmd_list)
-    s = sub.add_parser("rm"); s.add_argument("name"); s.set_defaults(fn=cmd_rm)
+    s = sub.add_parser("diff", formatter_class=R, help="the change vs the baseline",
+                       description="Print the workspace's change vs the baseline (all edits, incl. new "
+                                   "files), as a patch that applies to the baseline. This is what a "
+                                   "bank record's change.diff is. Warns about new files, in case they "
+                                   "are scratch files that don't belong in the change.",
+                       epilog="example: ws diff leader-1.fused-ar > $AUTOINFER_RUN/bank/T1-004/change.diff")
+    s.add_argument("name", help="workspace name")
+    s.set_defaults(fn=cmd_diff)
+    s = sub.add_parser("list", help="all workspaces of the run",
+                       description="List the run's workspaces: where each came from, who created it, "
+                                   "whether it was built, and whether it has changes.")
+    s.set_defaults(fn=cmd_list)
+    s = sub.add_parser("rm", help="delete a workspace (rarely)",
+                       description="Delete a workspace. Rarely needed: workspaces are kept as part of "
+                                   "the record. Only for broken or useless ones.")
+    s.add_argument("name", help="workspace name")
+    s.set_defaults(fn=cmd_rm)
     a = p.parse_args()
     a.fn(a)
 

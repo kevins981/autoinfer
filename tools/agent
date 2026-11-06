@@ -365,8 +365,8 @@ def main():
                    help="appended to Claude Code's system prompt, in order (repeatable)")
     s.add_argument("--model")
     s.add_argument("--effort")
-    s.add_argument("--permission-mode", default=os.environ.get("AUTOINFER_PERMISSION_MODE", "dontAsk"),
-                   help="must be the same for every agent of a run (default: dontAsk)")
+    s.add_argument("--permission-mode", default=os.environ.get("AUTOINFER_PERMISSION_MODE", "auto"),
+                   help="must be the same for every agent of a run (default: auto)")
     s.add_argument("--settings", help="default: $AUTOINFER_RUN/agent_settings.json, else tools/agent_settings.json")
     g = s.add_mutually_exclusive_group()
     g.add_argument("--task", help="first message")

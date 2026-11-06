@@ -18,9 +18,11 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
 | 7 | Porting the qwen task (TASK.md, harness, baseline profile) | (TBD) | |
 
 ## Decisions made along the way (not yet in design/)
-- Implementation go-ahead (2026-11-06): agents run with `--permission-mode dontAsk` + a broad
-  allow list (Bash/Read/Edit/Write/SendMessage) and a deny list (sudo/su/doas, writes to `$HOME`,
-  git push, touching qwen38_opt). Tests may use short GPU jobs (check nvidia-smi first) and haiku
+- Permissions (human decision, 2026-11-06): agents run in **`--permission-mode auto`** (Claude's
+  classifier judges each action) + a deny list (sudo/su/doas/pkexec, git push, writes to `$HOME`,
+  qwen38_opt, /usr, /etc). The allow list holds only low-risk tools and our own tools (`agent`,
+  `ws`, `gpu`, `official_eval`), so Bash/Edit/Write go through the classifier. Tested: a haiku
+  worker did normal experiment work unblocked; dummy deny rules blocked. Tests may use short GPU jobs (check nvidia-smi first) and haiku
   agents. Commit + push at each tested milestone without asking.
 - Tools are Python 3 (stdlib only) in top-level `tools/`.
 - GPUs in use by someone outside the run: `gpu run` refuses (exit 75) and tells the agent to

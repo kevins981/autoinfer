@@ -4,10 +4,10 @@
 `tools/agent_settings.json` (default permissions).** Tested with haiku agents: start, busy/idle
 and cost in `list`, a brainstormer finding a leader with `agent list` and holding a 2-question
 `SendMessage` chat with it by bare name, `send` to an idle agent, `stop`, `send` to a stopped
-agent refused. Settings verified in the init event: dontAsk mode, no ListAgents, no MCP servers,
-auto-memory off, the AutoInfer CLAUDE.md files not loaded. **Not tested**: the deny rules (sudo,
-writes to $HOME/qwen38_opt), because asking a test agent to try them was itself blocked; they use
-the documented rule syntax. Extra commands beyond the spec: `register` (adds an already running
+agent refused. Settings verified in the init event: the permission mode (now `auto` by default), no ListAgents, no MCP servers,
+auto-memory off, the AutoInfer CLAUDE.md files not loaded. Deny rules verified with harmless dummy
+rules (a Bash prefix, an absolute-path Write) in `dontAsk` and `auto` mode. Default mode: `auto`
+(human decision) with a narrow allow list, so the classifier sees Bash/Edit/Write. Extra commands beyond the spec: `register` (adds an already running
 session such as the manager to `agent list`), `send` (the human's/manager's way to drop a message
 into an inbox).
 

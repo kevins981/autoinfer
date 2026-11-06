@@ -12,8 +12,8 @@ What was profiled:
   (`--cuda-graph-trace=node`), capture limited to the benchmark (~27 s). `server.log` and
   `bench.log` are next to it.
 - `baseline/ncu_marlin/`: 12 consecutive launches of the Marlin FP8 GEMM kernel during steady
-  c=16 decode (3 layers x the 4 weight GEMMs of a layer), full metric set, GPU 0. Measured in an
-  earlier setup with a bf16 KV cache (the kernels and their shapes are the same).
+  c=16 decode (3 layers x the 4 weight GEMMs of a layer), full metric set, GPU 0, on the BASE server
+  (`scripts/profile_ncu.sh <ws> <out> Marlin 0 12 --devices 0`; server log: `marlin_c16.log`).
 
 ## nsys (Nsight Systems): the timeline. `baseline/nsys_c16/`
 - `profile.nsys-rep`: the report (64 ShareGPT prompts at c=16, ~27 s, both GPUs, CUDA graphs
@@ -47,7 +47,8 @@ What was profiled:
 - `marlin_c16.ncu-rep`: the report (~1700 metrics per kernel: DRAM/L2/L1 traffic and
   throughput, tensor-pipe use, stall reasons, occupancy, ...). `marlin_c16_key.csv`: a few key
   metrics per launch as CSV. `marlin_c16_src.ncu-rep`:
-  built with -lineinfo, source imported (per-source-line and per-SASS stall samples).
+  same 12 launches from an earlier setup (bf16 KV cache; same Marlin kernels and shapes), with a
+  -lineinfo build and source imported (per-source-line and per-SASS stall samples).
 - Python: `ncu_report` (Nsight Compute's API):
   ```python
   import sys, os; sys.path.insert(0, os.environ["NCU_PYTHON"])   # set by env.sh

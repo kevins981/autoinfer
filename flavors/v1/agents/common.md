@@ -43,7 +43,12 @@ REPORTS            # reports/: round reports for the human.                     
 ```
 Everything else you produce stays in your own space (your workspace, your agent folder, or a
 record you own). Never modify the task, its harness, other agents' workspaces, or anything
-outside the run folder.
+outside the run folder. **Write only there**: scratch scripts and outputs go in your agent folder
+(`$AUTOINFER_RUN/agents/<your name>/`) or your workspace, never `/tmp` or elsewhere (`$TMPDIR`
+already points into your space). Don't search the filesystem outside the run and the paths named
+in TASK for things: model files (e.g. `config.json`, the tokenizer) are on the Hugging Face hub,
+`huggingface_hub.hf_hub_download("<model>", "config.json")` after `source task/env.sh` (it
+resolves to the local copy).
 
 ## Interface
 ```python

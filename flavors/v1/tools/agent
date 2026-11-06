@@ -246,7 +246,9 @@ def launch(d, name, role, team, cwd, settings, permission_mode, autocompact, pro
         "AUTOINFER_AGENT": name,
         "AUTOINFER_ROLE": role,
         "PATH": f"{TOOLS_DIR}:{env.get('PATH', '')}",
-    })
+        "TMPDIR": str(d / "tmp"),       # scratch stays in the agent's folder (task env.sh may
+    })                                   # point it elsewhere inside autoinfer/)
+    (d / "tmp").mkdir(exist_ok=True)
     if team:
         env["AUTOINFER_TEAM"] = team
     else:

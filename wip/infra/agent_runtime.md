@@ -121,7 +121,7 @@ as stopped; the manager starts a new one).
 | Watch what an agent does (structured log) | **works** (`events.jsonl`) |
 | Know when an agent finished a task | it sends its report to its parent (`SendMessage`) |
 | Role prompts, per-role CLAUDE.md scoping | `--append-system-prompt[-file]`, `--settings` with `claudeMdExcludes` (partly tested 2026-11-05) |
-| Permissions without a human: no prompts, no sudo | `--permission-mode dontAsk` + allow/deny lists (deny `sudo`, writes outside the run). Same mode for every agent (see caveat). TBD: exact lists |
+| Permissions without a human: no prompts, no sudo | **done**: `--permission-mode auto` + deny list (`tools/agent_settings.json`). Same mode for every agent (see caveat) |
 | Confine workers to their workspace | cwd + `--add-dir` + deny rules; trusted in v1 (no sandbox) |
 | Long-lived agents (compaction) | auto-compaction; `--autocompact` sets the window. Untested over hours |
 | Crash recovery | deferred: `list` shows dead agents; later `--resume <session_id>` |

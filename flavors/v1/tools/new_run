@@ -51,11 +51,17 @@ def main():
     # CLAUDE.md files (the flavor CLAUDE.md only points a hand-started manager to its prompts).
     base = json.loads((TOOLS / "agent_settings.json").read_text())
     (run / "agent_settings.json").write_text(json.dumps(base, indent=2) + "\n")
+    env = dict(os.environ, AUTOINFER_RUN=str(run))
     mgr = json.loads(json.dumps(base))
     mgr["claudeMdExcludes"] = [str(ROOT / "CLAUDE.md"), str(flavor / "CLAUDE.md")]
+    # The manager's env must live in its settings: `claude --bg` hands the session to a spare
+    # process pre-started by the background daemon, which has the daemon's environment (e.g. an
+    # older run's AUTOINFER_RUN), not the one we pass to `claude --bg`.
+    mgr["env"] = {"AUTOINFER_RUN": str(run), "AUTOINFER_AGENT": "manager",
+                  "AUTOINFER_ROLE": "manager", "AUTOINFER_TEAM": "",
+                  "PATH": f"{TOOLS}:{os.environ.get('PATH', '')}"}
     (run / "manager_settings.json").write_text(json.dumps(mgr, indent=2) + "\n")
 
-    env = dict(os.environ, AUTOINFER_RUN=str(run))
     r = subprocess.run([str(TOOLS / "ws"), "setup-task"], env=env, capture_output=True, text=True)
     print(r.stdout.strip())
     if r.returncode != 0:

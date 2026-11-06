@@ -40,10 +40,11 @@ autoinfer/
   flavors/<flavor>/
     CLAUDE.md          # for agents using this flavor (excludes the top-level CLAUDE.md)
     .claude/settings.json
-    DESIGN.md          # the algorithm (pseudocode)
-    design/            # detailed notes per topic (e.g. evaluation.md)
-    TODO.md            # open design items for this flavor
-    search_policy.md   # (v1) how the manager picks what to work on next
+    design/            # everything about the flavor's design:
+      DESIGN.md        #   the algorithm (pseudocode)
+      TODO.md          #   open design items for this flavor
+      search_policy.md #   (v1) how the manager picks what to work on next
+      *.md             #   detailed notes per topic (evaluation, budget, example round, ...)
     agents/ tools/ runs/<run>/
 ```
 The layout inside a run folder is still to be decided.
@@ -52,11 +53,12 @@ The layout inside a run folder is still to be decided.
 - [design/principles.md](design/principles.md): agreed design principles. Respect them; propose
   changes to the human explicitly instead of silently deviating.
 - [design/open_questions.md](design/open_questions.md): undecided items and TODOs shared by all
-  flavors (infrastructure, tasks). Flavor-specific TODOs are in each flavor's `TODO.md`.
-- Each flavor's algorithm lives in its `DESIGN.md`, e.g. [flavors/v1/DESIGN.md](flavors/v1/DESIGN.md).
+  flavors (infrastructure, tasks). Flavor-specific TODOs are in each flavor's `design/TODO.md`.
+- Each flavor's design lives in its `design/` folder, starting from `DESIGN.md`, e.g.
+  [flavors/v1/design/DESIGN.md](flavors/v1/design/DESIGN.md).
 
 When a design decision is made, write it into the right file (principles, open questions, or the
-flavor's DESIGN.md) so the next designer session starts from it.
+flavor's `design/` folder) so the next designer session starts from it.
 
 ## Hard rules (shared server)
 - **No sudo, ever**, and no other privilege escalation. Never modify shared installs

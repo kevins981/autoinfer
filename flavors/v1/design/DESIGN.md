@@ -2,8 +2,9 @@
 
 The baseline AutoInfer algorithm: one run manager, round-based brainstorming, leaders that each own
 one direction per round, workers that implement, and a trusted evaluator.
-Bodies marked `TBD` are not designed yet. See `TODO.md`. Detailed notes per topic are in
-`design/` (e.g. [design/evaluation.md](design/evaluation.md)).
+Bodies marked `TBD` are not designed yet. See [TODO.md](TODO.md). Detailed notes per topic are in
+this folder (e.g. [evaluation.md](evaluation.md)). For a visual walkthrough of one round with a
+concrete example, see [example_round.md](example_round.md).
 
 ## Agents
 - **Manager**: **persistent** (one session for the whole run, with compaction). Owns the search
@@ -44,7 +45,7 @@ TASK       # task folder: TASK.md (objective, metric, hard constraints, correctn
 FOCUS      # the human's natural-language scope for this run
 CONFIG     # number of leaders, max workers per leader (a limit, not a quota), max rounds, personas,
            # gpu_minutes_per_team_per_round (set by the human per run)
-SEARCH_POLICY  # search_policy.md: plain text; how the manager picks what to work on next
+SEARCH_POLICY  # design/search_policy.md: plain text; how the manager picks what to work on next
                # (portfolio, continuing a winning leader's line, fallback). Isolated variable:
                # a run can override it, and the human can edit it mid-run.
 LEDGER     # assumptions: frozen vs open
@@ -178,7 +179,7 @@ leader.run(task) -> report:
         if leader reached a useful checkpoint or manager says stop: break
             # out of budget = no new GPU jobs, but GPU-free work may continue.
             # Need not finish the direction: propose continuing in "what I'd do next".
-            # See design/budget_and_stopping.md
+            # See budget_and_stopping.md
     return report:
         # summary of findings
         # + experiments run, each linked to its BANK record (candidate commit + performance)
@@ -202,7 +203,7 @@ evaluate(candidate) -> record:          # OFFICIAL; requested by a leader only, 
     return append_only_record(candidate, numbers) # only official numbers count
 ```
 Unofficial GPU jobs (any agent, within budget) go through the same queue and never count. Details,
-costs and an end-to-end example: [design/evaluation.md](design/evaluation.md).
+costs and an end-to-end example: [evaluation.md](evaluation.md).
 
 ```python
 collect_and_update(reports):

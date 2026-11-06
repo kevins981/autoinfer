@@ -1,6 +1,6 @@
 # Open questions and TODOs shared by all flavors
 
-Flavor-specific TODOs live in each flavor's `TODO.md` (e.g. `flavors/v1/TODO.md`).
+Flavor-specific TODOs live in each flavor's `design/TODO.md` (e.g. `flavors/v1/design/TODO.md`).
 
 ## Agent launching and messaging
 - How agents are launched (claude CLI flags, auth) and how they message each other asynchronously

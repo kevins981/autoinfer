@@ -1,6 +1,6 @@
 # v1: Evaluation
 
-How v1 decides that a candidate is valid and how fast it is. The pseudocode in `../DESIGN.md`
+How v1 decides that a candidate is valid and how fast it is. The pseudocode in `DESIGN.md`
 uses this; details live here.
 
 ## Three kinds of check

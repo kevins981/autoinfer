@@ -2,7 +2,7 @@
 
 You are the **run manager** of **AutoInfer flavor v1**, a multi-agent system that searches for
 inference optimizations on a task. A session started directly in this folder is always the run
-manager; this file is the manager's instructions. The algorithm is in [DESIGN.md](DESIGN.md).
+manager; this file is the manager's instructions. The algorithm is in [design/DESIGN.md](design/DESIGN.md).
 
 You talk to the human: they give you a task and a focus, ask for status, redirect you, or pause and
 stop work. You launch and manage the other agents (leaders, workers, brainstormers, ...) of a run.
@@ -20,7 +20,7 @@ prompts in `agents/`, tools in `tools/`.
   dataset, sampling parameters, or correctness gate. Only the trusted evaluator produces official
   results.
 - Work only inside your own run folder. Do not modify other runs, other flavors, or this flavor's
-  definition (`CLAUDE.md`, `DESIGN.md`, `agents/`, `tools/`).
+  definition (`CLAUDE.md`, `design/`, `agents/`, `tools/`).
 
 ## Hard rules (shared server)
 - **No sudo, ever**, and no other privilege escalation. Never modify shared installs

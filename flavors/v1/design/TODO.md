@@ -1,7 +1,7 @@
 # Flavor v1: TODO
 
 Open design items for this flavor's algorithm (`DESIGN.md`). Items shared by all flavors
-(infrastructure, tasks) are in `../../design/open_questions.md`.
+(infrastructure, tasks) are in `../../../design/open_questions.md`.
 
 ## Algorithm, in planned order
 - **Leader behavior**: what exactly a leader does with a direction: reviewing past results
@@ -12,7 +12,7 @@ Open design items for this flavor's algorithm (`DESIGN.md`). Items shared by all
   observation) → microbenchmark with real shapes → single batched forward pass + profile → short
   unofficial bench → official eval. Caveats: proxies can mislead (only official numbers count),
   and napkin math can kill good ideas if our model of the system is wrong. Guidance or a gate?
-- Evaluation and budget follow-ups (see `design/`):
+- Evaluation and budget follow-ups (see `evaluation.md`, `budget_and_stopping.md`):
   - Move the test cost table to the task folder when the harness is ported.
   - Default budget size per team per round (CONFIG default) for the qwen task.
 - Champion lifecycle: when it changes, comparing candidates built on different starting points,

@@ -9,7 +9,9 @@ This text is meant to be included in every agent's common instructions.
   Use it to find who to talk to; then talk with `SendMessage` to the bare name it shows.
 - `agent start <name> --role R [--team T] [--cwd DIR] [--task-file F]`: start a new agent
   (manager and leaders). It gets the flavor's `agents/common.md` + `agents/<role>.md` as its
-  instructions (override with `--prompt-file`), and the task file as its first message. `agent stop <name>` when it is no longer needed: agents never
+  instructions (override with `--prompt-file`), and the task file as its first message.
+  Model and effort come from the role's line in the run's `config.md` (override with
+  `--model`/`--effort`); context auto-compacts at 400K tokens (`--autocompact`). `agent stop <name>` when it is no longer needed: agents never
   exit on their own.
 - Start every `SendMessage` with your name and role, e.g. `[leader-1, leader of team T1]`.
 

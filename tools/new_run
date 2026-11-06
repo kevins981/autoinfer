@@ -72,10 +72,16 @@ def main():
     first = (f"You are the manager of a new run. Run folder: {run} (AUTOINFER_RUN is set). "
              f"Task: {a.task}. Start with `agent register manager --role manager`, then begin "
              f"initialize(): greet the human and start defining the task with them.")
+    import importlib.machinery
+    agent_mod = importlib.machinery.SourceFileLoader("agent_tool", str(TOOLS / "agent")).load_module()
+    mgr_model, mgr_effort = agent_mod.role_model("manager", run)
+    print(f"manager: {mgr_model} / {mgr_effort} (config.md)")
     prompt = "\n\n".join((flavor / "agents" / f).read_text() for f in ("common.md", "manager.md"))
     prompt += (f"\n\n# Who you are in this run\nYou are `manager` (role manager) of run `{a.run}`; "
                f"run folder {run}; task {a.task}.\n")
     r = subprocess.run(["claude", "--bg", "--name", "manager", "--permission-mode", "auto",
+                        "--model", mgr_model, "--effort", mgr_effort,
+                        "--autocompact", os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),
                         "--settings", str(run / "manager_settings.json"),
                         "--append-system-prompt", prompt, first],
                        cwd=flavor, env=env, capture_output=True, text=True)

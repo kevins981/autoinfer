@@ -13,7 +13,7 @@ Every agent is a folder $AUTOINFER_RUN/agents/<name>/ and a headless `claude -p`
   err.log       its stderr
 
 Usage:
-  agent start <name> --role R [--team T] [--cwd DIR] [--prompt-file F]... [--model M]
+  agent start <name> --role R [--team T] [--cwd DIR] [--prompt-file F]... [--model M] [--autocompact TOKENS]
               [--effort E] [--task TEXT | --task-file F] [--settings FILE]
   agent register <name> --role R [--team T]   # an already running session (e.g. the manager)
   agent list [--all] [--json]
@@ -197,11 +197,15 @@ def cmd_start(a):
         "--name", a.name,
         "--session-id", session_id,
         "--permission-mode", a.permission_mode,
+        "--autocompact", str(a.autocompact),
         "--settings", settings,
         "--disallowedTools", "ListAgents",
         "--strict-mcp-config",
         "--append-system-prompt", prompt,
     ]
+    cfg_model, cfg_effort = role_model(a.role)
+    a.model = a.model or cfg_model
+    a.effort = a.effort or cfg_effort
     if a.model:
         claude += ["--model", a.model]
     if a.effort:
@@ -360,6 +364,20 @@ def cmd_stop(a):
     print(f"stopped {a.name}")
 
 
+def role_model(role, run=None):
+    """(model, effort) for a role from the run's config.md ("  - <role>: <model> / <effort>" under
+    the "models" item); defaults opus / medium. Explicit, so the user's default model doesn't apply."""
+    import re
+    model, effort = "opus", "medium"
+    cfg = Path(run or os.environ.get("AUTOINFER_RUN", ".")) / "config.md"
+    if cfg.exists():
+        m = re.search(rf"^\s*-\s*{re.escape(role)}\s*:\s*([\w.\[\]-]+)\s*(?:/\s*(\w+))?\s*$",
+                      cfg.read_text(), re.M)
+        if m:
+            model, effort = m.group(1), m.group(2) or effort
+    return model, effort
+
+
 def main():
     p = argparse.ArgumentParser(prog="agent", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -373,8 +391,11 @@ def main():
     s.add_argument("--prompt-file", action="append",
                    help="appended to Claude Code's system prompt, in order (repeatable); default: "
                         "the flavor's agents/common.md + agents/<role>.md")
-    s.add_argument("--model")
-    s.add_argument("--effort")
+    s.add_argument("--model", help="default: the role's model in the run's config.md, else opus")
+    s.add_argument("--effort", help="default: the role's effort in config.md, else medium")
+    s.add_argument("--autocompact", default=os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),
+                   help="context size (tokens) at which the agent auto-compacts, or 'auto' "
+                        "(default: 400000, or $AUTOINFER_AUTOCOMPACT)")
     s.add_argument("--permission-mode", default=os.environ.get("AUTOINFER_PERMISSION_MODE", "auto"),
                    help="must be the same for every agent of a run (default: auto)")
     s.add_argument("--settings", help="default: $AUTOINFER_RUN/agent_settings.json, else tools/agent_settings.json")

@@ -41,6 +41,11 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
   no `pip install`.
 
 ## Progress log
+- 2026-11-06: per-role model/effort in `config.md` (human: manager + leaders Opus 5.5 medium,
+  workers Sonnet 5.5 medium; brainstormers Opus medium, my choice), read by `agent start` and
+  `new_run`, so it doesn't depend on agents passing flags. Explicit, because the user's
+  `~/.claude/settings.json` default model (sonnet) otherwise applies. Auto-compact at 400K tokens
+  for every agent (`--autocompact`, overridable with `$AUTOINFER_AUTOCOMPACT`). Tested.
 - 2026-11-06: manager prompt moved to `flavors/v1/agents/manager.md` (consistent with the other
   roles); `flavors/v1/CLAUDE.md` only points to it. `new_run` passes common + manager prompts via
   `--append-system-prompt` (tested on a `--bg` session) and excludes both CLAUDE.md files.

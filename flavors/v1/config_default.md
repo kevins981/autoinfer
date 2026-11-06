@@ -13,4 +13,8 @@ Free text: the manager reads it and passes the relevant parts into agents' promp
     widely, questions assumptions, aims for surprising ideas the specialists would not think of.
 - human checkpoints: no blocking checkpoint after the task definition; a short summary to the
   human after every round.
-- models: all agents use the default model (Opus) at default effort.
+- models (role: model / effort; read by `agent start` and `new_run`, so keep this format):
+  - manager: opus / medium
+  - leader: opus / medium
+  - worker: sonnet / medium
+  - brainstormer: opus / medium

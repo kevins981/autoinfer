@@ -3,10 +3,9 @@
 Flavor-specific TODOs live in each flavor's `design/TODO.md` (e.g. `flavors/v1/design/TODO.md`).
 
 ## Agent launching and messaging
-- How agents are launched (claude CLI flags, auth) and how they message each other asynchronously
-  in headless mode. Check `SendMessage`/`ListAgents` for local sessions. **Hard requirement**:
-  brainstormers hold multi-turn chats with persistent leaders, and the manager talks to running
-  leaders.
+- See [agent_runtime.md](agent_runtime.md): tested 2026-11-06. Messaging is native
+  `SendMessage` (works between headless agents, busy or idle). Our `agent` script only launches
+  agents and lists them (start / list / stop). Open: implementing it, permission lists.
 - Crash recovery: agent sessions will die (API errors, context limits, server restarts). The
   launcher should detect this and restart the agent with its last task; agents resume from state on
   disk (bank, KBs, tree, journal). The algorithm assumes this exists.

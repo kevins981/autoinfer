@@ -18,6 +18,7 @@ Usage:
   agent register <name> --role R [--team T]   # an already running session (e.g. the manager)
   agent list [--all] [--json]
   agent send <name> (TEXT | -f FILE)          # append to its inbox ("[from <sender>]" header)
+  agent restart <name> [--model M] [--effort E] [--force]   # same session, new model
   agent stop <name>
 
 `agent <command> --help` explains each command, with examples.
@@ -200,48 +201,15 @@ def cmd_start(a):
         die(f"settings file {settings} not found (permissions for headless agents)")
     session_id = str(uuid.uuid4())
 
-    claude = [
-        "claude", "-p",
-        "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-        "--name", a.name,
-        "--session-id", session_id,
-        "--permission-mode", a.permission_mode,
-        "--autocompact", str(a.autocompact),
-        "--settings", settings,
-        "--disallowedTools", "ListAgents",
-        "--strict-mcp-config",
-        "--append-system-prompt", prompt,
-    ]
     cfg_model, cfg_effort = role_model(a.role)
     a.model = a.model or cfg_model
     a.effort = a.effort or cfg_effort
-    if a.model:
-        claude += ["--model", a.model]
-    if a.effort:
-        claude += ["--effort", a.effort]
-
-    env = dict(os.environ)
-    env.update({
-        "AUTOINFER_RUN": str(run_dir()),
-        "AUTOINFER_AGENT": a.name,
-        "AUTOINFER_ROLE": a.role,
-        "PATH": f"{TOOLS_DIR}:{env.get('PATH', '')}",
-    })
-    if a.team:
-        env["AUTOINFER_TEAM"] = a.team
-    else:
-        env.pop("AUTOINFER_TEAM", None)
-
-    # tail -f keeps stdin open, so the agent stays alive between tasks until it is stopped.
-    shell = 'exec tail -n +1 -f "$1/inbox.jsonl" | "${@:2}" > "$1/events.jsonl" 2> "$1/err.log"'
-    proc = subprocess.Popen(
-        ["bash", "-c", shell, "agent-launch", str(d)] + claude,
-        cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL, start_new_session=True,
-    )
+    proc = launch(d, a.name, a.role, a.team, cwd, settings, a.permission_mode, a.autocompact,
+                  prompt, a.model, a.effort, ["--session-id", session_id], fresh=True)
     meta = {
         "name": a.name, "role": a.role, "team": a.team, "parent": me(), "cwd": str(cwd),
         "pid": proc.pid, "pgid": proc.pid, "session_id": session_id, "model": a.model, "effort": a.effort,
+        "settings": settings, "permission_mode": a.permission_mode, "autocompact": str(a.autocompact),
         "started": now(), "stopped": None, "last_task": None, "last_task_at": None,
     }
     write_meta(d, meta)
@@ -250,6 +218,49 @@ def cmd_start(a):
         append_inbox(d, task, me())
     print(f"started {a.name} (role {a.role}{', team ' + a.team if a.team else ''}); "
           f"events: {d / 'events.jsonl'}")
+
+
+def launch(d, name, role, team, cwd, settings, permission_mode, autocompact, prompt, model,
+           effort, session_args, fresh):
+    """Start the headless claude process for agent folder d. fresh=False (restart): resume the
+    session, read only NEW inbox lines (the old ones were already delivered), append events."""
+    claude = [
+        "claude", "-p",
+        "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--name", name,
+        *session_args,
+        "--permission-mode", permission_mode,
+        "--autocompact", str(autocompact),
+        "--settings", settings,
+        "--disallowedTools", "ListAgents",
+        "--strict-mcp-config",
+        "--append-system-prompt", prompt,
+    ]
+    if model:
+        claude += ["--model", model]
+    if effort:
+        claude += ["--effort", effort]
+    env = dict(os.environ)
+    env.update({
+        "AUTOINFER_RUN": str(run_dir()),
+        "AUTOINFER_AGENT": name,
+        "AUTOINFER_ROLE": role,
+        "PATH": f"{TOOLS_DIR}:{env.get('PATH', '')}",
+    })
+    if team:
+        env["AUTOINFER_TEAM"] = team
+    else:
+        env.pop("AUTOINFER_TEAM", None)
+    # tail -f keeps stdin open, so the agent stays alive between tasks until it is stopped.
+    if fresh:
+        shell = 'exec tail -n +1 -f "$1/inbox.jsonl" | "${@:2}" > "$1/events.jsonl" 2> "$1/err.log"'
+    else:
+        shell = 'exec tail -n 0 -f "$1/inbox.jsonl" | "${@:2}" >> "$1/events.jsonl" 2>> "$1/err.log"'
+    return subprocess.Popen(
+        ["bash", "-c", shell, "agent-launch", str(d)] + claude,
+        cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, start_new_session=True,
+    )
 
 
 def find_claude_ancestor():
@@ -346,16 +357,7 @@ def cmd_send(a):
     print(f"sent to {a.name}")
 
 
-def cmd_stop(a):
-    d = agents_dir() / a.name
-    meta = read_meta(d)
-    if not meta:
-        die(f"no agent named {a.name} in this run")
-    if meta.get("registered"):
-        meta["stopped"] = now()
-        write_meta(d, meta)
-        print(f"marked {a.name} as stopped (it is an interactive session; end it yourself)")
-        return
+def kill_group(meta):
     pgid = meta.get("pgid")
     if pgid and alive(meta):
         for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
@@ -368,6 +370,76 @@ def cmd_stop(a):
                 time.sleep(0.2)
             if not pid_alive(meta["pid"]):
                 break
+
+
+def group_extras(meta):
+    """Processes in the agent's group besides its launcher, tail and claude: background
+    commands it started (a build, a GPU job, ...), which a restart would kill."""
+    pgid, out = meta.get("pgid"), []
+    if not pgid:
+        return out
+    for p in Path("/proc").iterdir():
+        if not p.name.isdigit():
+            continue
+        try:
+            stat = (p / "stat").read_text()
+            if int(stat.split(")")[-1].split()[2]) != pgid:
+                continue
+            cmd = (p / "cmdline").read_bytes().split(b"\0")
+        except (OSError, ValueError, IndexError):
+            continue
+        prog = os.path.basename(cmd[0].decode()) if cmd and cmd[0] else ""
+        if int(p.name) == pgid or prog in ("tail", "claude"):
+            continue
+        out.append(f"{p.name} {b' '.join(cmd).decode(errors='replace')[:120]}")
+    return out
+
+
+def cmd_restart(a):
+    d = agents_dir() / a.name
+    meta = read_meta(d)
+    if not meta:
+        die(f"no agent named {a.name} in this run")
+    if meta.get("registered"):
+        die(f"{a.name} is an interactive session: change its model there (`claude attach <id>`, "
+            f"then /model)")
+    if not meta.get("session_id"):
+        die(f"{a.name} has no session id to resume")
+    if alive(meta) and not a.force:
+        busy, _, _ = activity(d)
+        if busy:
+            die(f"{a.name} is busy (mid-turn); restart it when idle, or --force (the turn is lost)")
+        extras = group_extras(meta)
+        if extras:
+            die(f"{a.name} has background commands that a restart would kill:\n  "
+                + "\n  ".join(extras) + "\nwait for them, or --force")
+    cfg_model, cfg_effort = role_model(meta["role"])
+    model, effort = a.model or cfg_model, a.effort or cfg_effort
+    kill_group(meta)
+    settings = meta.get("settings") or str(run_dir() / "agent_settings.json")
+    proc = launch(d, meta["name"], meta["role"], meta.get("team"), Path(meta["cwd"]), settings,
+                  meta.get("permission_mode") or "auto", meta.get("autocompact") or "400000",
+                  (d / "prompt.md").read_text(), model, effort,
+                  ["--resume", meta["session_id"]], fresh=False)
+    old = f"{meta.get('model')} / {meta.get('effort')}"
+    meta.update({"pid": proc.pid, "pgid": proc.pid, "model": model, "effort": effort,
+                 "stopped": None, "restarted": now()})
+    meta.setdefault("history", []).append({"at": now(), "from": old, "to": f"{model} / {effort}"})
+    write_meta(d, meta)
+    print(f"restarted {a.name}: {old} -> {model} / {effort} (same session, context kept)")
+
+
+def cmd_stop(a):
+    d = agents_dir() / a.name
+    meta = read_meta(d)
+    if not meta:
+        die(f"no agent named {a.name} in this run")
+    if meta.get("registered"):
+        meta["stopped"] = now()
+        write_meta(d, meta)
+        print(f"marked {a.name} as stopped (it is an interactive session; end it yourself)")
+        return
+    kill_group(meta)
     meta["stopped"] = now()
     write_meta(d, meta)
     print(f"stopped {a.name}")
@@ -453,6 +525,22 @@ Returns immediately; talk to it with SendMessage (its name), check it with `agen
     s.add_argument("-f", "--file", help="message from a file")
     s.add_argument("text", nargs="*", help="message text")
     s.set_defaults(fn=cmd_send)
+
+    s = sub.add_parser("restart", formatter_class=R, help="restart an agent, e.g. on another model",
+                       description="""Restart an agent's process on the SAME session (its whole context is kept),
+e.g. to switch model or effort mid-run. Model/effort: the options, else the role's line in
+config.md (so: edit config.md, then restart). Refuses while the agent is mid-turn or has
+background commands running (a build, a GPU job): they would be killed. Messages sent while it
+restarts are kept and delivered after. The manager (an interactive session) can't be restarted
+this way: attach to it and use /model.""",
+                       epilog="""examples:
+  agent restart leader-1                                   # pick up config.md's leader model
+  agent restart leader-1.w1 --model claude-opus-5-5 --effort high""")
+    s.add_argument("name")
+    s.add_argument("--model")
+    s.add_argument("--effort")
+    s.add_argument("--force", action="store_true", help="restart even if busy (kills its turn and jobs)")
+    s.set_defaults(fn=cmd_restart)
 
     s = sub.add_parser("stop", help="stop an agent",
                        description="Stop an agent's process (and anything it started). Its folder, "

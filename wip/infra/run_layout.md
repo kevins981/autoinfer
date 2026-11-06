@@ -43,7 +43,7 @@ The bank belongs to the run (no sharing between runs in v1).
    `config.md` from `flavors/v1/config_default.md`, `search_policy.md`, empty records, folders,
    `agent_settings.json` + `manager_settings.json`), runs `ws setup-task`, and starts the manager
    as a background session in `flavors/v1/` (`claude --bg --name manager`, auto mode, the run's
-   settings, `AUTOINFER_RUN` set; the flavor `CLAUDE.md` is its prompt). First time only: run
+   settings, `AUTOINFER_RUN` set; prompts `agents/common.md` + `agents/manager.md` via `--append-system-prompt`). First time only: run
    `claude` once in `flavors/v1/` and accept the trust prompt.
 2. The human talks to it with `claude attach <id>` (detach and re-attach any time).
 3. `initialize()`: the task-definition conversation (blocking), then `official_eval BASE`.

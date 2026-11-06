@@ -2,7 +2,7 @@
 
 The baseline AutoInfer algorithm: one run manager, round-based brainstorming, leaders that each own
 one direction per round, workers that implement, and a trusted evaluator with an independent judge.
-Bodies marked `TBD` are not designed yet. See `../../design/open_questions.md`.
+Bodies marked `TBD` are not designed yet. See `TODO.md`.
 
 ## Agents
 - **Manager**: **persistent** (one session for the whole run, with compaction). Owns the search
@@ -153,7 +153,7 @@ leader.run(task) -> report:
     # The direction is high level: the leader first thinks about how to break it into experiments,
     # in what order, and what can run in parallel (up to CONFIG.max_workers_per_leader; fewer is fine).
     # TBD: what exactly a leader does (e.g. reviewing past results in BANK/SHARED_KB, planning,
-    # when to profile); see open_questions.md
+    # when to profile); see TODO.md
     loop:
         plan = leader.plan(task, local_kb)              # next experiments; may revise the plan
         for exp in plan (in parallel, one worker each):
@@ -164,7 +164,7 @@ leader.run(task) -> report:
             wreport = worker.run(exp.task)              # first task says what to read first;
                                                         # follow-ups: just another task
                                                         # TBD: validation funnel (cheap tests before
-                                                        # GPU-heavy ones); see open_questions.md
+                                                        # GPU-heavy ones); see TODO.md
             record = leader.file_record(wreport, ws)    # leader moves branch + record into BANK
             if leader.wants_official_eval(record):      # TBD (see evaluate / budget)
                 evaluate(record.candidate)              # appends official numbers + verdict

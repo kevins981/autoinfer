@@ -41,6 +41,8 @@ autoinfer/
     CLAUDE.md          # for agents using this flavor (excludes the top-level CLAUDE.md)
     .claude/settings.json
     DESIGN.md          # the algorithm (pseudocode)
+    TODO.md            # open design items for this flavor
+    search_policy.md   # (v1) how the manager picks what to work on next
     agents/ tools/ runs/<run>/
 ```
 The layout inside a run folder is still to be decided.
@@ -48,7 +50,8 @@ The layout inside a run folder is still to be decided.
 ## Design notes
 - [design/principles.md](design/principles.md): agreed design principles. Respect them; propose
   changes to the human explicitly instead of silently deviating.
-- [design/open_questions.md](design/open_questions.md): undecided items and TODOs.
+- [design/open_questions.md](design/open_questions.md): undecided items and TODOs shared by all
+  flavors (infrastructure, tasks). Flavor-specific TODOs are in each flavor's `TODO.md`.
 - Each flavor's algorithm lives in its `DESIGN.md`, e.g. [flavors/v1/DESIGN.md](flavors/v1/DESIGN.md).
 
 When a design decision is made, write it into the right file (principles, open questions, or the

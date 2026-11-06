@@ -44,11 +44,14 @@ What was profiled:
   nsys is `/usr/local/cuda-12.6/bin/nsys` (2024.5).
 
 ## ncu (Nsight Compute): per-kernel hardware metrics. `baseline/ncu_marlin/`
-- `marlin_c16.ncu-rep`: the report (~1700 metrics per kernel: DRAM/L2/L1 traffic and
-  throughput, tensor-pipe use, stall reasons, occupancy, ...). `marlin_c16_key.csv`: a few key
-  metrics per launch as CSV. `marlin_c16_src.ncu-rep`:
-  same 12 launches from an earlier setup (bf16 KV cache; same Marlin kernels and shapes), with a
-  -lineinfo build and source imported (per-source-line and per-SASS stall samples).
+- `marlin_c16.ncu-rep`: the baseline server exactly as the task runs it, under c=16 decode
+  load: the first 12 Marlin launches = 3 layers x 4 FP8 GEMMs, GPU 0, `--set full` (~1700
+  metrics per kernel: DRAM/L2/L1 traffic and throughput, tensor-pipe use, stall reasons,
+  occupancy, ...). Captured with `scripts/profile_ncu.sh <ws> <out> Marlin 0 12 --devices 0`;
+  `marlin_c16.log` is its server/ncu log. `marlin_c16_key.csv`: a few key metrics per launch.
+- `marlin_c16_src.ncu-rep`: the same 12 launches with a -lineinfo build and source imported
+  (per-source-line and per-SASS stall samples). Captured on an older server config (bf16 KV
+  cache instead of FP8); the Marlin kernels and shapes are the same.
 - Python: `ncu_report` (Nsight Compute's API):
   ```python
   import sys, os; sys.path.insert(0, os.environ["NCU_PYTHON"])   # set by env.sh

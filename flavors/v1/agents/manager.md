@@ -121,7 +121,8 @@ brainstorm(round) -> directions:
 ```python
 assign(directions, leaders) -> tasks:
     # One task per leader, written to brainstorm/r<round>/task_<leader>.md:
-    #   what to work on: the direction + rationale
+    #   what to work on: the direction + rationale (one direction per leader; bundling a second
+    #     idea is fine when intentional, e.g. a cheap test that informs the direction: say why)
     #   its GPU budget for this round (from gpu/budget.json)
     #   the current CHAMPION (record id + official numbers): the reference to beat
     #   optional: scope constraints, pointers to related BANK records

@@ -3,7 +3,7 @@
 Flavor-specific TODOs live in each flavor's `design/TODO.md` (e.g. `flavors/v1/design/TODO.md`).
 
 ## Agent launching and messaging
-- See [../wip/infra/agent_runtime.md](../wip/infra/agent_runtime.md): tested 2026-11-06. Messaging is native
+- See [../flavors/v1/design/infra/agent_runtime.md](../flavors/v1/design/infra/agent_runtime.md): tested 2026-11-06. Messaging is native
   `SendMessage` (works between headless agents, busy or idle). Our `agent` script only launches
   agents and lists them (start / list / stop). Open: implementing it, permission lists.
 - Crash recovery: agent sessions will die (API errors, context limits, server restarts). The

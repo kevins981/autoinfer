@@ -3,7 +3,7 @@
 
 A job is one command that gets the GPUs exclusively until it exits or hits its timeout.
 Jobs run one at a time, first come first served, and are charged (actual wall minutes) to the
-submitting agent's team budget for the current round. Spec: wip/infra/gpu_queue.md.
+submitting agent's team budget for the current round. Spec: design/infra/gpu_queue.md.
 
 Usage:
   gpu run --timeout MIN [--label L] -- <command...>   # blocks until the job ends (run it in the

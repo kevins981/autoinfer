@@ -1,7 +1,7 @@
-# Working area: infrastructure for the first v1 run
+# v1 implementation status
 
-Temporary. Specs of the subsystems we are building, plus progress. When a subsystem is
-implemented, its spec moves into `design/` (or next to the code) and this file is updated.
+Status of the infrastructure for the first v1 run, decisions made while building it, and a
+progress log. Specs are in [infra/](infra/); paths below are relative to `flavors/v1/`.
 
 Process (agreed with the human, 2026-11-06): spec each subsystem at a high level, one by one;
 Claude makes the easy decisions and asks only about critical ones; then Claude implements them.
@@ -13,7 +13,7 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
 | 2 | Workspaces and builds: `ws create/build/diff/rm`, shared env, ccache | [infra/workspaces_and_builds.md](infra/workspaces_and_builds.md) | **implemented + tested** (`tools/ws`) |
 | 3 | GPU queue: `gpu run/status/cancel`, batch jobs, FIFO, per-team budgets | [infra/gpu_queue.md](infra/gpu_queue.md) | **implemented + tested** (`tools/gpu`) |
 | 4 | Official eval: `official_eval <record>` = fresh workspace + build (CPU) → one GPU job → append to bank | [infra/official_eval.md](infra/official_eval.md) | **implemented, tested** (`tools/official_eval`, `tasks/<task>/harness/`) |
-| 5 | Run folder layout and kickoff: shared `tools/`, run folder, manager as a `--bg` session | [infra/run_layout.md](infra/run_layout.md) | **implemented, tested** (`tools/new_run`, `flavors/v1/config_default.md`) |
+| 5 | Run folder layout and kickoff: the flavor's `tools/`, run folder, manager as a `--bg` session | [infra/run_layout.md](infra/run_layout.md) | **implemented, tested** (`tools/new_run`, `flavors/v1/config_default.md`) |
 | 6 | Role prompts (`common.md`, manager, leader, worker, brainstormer) | `flavors/v1/agents/*.md` (incl. `manager.md`) | **drafted**, not yet exercised in a real run |
 | 7 | Porting the qwen task (TASK.md, harness, baseline profile) | `tasks/qwen38-27b-fp8-2x4090/` | harness done (eval.sh, serve_args.sh, gsm8k.py, summarize.py); TASK.md + baseline profile TBD |
 
@@ -25,7 +25,8 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
   worker did normal experiment work unblocked; dummy deny rules blocked.
 - Tests may use short GPU jobs (check nvidia-smi first) and haiku agents. Commit + push at each
   tested milestone without asking.
-- Tools are Python 3 (stdlib only) in top-level `tools/`.
+- Tools are Python 3 (stdlib only) in the flavor's `tools/` (moved from top-level `tools/`, human decision
+  2026-11-06: they are part of v1).
 - GPUs in use by someone outside the run: `gpu run` refuses (exit 75) and tells the agent to
   report to the manager; the manager stops the run's GPU work and reports to the human. Goes into
   the manager's role prompt too.
@@ -33,8 +34,8 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
   rule) in both `dontAsk` and `auto` modes; `agent start --permission-mode` added.
 - Workspaces reuse `qwen38_opt/env` and the model weights read-only; all other caches go to
   `autoinfer/.cache`.
-- Shared scripts live in top-level `tools/` (agent, ws, gpu, official_eval); flavors keep role
-  prompts in `flavors/<f>/agents/`.
+- Scripts live in `flavors/v1/tools/` (agent, ws, gpu, official_eval, new_run), role prompts in
+  `flavors/v1/agents/`, specs in `flavors/v1/design/infra/` (moved from `wip/`).
 - Official evals may use extra serve flags from the record's `serve_args.txt`, checked by the
   leader's validity review (needed because the parallelization scheme is open).
 - `PYTHONPATH=<workspace>/vllm` overrides the editable vLLM install (tested), so workspaces need

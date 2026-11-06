@@ -3,7 +3,7 @@
 
 Messaging between agents is Claude Code's native SendMessage; this tool only starts, lists and
 stops agents (plus `send`, a convenience for the human and the manager to put a message into an
-agent's inbox). Spec: wip/infra/agent_runtime.md.
+agent's inbox). Spec: design/infra/agent_runtime.md.
 
 Every agent is a folder $AUTOINFER_RUN/agents/<name>/ and a headless `claude -p` process:
   meta.json     name, role, team, parent, cwd, pgid, session_id, started, stopped
@@ -161,7 +161,7 @@ def cmd_start(a):
     if not prompt_files:
         # Default: the flavor's common instructions + the role's prompt
         # (the run folder is flavors/<flavor>/runs/<run>/).
-        agents = run_dir().parent.parent / "agents"
+        agents = Path(__file__).resolve().parents[1] / "agents"   # flavors/<f>/agents
         prompt_files = [agents / "common.md", agents / f"{a.role}.md"]
         missing = [str(f) for f in prompt_files if not f.exists()]
         if missing:

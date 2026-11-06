@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""official_eval: the only way a number becomes official. Spec: wip/infra/official_eval.md.
+"""official_eval: the only way a number becomes official. Spec: design/infra/official_eval.md.
 
 Usage: official_eval <record id> [--timeout MIN]
 
@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
-ROOT = TOOLS.parent
+ROOT = TOOLS.parents[2]                 # autoinfer/ (tools live in flavors/<f>/tools)
 
 
 def die(msg, code=1):

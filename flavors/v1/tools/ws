@@ -4,7 +4,7 @@
 A workspace is a git worktree of the task's engine repo at the baseline commit, plus a bank
 record's change.diff, plus the baseline's prebuilt compiled files. Python-only changes need no
 build (the workspace's env.sh puts it first on PYTHONPATH); C++/CUDA changes need `ws build`.
-Spec: wip/infra/workspaces_and_builds.md.
+Spec: design/infra/workspaces_and_builds.md.
 
 Usage:
   ws setup-task                   # once per task: our own clone + prebuilt files (in .cache/tasks/)
@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent          # autoinfer/
+ROOT = Path(__file__).resolve().parents[3]          # autoinfer/ (this file: flavors/<f>/tools/ws)
 
 
 def die(msg, code=1):

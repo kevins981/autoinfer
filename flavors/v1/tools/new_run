@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """new_run: create a run folder and start its manager as a background Claude session.
 
-Usage: new_run <flavor> <run name> --task <task> [--no-start]
-  e.g. tools/new_run v1 ffn-latency-1 --task qwen38-27b-fp8-2x4090
+Usage: new_run <run name> --task <task> [--no-start]
+  e.g. flavors/v1/tools/new_run ffn-latency-1 --task qwen38-27b-fp8-2x4090
 
-Creates flavors/<flavor>/runs/<run>/ (task link, config.md, search_policy.md, folders), prepares
-the task (`ws setup-task`), then starts the manager in flavors/<flavor>/ with AUTOINFER_RUN set
+Creates runs/<run>/ in this flavor (task link, config.md, search_policy.md, folders), prepares
+the task (`ws setup-task`), then starts the manager in the flavor folder with AUTOINFER_RUN set
 and the run's permission settings. Talk to it with `claude attach <id>` (printed at the end).
-The first time, run `claude` once in flavors/<flavor>/ and accept the trust prompt.
+The first time, run `claude` once in the flavor folder and accept the trust prompt.
 """
 import argparse, json, os, shutil, subprocess, sys
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
-ROOT = TOOLS.parent
+FLAVOR = TOOLS.parent
+ROOT = TOOLS.parents[2]                 # autoinfer/
 
 
 def die(msg):
@@ -24,16 +25,13 @@ def die(msg):
 def main():
     p = argparse.ArgumentParser(prog="new_run", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("flavor")
     p.add_argument("run")
     p.add_argument("--task", required=True)
     p.add_argument("--no-start", action="store_true", help="only create the folder")
     a = p.parse_args()
 
-    flavor = ROOT / "flavors" / a.flavor
+    flavor = FLAVOR
     task = ROOT / "tasks" / a.task
-    if not flavor.is_dir():
-        die(f"no flavor {flavor}")
     if not task.is_dir():
         die(f"no task {task}")
     run = flavor / "runs" / a.run

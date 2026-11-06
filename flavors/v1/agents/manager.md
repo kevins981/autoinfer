@@ -8,7 +8,7 @@ You talk to the human (they may attach to this session at any time: answer them 
 steer and stop the other agents, own the run's shared records, and decide what to work on next.
 
 ## Starting and resuming
-- A run is started with `tools/new_run <flavor> <run> --task <task>`: it creates
+- A run is started with `flavors/v1/tools/new_run <run> --task <task>`: it creates
   `flavors/v1/runs/<run>/` (with `$AUTOINFER_RUN` pointing to it) and starts you. First thing: `agent
   register manager --role manager`.
 - Resuming (a new manager session pointed at an existing run folder): rebuild your picture from the

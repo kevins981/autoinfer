@@ -38,24 +38,27 @@ autoinfer/
   design/              # design notes, split by topic (index below)
   tasks/<task>/        # TASK.md, task.yaml, harness/ (read-only to run agents), baseline/
   flavors/<flavor>/
-    CLAUDE.md          # for agents using this flavor (excludes the top-level CLAUDE.md)
-    .claude/settings.json
+    CLAUDE.md          # points a hand-started manager to agents/manager.md
+    config_default.md  # default run config (copied into each run)
+    agents/            # role prompts: common, manager, leader, worker, brainstormer
+    tools/             # the flavor's tools (agent, ws, gpu, official_eval, new_run); README.md
     design/            # everything about the flavor's design:
       DESIGN.md        #   the algorithm (pseudocode)
+      STATUS.md        #   implementation status, decisions, progress log
       TODO.md          #   open design items for this flavor
-      search_policy.md #   (v1) how the manager picks what to work on next
+      infra/           #   specs of the infrastructure (agent runtime, workspaces, GPU queue,
+                       #   official eval, run layout)
       *.md             #   detailed notes per topic (evaluation, budget, example round, ...)
-    agents/ tools/ runs/<run>/
+    runs/<run>/        # one folder per run (layout: design/infra/run_layout.md)
+  .cache/              # caches, task materialization, test runs (not in git)
 ```
-The layout inside a run folder is still to be decided.
 
 ## Design notes
 - [design/principles.md](design/principles.md): agreed design principles. Respect them; propose
   changes to the human explicitly instead of silently deviating.
 - [design/open_questions.md](design/open_questions.md): undecided items and TODOs shared by all
   flavors (infrastructure, tasks). Flavor-specific TODOs are in each flavor's `design/TODO.md`.
-- [wip/](wip/README.md): temporary working area for a design/implementation session: specs of
-  subsystems being built and a progress tracker. Specs move into `design/` once implemented.
+- v1 implementation status, decisions and progress: [flavors/v1/design/STATUS.md](flavors/v1/design/STATUS.md).
 - Each flavor's design lives in its `design/` folder, starting from `DESIGN.md`, e.g.
   [flavors/v1/design/DESIGN.md](flavors/v1/design/DESIGN.md).
 

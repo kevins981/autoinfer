@@ -1,5 +1,7 @@
 # Per-run heavy artifacts (run records like the search tree, KBs, journal stay tracked)
 flavors/*/runs/*/workspaces/
+# agent event streams (large transcripts)
+flavors/*/runs/*/agents/
 flavors/*/runs/*/**/logs/
 *.log
 *.nsys-rep

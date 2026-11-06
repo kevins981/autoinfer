@@ -41,6 +41,16 @@ Bash command). Three steps:
   is saved as `official #n: failed at <stage>` with the logs.
 - The eval doesn't decide anything: the manager compares results with the champion between rounds.
 
+## Implementation (`tools/official_eval`, `tasks/<task>/harness/`)
+- Harness: `eval.sh <workspace> <out> [serve_args.txt]` (server from the workspace on port 8100,
+  ShareGPT c=16 x 400, GSM8K-250), `serve_args.sh` (the task's serve flags), `gsm8k.py`,
+  `summarize.py` (→ `results.json`, with `vs_baseline_pct` against BASE's latest successful eval).
+- The **clients** (bench, GSM8K) run from a clean baseline tree prepared by `ws setup-task`, not
+  from the record's workspace.
+- Exit codes: 0 measured, 1 failed (recorded), 2/75 GPU job not run (nothing recorded).
+- Tested: BASE eval in 6.2 min (630.6 tok/s, GSM8K 92.8%); a diff that doesn't apply is recorded
+  as a failure; the build check flags `csrc/`, `cmake/`, `CMakeLists.txt`.
+
 ## Not in v1
 Several trials per eval (noise is ~0.5% for the qwen task; one trial is enough), the full GSM8K,
 other concurrency levels.

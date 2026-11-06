@@ -121,6 +121,13 @@ def cmd_setup_task(a):
             os.chmod(tmp, 0o755)
             tmp.rename(pre)
             print(f"copied {len(entries)} prebuilt entries into {pre}")
+        # A clean baseline tree for trusted clients (e.g. the benchmark client of official evals),
+        # so a record's diff can't change how it is measured.
+        base_tree = cd / "baseline" / cfg["repo_name"]
+        if not base_tree.exists():
+            git(repo, "worktree", "add", "--detach", "--quiet", str(base_tree), full)
+            install_prebuilt(base_tree)
+            print(f"baseline tree for trusted clients: {base_tree}")
     print(f"task {task_dir().name} ready: baseline {full[:12]}")
 
 

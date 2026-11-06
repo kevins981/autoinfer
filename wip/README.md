@@ -12,18 +12,19 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
 | 1 | Agent runtime: `agent start/list/stop`, native `SendMessage`, common instructions | [infra/agent_runtime.md](infra/agent_runtime.md) | **implemented + tested** (`tools/agent`) |
 | 2 | Workspaces and builds: `ws create/build/diff/rm`, shared env, ccache | [infra/workspaces_and_builds.md](infra/workspaces_and_builds.md) | **implemented + tested** (`tools/ws`) |
 | 3 | GPU queue: `gpu run/status/cancel`, batch jobs, FIFO, per-team budgets | [infra/gpu_queue.md](infra/gpu_queue.md) | **implemented + tested** (`tools/gpu`) |
-| 4 | Official eval: `official_eval <record>` = fresh workspace + build (CPU) → one GPU job → append to bank | [infra/official_eval.md](infra/official_eval.md) | spec drafted |
-| 5 | Run folder layout and kickoff: shared `tools/`, run folder, manager as a `--bg` session | [infra/run_layout.md](infra/run_layout.md) | spec drafted |
-| 6 | Role prompts (`common.md`, manager, leader, worker, brainstormer) | (TBD) | |
-| 7 | Porting the qwen task (TASK.md, harness, baseline profile) | (TBD) | |
+| 4 | Official eval: `official_eval <record>` = fresh workspace + build (CPU) → one GPU job → append to bank | [infra/official_eval.md](infra/official_eval.md) | **implemented, tested** (`tools/official_eval`, `tasks/<task>/harness/`) |
+| 5 | Run folder layout and kickoff: shared `tools/`, run folder, manager as a `--bg` session | [infra/run_layout.md](infra/run_layout.md) | **implemented, tested** (`tools/new_run`, `flavors/v1/config_default.md`) |
+| 6 | Role prompts (`common.md`, manager, leader, worker, brainstormer) | `flavors/v1/agents/*.md`, `flavors/v1/CLAUDE.md` (manager) | **drafted**, not yet exercised in a real run |
+| 7 | Porting the qwen task (TASK.md, harness, baseline profile) | `tasks/qwen38-27b-fp8-2x4090/` | harness done (eval.sh, serve_args.sh, gsm8k.py, summarize.py); TASK.md + baseline profile TBD |
 
 ## Decisions made along the way (not yet in design/)
 - Permissions (human decision, 2026-11-06): agents run in **`--permission-mode auto`** (Claude's
   classifier judges each action) + a deny list (sudo/su/doas/pkexec, git push, writes to `$HOME`,
   qwen38_opt, /usr, /etc). The allow list holds only low-risk tools and our own tools (`agent`,
   `ws`, `gpu`, `official_eval`), so Bash/Edit/Write go through the classifier. Tested: a haiku
-  worker did normal experiment work unblocked; dummy deny rules blocked. Tests may use short GPU jobs (check nvidia-smi first) and haiku
-  agents. Commit + push at each tested milestone without asking.
+  worker did normal experiment work unblocked; dummy deny rules blocked.
+- Tests may use short GPU jobs (check nvidia-smi first) and haiku agents. Commit + push at each
+  tested milestone without asking.
 - Tools are Python 3 (stdlib only) in top-level `tools/`.
 - GPUs in use by someone outside the run: `gpu run` refuses (exit 75) and tells the agent to
   report to the manager; the manager stops the run's GPU work and reports to the human. Goes into
@@ -40,6 +41,13 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
   no `pip install`.
 
 ## Progress log
+- 2026-11-06: official eval, run kickoff and role prompts implemented. A real `official_eval BASE`
+  took 6.2 min end to end: 630.6 tok/s at c=16, GSM8K 92.8%, MTP acceptance 2.34, GPUs clean
+  after. A diff that doesn't apply is recorded as `FAILED at apply_diff`. `new_run` creates the run
+  folder. A `--bg` session and headless agents reach each other with `SendMessage` (both ways).
+  The bench and GSM8K clients run from a clean baseline tree (`.cache/tasks/<task>/baseline/`), so
+  a record's diff can't change how it is measured. `agent start` defaults to the flavor's
+  `agents/common.md` + `agents/<role>.md`.
 - 2026-11-06: `tools/ws` and `tools/gpu` implemented and tested: workspace create 1.6 s; cold
   build 10.7 min, the first build of another workspace 1.8 min (ccache 100% hits across paths),
   incremental rebuilds rebuild only the changed file; fake-job queue tests (FIFO, budget checks,

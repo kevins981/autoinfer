@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""official_eval: the only way a number becomes official. Spec: wip/infra/official_eval.md.
+
+Usage: official_eval <record id> [--timeout MIN]
+
+1. Prepare (CPU, not charged): a fresh workspace eval-<id>-<n> from the baseline + the record's
+   change.diff only; `ws build` if the diff touches compiled code.
+2. Measure: one GPU job (`gpu run --label official:<id>`, charged to your team) running the task's
+   frozen harness: server from that workspace, bench, GSM8K.
+3. Record: bank/<id>/official/<n>/ (results.json, logs, provenance.json) + one line appended to
+   bank/<id>/record.md. Append-only; failures are recorded too.
+
+Blocks until done (~10 min with a warm cache; longer if it must build): run it as a background
+command. Exit codes: 0 = measured; 1 = the eval failed (recorded); 2 = budget exhausted and 75 =
+GPUs used outside the run (both: nothing recorded, see `gpu`).
+"""
+import argparse, hashlib, json, os, subprocess, sys, time
+from datetime import datetime, timezone
+from pathlib import Path
+
+TOOLS = Path(__file__).resolve().parent
+ROOT = TOOLS.parent
+
+
+def die(msg, code=1):
+    print(f"official_eval: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def now():
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def needs_build(diff_text):
+    paths = [l.split(" b/", 1)[1] for l in diff_text.splitlines() if l.startswith("diff --git a/")]
+    compiled = (".cu", ".cuh", ".cpp", ".cc", ".c", ".h", ".hpp", ".txt", ".cmake")
+    return [p for p in paths if p.startswith(("csrc/", "cmake/")) or p == "CMakeLists.txt"
+            or (p.endswith(compiled) and not p.startswith("vllm/"))]
+
+
+def harness_version(harness):
+    rel = harness.relative_to(ROOT)
+    h = subprocess.run(["git", "-C", str(ROOT), "log", "-1", "--format=%h", "--", str(rel)],
+                       capture_output=True, text=True).stdout.strip() or "untracked"
+    dirty = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--", str(rel)],
+                           capture_output=True, text=True).stdout.strip()
+    return h + ("+modified" if dirty else "")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="official_eval", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("record")
+    p.add_argument("--timeout", type=float, default=20, help="GPU job timeout, minutes")
+    a = p.parse_args()
+
+    run = os.environ.get("AUTOINFER_RUN") or die("AUTOINFER_RUN is not set")
+    run = Path(run).resolve()
+    rec = run / "bank" / a.record
+    diff = rec / "change.diff"
+    if not diff.exists():
+        die(f"{diff} not found (a record needs change.diff; empty = the baseline)")
+    task = (run / "task").resolve()
+    harness = task / "harness"
+    off = rec / "official"
+    off.mkdir(parents=True, exist_ok=True)
+    n = 1 + max([int(x.name) for x in off.iterdir() if x.name.isdigit()], default=0)
+    out = off / str(n)
+    out.mkdir()
+    ws_name = f"eval-{a.record}-{n}"
+    prov = {"record": a.record, "n": n, "diff_sha256": hashlib.sha256(diff.read_bytes()).hexdigest(),
+            "baseline_commit": None, "harness": str(harness), "harness_version": harness_version(harness),
+            "workspace": ws_name, "requested_by": os.environ.get("AUTOINFER_AGENT", "human"),
+            "team": os.environ.get("AUTOINFER_TEAM"), "started": now()}
+    serve_args = rec / "serve_args.txt"
+    if serve_args.exists():
+        prov["serve_args"] = serve_args.read_text().strip()
+
+    def record(line, code):
+        prov["ended"] = now()
+        (out / "provenance.json").write_text(json.dumps(prov, indent=2) + "\n")
+        with open(rec / "record.md", "a") as f:
+            f.write(f"\n{line}\n")
+        print(line)
+        sys.exit(code)
+
+    # 1. prepare: fresh workspace from baseline + diff, build if needed (CPU, not charged)
+    r = subprocess.run([str(TOOLS / "ws"), "create", ws_name, "--from", a.record],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        (out / "prepare.log").write_text(r.stdout + r.stderr)
+        (out / "failed_stage").write_text("apply_diff\n")
+        record(f"official #{n} ({now()[:16]}): FAILED at apply_diff (official/{n}/prepare.log)", 1)
+    wsj = json.loads((run / "workspaces" / ws_name / "ws.json").read_text())
+    prov["baseline_commit"] = wsj["baseline_commit"]
+    compiled = needs_build(diff.read_text(errors="replace"))
+    if compiled:
+        print(f"diff touches compiled code ({', '.join(compiled[:5])}): building", flush=True)
+        r = subprocess.run([str(TOOLS / "ws"), "build", ws_name], capture_output=True, text=True)
+        (out / "build.log").write_text(r.stdout + r.stderr)
+        if r.returncode != 0:
+            (out / "failed_stage").write_text("build\n")
+            record(f"official #{n} ({now()[:16]}): FAILED at build (official/{n}/build.log)", 1)
+
+    # 2. measure: one GPU job with the frozen harness
+    cmd = [str(TOOLS / "gpu"), "run", "--timeout", str(a.timeout), "--label", f"official:{a.record}",
+           "--", str(harness / "eval.sh"), str(run / "workspaces" / ws_name), str(out)]
+    if serve_args.exists():
+        cmd.append(str(serve_args))
+    print(f"official eval #{n} of {a.record}: queued on the GPUs", flush=True)
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    (out / "gpu_job.log").write_text(r.stdout + r.stderr)
+    if r.returncode in (2, 75):                         # not run at all: nothing to record
+        for f in out.iterdir():
+            f.unlink()
+        out.rmdir()
+        sys.stderr.write(r.stderr)
+        die("the GPU job was not run; nothing recorded", r.returncode)
+    if r.returncode != 0 and not (out / "failed_stage").exists():
+        (out / "failed_stage").write_text("timeout\n" if r.returncode == 124 else f"exit {r.returncode}\n")
+
+    # 3. record
+    base = run / "bank" / "BASE" / "official"
+    base_runs = sorted([x for x in base.iterdir() if x.name.isdigit() and (x / "results.json").exists()],
+                       key=lambda x: int(x.name)) if base.exists() else []
+    base_res = [x for x in base_runs if json.loads((x / "results.json").read_text()).get("ok")]
+    sargs = [sys.executable, str(harness / "summarize.py"), str(out)]
+    if base_res and a.record != "BASE":
+        sargs.append(str(base_res[-1] / "results.json"))
+    subprocess.run(sargs, capture_output=True, text=True)
+    res = json.loads((out / "results.json").read_text())
+    if not res.get("ok"):
+        record(f"official #{n} ({now()[:16]}): FAILED at {res.get('failed_stage')} "
+               f"(logs: official/{n}/)", 1)
+    vs = f" ({res['vs_baseline_pct']:+.1f}% vs BASE)" if "vs_baseline_pct" in res else ""
+    line = (f"official #{n} ({now()[:16]}): {res['output_throughput']:.1f} tok/s at c=16{vs}, "
+            f"GSM8K {100 * res['gsm8k_accuracy']:.1f}%, MTP acceptance {res.get('mtp_acceptance_length', 'n/a')}, "
+            f"TTFT p50 {res['median_ttft_ms']:.0f} ms, TPOT p50 {res['median_tpot_ms']:.1f} ms "
+            f"(official/{n}/results.json)")
+    record(line, 0)
+
+
+if __name__ == "__main__":
+    main()

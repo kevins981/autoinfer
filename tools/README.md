@@ -7,8 +7,9 @@ This text is meant to be included in every agent's common instructions.
 ## `agent`: who is who
 - `agent list`: the run's agents (name, role, team, parent, busy/idle, current task, last activity).
   Use it to find who to talk to; then talk with `SendMessage` to the bare name it shows.
-- `agent start <name> --role R [--team T] [--cwd DIR] --prompt-file F... [--task-file F]`: start a
-  new agent (manager and leaders). `agent stop <name>` when it is no longer needed: agents never
+- `agent start <name> --role R [--team T] [--cwd DIR] [--task-file F]`: start a new agent
+  (manager and leaders). It gets the flavor's `agents/common.md` + `agents/<role>.md` as its
+  instructions (override with `--prompt-file`), and the task file as its first message. `agent stop <name>` when it is no longer needed: agents never
   exit on their own.
 - Start every `SendMessage` with your name and role, e.g. `[leader-1, leader of team T1]`.
 

@@ -157,7 +157,16 @@ def cmd_start(a):
     d.mkdir(parents=True, exist_ok=True)
 
     parts = []
-    for pf in a.prompt_file or []:
+    prompt_files = a.prompt_file
+    if not prompt_files:
+        # Default: the flavor's common instructions + the role's prompt
+        # (the run folder is flavors/<flavor>/runs/<run>/).
+        agents = run_dir().parent.parent / "agents"
+        prompt_files = [agents / "common.md", agents / f"{a.role}.md"]
+        missing = [str(f) for f in prompt_files if not f.exists()]
+        if missing:
+            die(f"no --prompt-file given and default prompts not found: {', '.join(missing)}")
+    for pf in prompt_files:
         parts.append(Path(pf).read_text().rstrip() + "\n")
     parts.append(
         f"\n## Who you are in this run\n"
@@ -362,7 +371,8 @@ def main():
     s.add_argument("--team")
     s.add_argument("--cwd")
     s.add_argument("--prompt-file", action="append",
-                   help="appended to Claude Code's system prompt, in order (repeatable)")
+                   help="appended to Claude Code's system prompt, in order (repeatable); default: "
+                        "the flavor's agents/common.md + agents/<role>.md")
     s.add_argument("--model")
     s.add_argument("--effort")
     s.add_argument("--permission-mode", default=os.environ.get("AUTOINFER_PERMISSION_MODE", "auto"),

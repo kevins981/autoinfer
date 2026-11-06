@@ -38,25 +38,20 @@ records (bank records, tree, journal, KBs, reports) are small and are the main o
 human, so they are tracked. The manager commits them at the end of each round, never pushes.
 The bank belongs to the run (no sharing between runs in v1).
 
-## Kickoff
-1. The human starts the manager as a **background Claude session** in the flavor folder:
-   `cd flavors/v1 && claude --bg --name manager <run settings>`, and talks to it with
-   `claude attach manager` (detach and re-attach at any time; the run keeps going). The flavor's
-   `CLAUDE.md` is the manager's prompt.
-2. The human says: new run `<run>` on task `<task>`, focus `"..."`, plus any CONFIG overrides.
-   The manager creates the run folder, copies defaults (`config.md`, `search_policy.md`) and
-   registers itself with `agent` so `agent list` shows it.
-3. `initialize()`: the task-definition conversation with the human (blocking), then the baseline
-   official eval.
-4. Rounds run as in `DESIGN.md`. The manager reports to the human as `human_checkpoints` says;
-   the human can attach, ask, redirect or stop at any time.
+## Kickoff (implemented: `tools/new_run`)
+1. The human runs `tools/new_run v1 <run> --task <task>`. It creates the run folder (task link,
+   `config.md` from `flavors/v1/config_default.md`, `search_policy.md`, empty records, folders,
+   `agent_settings.json` + `manager_settings.json`), runs `ws setup-task`, and starts the manager
+   as a background session in `flavors/v1/` (`claude --bg --name manager`, auto mode, the run's
+   settings, `AUTOINFER_RUN` set; the flavor `CLAUDE.md` is its prompt). First time only: run
+   `claude` once in `flavors/v1/` and accept the trust prompt.
+2. The human talks to it with `claude attach <id>` (detach and re-attach any time).
+3. `initialize()`: the task-definition conversation (blocking), then `official_eval BASE`.
+4. Rounds as in `DESIGN.md`; reports to the human as `config.md`'s human checkpoints say.
 
-Resuming a stopped run: start a new manager session in the flavor folder and point it at
-`runs/<run>/`. It rebuilds its picture from the files (journal, tree, champion, bank). Agents
-that were still alive keep running; stopped ones are started fresh.
+Resuming a stopped run: start a manager session in `flavors/v1/` with `AUTOINFER_RUN` pointed at
+`runs/<run>/`; it rebuilds its picture from the files. Live agents keep running.
 
-## To check while implementing
-- A `--bg` session is reachable by the other agents' `SendMessage`, and runs in the same
-  permission mode as them.
-- `claude attach` works well enough for the human's conversation with the manager (otherwise: an
-  interactive session in tmux).
+Tested: a `--bg` session inherits the environment; a headless agent and a `--bg` session reach
+each other with `SendMessage` in both directions. Not yet tested: a full manager kickoff
+(happens in the first real run).

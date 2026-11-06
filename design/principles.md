@@ -42,26 +42,32 @@ These are agreed in discussion. Flavors may differ in *how* they follow them.
     Starting from zero assumptions every time is wasteful.
 13. **Ground ideas in specifics**: the speed-of-light bound analysis, the profile, and explicit
     assumptions about this model, hardware and workload. Generic questions get generic ideas.
-14. **Facts vs. attempt history.** Ideators should get facts (measurements, bounds, conclusions with
-    their conditions); a list of past attempts anchors them. Ideas are filtered against the full KB
-    *after* generation (drop what was already tried unless its conditions changed).
-15. **Exploration vs. exploitation is a scale, not two modes**: how much context an ideator sees,
-    what it starts from (champion, a random bank entry, a combination, an empty region of the tree),
-    and how ideas are selected (expected gain vs. ceiling × what we'd learn). The manager tunes the
-    mix. Bold ideas need protected budget.
-16. **Population, not just the champion** (AlphaEvolve). Every attempt is kept and can serve as a
+14. **Separate generation from selection.** Many pluggable idea generators (leaders, fresh
+    brainstormers with different personas, other models), one central scorer with full context,
+    and one selection policy. The selection policy is the main control knob; adding generators is
+    how idea generation scales. Record which generator proposed each idea.
+15. **Observations, not insights, for fresh thinking.** Insights close questions; observations
+    leave them open. Brainstormers start from a briefing plus a random sample of raw observations
+    (AlphaEvolve-style), not from our conclusions, and can question any leader the way you'd talk
+    to a colleague in an adjacent field. Already-tried ideas are caught by central scoring.
+16. **Exploration vs. exploitation is a scale, not two modes**: leaders (full context) at one
+    end, fresh brainstormers at the other; selection is a portfolio (e.g. best upside plus most
+    novel), not a ranking. Bold ideas need protected slots. Ideas that aren't selected stay in the
+    tree as a visible backlog.
+17. **Population, not just the champion** (AlphaEvolve). Every attempt is kept and can serve as a
     baseline. A failure records *why* it failed, so the idea can come back when conditions change.
 
 ## Knowledge and understanding
-17. **Human understanding is a first-class output**, not just the best number: what was tried, what
+18. **Human understanding is a first-class output**, not just the best number: what was tried, what
     was observed, and why. The human must be able to step in at any time.
-18. **The search tree is the index.** One markdown file owned by the manager. A node is an
+19. **The search tree is the index.** One markdown file owned by the manager. A node is an
     **idea**, with its experiments attached (the bottleneck it targets is an attribute, not the
     structure). Every experiment record maps to a node; full records are stored separately and
     linked. Cross-references are allowed, and the manager may reorganize the tree (git keeps
     history). Inner nodes summarize their children.
-19. **Knowledge stores**: each team has a local KB (working notes, hypotheses); the shared KB holds
-    confirmed insights, readable by every agent. Insights cite eval records and the baseline they
-    were measured on.
-20. **The journal** records the order of decisions and why each was made (the tree shows the
+20. **Knowledge stores**: experiment records keep **Observed** and **Interpretation** separate;
+    each leader has a local KB (working notes); the shared KB holds confirmed understanding of the
+    system, cites the experiments and baseline behind it, and has **one writer, the manager**
+    (leaders propose insights), so concurrent writes never need reconciling.
+21. **The journal** records the order of decisions and why each was made (the tree shows the
     current state).

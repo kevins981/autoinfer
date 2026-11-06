@@ -5,11 +5,12 @@
   Leaning: barrier for v1.
 - Who runs `integrate()` (combining wins from several teams)? Leaning: a dedicated worker
   delegated by the manager.
-- Do leaders keep their context and local KB across rounds, or is there a fresh leader per
-  direction?
-- Ideation: a separate ideator panel vs. leaders switching into ideation mode.
 - How agents are launched (claude CLI flags, auth) and how they message each other asynchronously
-  in headless mode. Check `SendMessage`/`ListAgents` for local sessions.
+  in headless mode. Check `SendMessage`/`ListAgents` for local sessions. **Hard requirement**:
+  brainstormers hold multi-turn chats with persistent leaders, and the manager talks to running
+  leaders.
+- Brainstorming details: how many brainstormers and how big the random sample is, whether to use
+  other models, the exact briefing contents, and the default selection policy.
 - CLAUDE.md scoping (tested 2026-11-05 with claude 2.1.318): `claudeMdExcludes` in
   `flavors/v1/.claude/settings.json` hides the top-level CLAUDE.md for sessions started in
   `flavors/v1/`. Relative `@../` imports of files outside the project are *not* loaded in `-p`
@@ -24,8 +25,6 @@
 - Experiment bank: proposed as one vLLM git repo (attempt = branch/commit + record file; champion =
   a git ref; teams use `git worktree`). Per-worktree builds: editable install + C++ extension
   reuse, ccache.
-- Shared KB writes: proposed as append-only, one file per insight, plus a curator agent that
-  resolves contradictions and marks stale entries.
 - Layout of a run folder.
 
 ## Task: qwen38-27b-fp8-tp2-4090

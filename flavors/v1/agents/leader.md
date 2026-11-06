@@ -29,7 +29,8 @@ leader.run(task) -> report:
                 #        --cwd <ws> --task-file <ws>/task.md
                 #      (follow-up to an existing worker: SendMessage it the next task)
                 # exp.task: what to try, what to measure, when it's done, its GPU budget (part of
-                # yours), what to read first. Default: follow-ups go to the same worker; start a
+                # yours), what to read first; optionally when to report back (only when done, or
+                # also at milestones, e.g. a go/no-go) if you want interim updates. Default: follow-ups go to the same worker; start a
                 # fresh one for an unrelated experiment or when a worker is stuck in a rut.
             record = file_record(wreport, ws)       # EVERY experiment, failures too
                 # how: bank/<team>-<nnn>/ (next number for your team): record.md (format in the

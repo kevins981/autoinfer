@@ -1,7 +1,7 @@
 """Quick accuracy gate: GSM8K subset against the running server (temperature 0, thinking off).
 
 Usage: python gsm8k.py [--n 250] [--conc 16] --out FILE.json [--url URL]
-Writes per-question outputs + accuracy to --out and prints accuracy. (Ported from qwen38_opt/gsm8k_gate.py.) Fixed question subset (seed 0), so scores are
+Writes per-question outputs + accuracy to --out and prints accuracy. Fixed question subset (seed 0), so scores are
 comparable across configs. With n=250 the standard error is ~2.5 points: treat drops under ~4 points as noise.
 Stdlib only. Data: data/gsm8k_test.jsonl (openai/grade-school-math test split).
 """

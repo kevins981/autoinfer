@@ -7,7 +7,7 @@ Agents get the essentials in `agents/common.md`; every tool's `--help` (and `<to
 
 ## `agent`: who is who
 - `agent list`: the run's agents (name, role, team, parent, busy/idle, current task, last activity).
-  Use it to find who to talk to; then talk with `SendMessage` to the bare name it shows.
+  Use it to find who to talk to; then talk with `SendMessage` to the run-scoped name in its SENDMESSAGE TO column (e.g. `test-4-leader-1`).
 - `agent start <name> --role R [--team T] [--cwd DIR] [--persona P] [--task-file F]`: start a new agent
   (manager and leaders). It gets the flavor's `agents/common.md` + `agents/<role>.md` as its
   instructions (override with `--prompt-file`), and the task file as its first message.

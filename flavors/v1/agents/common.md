@@ -90,8 +90,10 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
 
 ## Talking to other agents
 - `agent list` shows who is in the run: name, role, team, busy/idle, current task.
-- Talk with `SendMessage` to the bare name from `agent list`. **Start every message with your
-  name and role**, e.g. `[leader-1, leader of team T1]`.
+- Talk with `SendMessage` to the name in `agent list`'s SENDMESSAGE TO column: agents' session
+  names are scoped to the run (e.g. `test-4-leader-1`, `test-4-manager`), so other runs' agents on
+  this machine never clash. Every message you receive names its sender's address too. **Start
+  every message with your name and role**, e.g. `[leader-1, leader of team T1]`.
 - Messages from the run's agents and from the human are part of your job: answer questions with
   `SendMessage` even while busy with something else, then carry on.
 
@@ -100,8 +102,14 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   `source <workspace>/env.sh` before running anything in one. A cold `ws build` takes ~11 min:
   run it as a **background** command.
 - `gpu`: **all GPU work goes through `gpu run --timeout <min> -- <script>`**: one job at a time
-  for the whole run, charged to your team's budget. Run it as a **background** command. One job =
-  one script (start the server, test, stop it); everything it started is killed when it ends.
+  for the whole run, charged to your team's budget. One job = one script (start the server, test,
+  stop it); everything it started is killed when it ends.
+  **How to wait for a job:** make `gpu run …` itself the Bash command, with `run_in_background`.
+  You are notified when the job ends, with its exit code and the end of its output; the full
+  output is `$AUTOINFER_RUN/gpu/jobs/<id>/output.log`. Don't add `&`, don't poll `gpu status` in
+  a loop, don't `sleep` (sleeps are blocked; foreground commands are cut off after ~10 min).
+  Meanwhile, do other work. To wait on a job you didn't start this way: `gpu wait <id>`, also as
+  a background command.
   `gpu status` shows the queue and budgets. **Exit 75 = the GPUs are used by someone outside the
   run: stop GPU work and tell the manager** (other people share these GPUs; we never compete).
   Exit 76 = your team's budget is used up: do GPU-free work.

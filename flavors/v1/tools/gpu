@@ -9,6 +9,7 @@ Usage:
   gpu run --timeout MIN [--label L] -- <command...>   # blocks until the job ends (run it in the
                                                       # background and get notified on exit)
   gpu status [--json]
+  gpu wait <job id>                                   # blocks until that job ends (background too)
   gpu cancel <job id>
 
 Team and agent come from AUTOINFER_TEAM / AUTOINFER_AGENT (set by `agent start`). No team =
@@ -423,6 +424,29 @@ def cmd_status(a):
                       if teams[t] else ""))
 
 
+def cmd_wait(a):
+    jdir = gdir() / "jobs" / str(a.job)
+    if not (jdir / "job.json").exists():
+        die(f"no job {a.job} (job ids are in `gpu status`)")
+    t0 = time.time()
+    while True:
+        info = read_json(jdir / "job.json") or {}
+        if info.get("state") in ("done", "timed out", "cancelled", "refused"):
+            break
+        if a.max and time.time() - t0 > a.max * 60:
+            print(f"[gpu] job {a.job} still {info.get('state', 'queued')} after {a.max:g} min of waiting")
+            sys.exit(3)
+        time.sleep(POLL)
+    log = jdir / "output.log"
+    if log.exists():
+        print("\n".join(log.read_text(errors="replace").splitlines()[-25:]))
+    rc = info.get("exit_code")
+    print(f"[gpu] job {a.job} {info['state']}" + (f" with code {rc}" if rc is not None else "") +
+          (f" after {info['gpu_minutes']:.1f} min" if info.get("gpu_minutes") is not None else "") +
+          f"\n[gpu] full output: {log}")
+    sys.exit(rc if isinstance(rc, int) else 1)
+
+
 def cmd_cancel(a):
     g = gdir()
     info = read_json(g / "jobs" / str(a.job) / "job.json")
@@ -478,6 +502,20 @@ examples:
                                    "for this round: budget, used, remaining (minutes).")
     s.add_argument("--json", action="store_true", help="machine-readable output")
     s.set_defaults(fn=cmd_status)
+    s = sub.add_parser("wait", formatter_class=R, help="wait until a job ends; print its result",
+                       description="""Block until the job ends, then print the last lines of its output and exit with
+its exit code. For a job you can't wait on otherwise (a teammate's, or one whose `gpu run` you
+lost track of). For your own new jobs, just run `gpu run` itself as a background command: you are
+notified when it ends. Like `gpu run`, run `gpu wait` as a background command: foreground Bash
+commands are cut off after ~10 min.""",
+                       epilog="""exit codes: the job's own exit code; 3 = --max reached and the job is still going
+
+examples:
+  gpu wait 12
+  gpu wait 12 --max 5      (give up waiting after 5 minutes)""")
+    s.add_argument("job", type=int, help="job id, from `gpu status` or the [gpu] line `gpu run` printed")
+    s.add_argument("--max", type=float, default=None, metavar="MIN", help="stop waiting after this")
+    s.set_defaults(fn=cmd_wait)
     s = sub.add_parser("cancel", formatter_class=R, help="cancel a waiting job or kill a running one",
                        description="Cancel a waiting job, or kill a running one (it is charged for the "
                                    "minutes it ran). The job's `gpu run` exits with 130.",

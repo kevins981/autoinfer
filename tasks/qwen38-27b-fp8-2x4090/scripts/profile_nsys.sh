@@ -4,7 +4,10 @@
 # Output in <out dir>: profile.nsys-rep (open in Nsight Systems, or `nsys stats`), profile.sqlite
 # (all the data; query it with Python, see the task's PROFILING.md), kern_sum.csv
 # (per-kernel totals), breakdown.txt (time by category: GEMM, communication, attention, ...),
-# server.log, bench.log. CUDA graphs are traced per kernel (--cuda-graph-trace=node).
+# server.log, bench.log, steps.txt (per-step anatomy, step_anatomy.py).
+# TRACE=node (default): CUDA graphs traced per kernel (which kernels run inside graphs), but each
+#   graph launch looks ~1 ms long. TRACE=graph: one row per graph replay (in the table
+#   CUPTI_ACTIVITY_KIND_GRAPH_TRACE), launch timing accurate. Use graph to judge launch gaps / idle.
 # Profiling slows things down: use it for where-the-time-goes, not for throughput numbers.
 WS=$1; export OUT=$2; N=${3:-64}; shift 3 2>/dev/null || shift $#
 mkdir -p "$OUT"
@@ -12,7 +15,8 @@ source "$WS/env.sh"
 source "$AUTOINFER_RUN/task/scripts/lib.sh"
 NSYS=${NSYS:-$(command -v nsys || echo /usr/local/cuda-12.6/bin/nsys)}
 # The server runs under nsys; capture starts/stops with the benchmark's --profile (cudaProfilerApi).
-"$NSYS" profile -o "$OUT/profile" --force-overwrite=true --trace=cuda,nvtx --cuda-graph-trace=node \
+TRACE=${TRACE:-node}
+"$NSYS" profile -o "$OUT/profile" --force-overwrite=true --trace=cuda,nvtx --cuda-graph-trace="$TRACE" \
   --capture-range=cudaProfilerApi --capture-range-end=stop \
   vllm serve "$MODEL" --port "$PORT" "${SERVE_ARGS[@]}" --profiler-config '{"profiler":"cuda"}' "$@" \
   > "$OUT/server.log" 2>&1 &
@@ -34,3 +38,4 @@ for _ in $(seq 120); do [ -f "$OUT/profile.nsys-rep" ] && break; sleep 2; done
 "$NSYS" stats --report cuda_gpu_kern_sum --format csv --output "$OUT/kern" "$OUT/profile.sqlite" >/dev/null 2>&1
 mv "$OUT/kern_cuda_gpu_kern_sum.csv" "$OUT/kern_sum.csv" 2>/dev/null
 python "$TASK_DIR/scripts/kernel_breakdown.py" "$OUT/kern_sum.csv" | tee "$OUT/breakdown.txt"
+python "$TASK_DIR/scripts/step_anatomy.py" "$OUT/profile.sqlite" --csv "$OUT/steps.csv" > "$OUT/steps.txt" 2>&1

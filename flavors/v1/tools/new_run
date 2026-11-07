@@ -198,7 +198,7 @@ def main():
     sid = str(uuid.uuid4())                  # recorded: resources.py, and recovery of a dead session
     (run / "manager_session.json").write_text(json.dumps(
         {"session_id": sid, "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}) + "\n")
-    r = subprocess.run(["claude", "--bg", "--name", "manager", "--session-id", sid, "--permission-mode", "auto",
+    r = subprocess.run(["claude", "--bg", "--name", f"{run.name}-manager", "--session-id", sid, "--permission-mode", "auto",
                         "--model", mgr_model, "--effort", mgr_effort,
                         "--autocompact", os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),
                         "--settings", str(run / "manager_settings.json"),

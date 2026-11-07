@@ -59,6 +59,12 @@ def me():
     return os.environ.get("AUTOINFER_AGENT", "human")
 
 
+def address(name):
+    """The Claude session name of a run's agent, used with SendMessage: scoped to the run
+    (e.g. test-4-leader-1), so agents of other runs on this machine never clash with it."""
+    return f"{run_dir().name}-{name}"
+
+
 def read_meta(d):
     try:
         return json.loads((d / "meta.json").read_text())
@@ -96,7 +102,8 @@ def alive(meta):
 
 
 def message_line(text, sender):
-    content = f"[from {sender}]\n{text}"
+    reply = "" if sender == "human" else f"; reply with SendMessage to {address(sender)}"
+    content = f"[from {sender}{reply}]\n{text}"
     return json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
 
 
@@ -227,7 +234,7 @@ def launch(d, name, role, team, cwd, settings, permission_mode, autocompact, pro
     claude = [
         "claude", "-p",
         "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-        "--name", name,
+        "--name", address(name),
         *session_args,
         "--permission-mode", permission_mode,
         "--autocompact", str(autocompact),
@@ -312,7 +319,7 @@ def collect(include_stopped):
         else:
             busy, age, cost = activity(d)
         rows.append({
-            "name": meta["name"], "role": meta.get("role"), "team": meta.get("team"),
+            "name": meta["name"], "address": address(meta["name"]), "role": meta.get("role"), "team": meta.get("team"),
             "parent": meta.get("parent"), "state": ("alive" if is_alive else "stopped"),
             "busy": busy, "last_event_age_s": None if age is None else int(age),
             "cost_usd": cost, "task": meta.get("last_task"), "started": meta.get("started"),
@@ -328,14 +335,14 @@ def cmd_list(a):
     if not rows:
         print("no agents" + ("" if a.all else " alive (use --all to include stopped ones)"))
         return
-    hdr = ["NAME", "ROLE", "TEAM", "PARENT", "STATE", "ACTIVITY", "LAST EVENT", "COST", "TASK"]
+    hdr = ["NAME", "SENDMESSAGE TO", "ROLE", "TEAM", "PARENT", "STATE", "ACTIVITY", "LAST EVENT", "COST", "TASK"]
     table = []
     for r in rows:
         act = "-" if r["busy"] is None else ("busy" if r["busy"] else "idle")
         if r["state"] == "stopped":
             act = "-"
         cost = "-" if r["cost_usd"] is None else f"${r['cost_usd']:.3f}"
-        table.append([r["name"], r["role"] or "-", r["team"] or "-", r["parent"] or "-",
+        table.append([r["name"], r["address"], r["role"] or "-", r["team"] or "-", r["parent"] or "-",
                       r["state"], act, fmt_age(r["last_event_age_s"]), cost,
                       (r["task"] or "-")[:70]])
     w = [max(len(str(x[i])) for x in table + [hdr]) for i in range(len(hdr) - 1)]

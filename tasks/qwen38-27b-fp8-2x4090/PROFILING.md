@@ -12,6 +12,20 @@ than they are; graph-replayed steps are barely affected. Use nsys for the GPU-si
 check launch-bound claims without it (e.g. the same server with and without CUDA graphs for those
 steps, in a plain bench).
 
+**Node-level graph tracing inflates graph launches.** With `--cuda-graph-trace=node` (the default
+of `profile_nsys.sh`, and how `baseline/nsys_c16/` was made) you see every kernel inside a CUDA
+graph, but each `cudaGraphLaunch` looks ~1 ms long and the graph's first kernel appears only after
+it, so steps seem to have ~1 ms GPU-idle gaps per graph that don't exist. To judge launch gaps or
+GPU idle time, profile with `TRACE=graph` (one row per graph replay, in the table
+`CUPTI_ACTIVITY_KIND_GRAPH_TRACE` instead of one kernel row per node).
+
+**Steps.** vLLM marks each engine step (one `execute_model` call per TP worker) with an NVTX range
+`execute_context_<P>(<prefill tokens>)_generation_<D>(<decode tokens>)`. `scripts/step_anatomy.py
+<profile.sqlite>` uses it to split a profile into decode steps and prefill-containing steps (P > 0)
+and prints per-step medians: period, GPU busy and idle, kernel time by category (`--csv` for one
+row per step). Use this definition of a step, so numbers can be compared across agents and
+profiles; say which script produced a number when you report it.
+
 What was profiled:
 - `baseline/nsys_c16/`: the BASE server (`harness/serve_args.sh`: TP=2, FP8 KV, MTP 2 draft
   tokens) under 64 ShareGPT prompts at concurrency 16, both GPUs, CUDA graphs traced per kernel
@@ -78,7 +92,8 @@ What was profiled:
 
 ## Making new profiles (GPU jobs, through `gpu run`)
 - `scripts/profile_nsys.sh <ws> <out> [num_prompts] [serve args]` (~3 min): nsys + SQLite +
-  kernel summary + breakdown of that workspace's server.
+  kernel summary + breakdown + per-step anatomy (`steps.txt`, `steps.csv`) of that workspace's
+  server. `TRACE=graph` before it for graph-level tracing (see above).
 - `scripts/profile_ncu.sh <ws> <out> <kernel regex> [skip] [count] [ncu args]` (~5 min for a few
   kernels): ncu on chosen kernels during c=16 decode. Use `--devices 0`.
 - Profiling slows the server down: use profiles for where the time goes, not for throughput.

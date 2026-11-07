@@ -41,32 +41,25 @@ Nothing missing: all 9 agents found (manager transcript located by start time, p
 ## Overlay graph
 ![overlay](overlay.png)
 
+Graded against the measured-only key (13 nodes); unmeasured ideas are in `answer_keys/qwen38-27b-fp8-2x4090/ideas.md`, not graded.
 ```
 BASE
 ├─ host-ar  [win]                         reached (T1-001, T1-003)         as expected
 │  ├─ prefill-graphs  [win on host-ar]    not-considered (fact noted)      MISSED WIN
 │  ├─ host-allgather  [no gain]           idea-only                        -
-│  ├─ ar-kernel-tuning  [no gain]         tried (T1-002)                   as expected
-│  ├─ ar-norm-fusion  [open]              idea-only                        -
-│  ├─ l2-prefetch  [open]                 idea-only (component measured)   -
-│  └─ ar-compression  [open]              not-considered                   -
+│  └─ ar-kernel-tuning  [no gain]         tried (T1-002)                   as expected
 ├─ draft-head-diet  [win]                 reached (T2-001/T2-003/T1-003)   as expected
-│  └─ reduced-vocab-draft-head            not-considered                   -
 ├─ greedy-fastpath  [win] alt             tried (T2-004, T2-006); alt reached   as expected
 ├─ sharded-sampling  [win] alt            reached (T2-003, T1-003)         as expected
 ├─ gdn-replay  [win]                      not-considered                   MISSED WIN
-│  └─ small-spec-state / draft-depth-3-small-state   not-considered        -
 ├─ draft-depth-3  [harmful]               tried (T2-002, T2-005)           WRONG CAUSE
 ├─ nccl-env  [no gain]                    tried (component)                as expected
 ├─ prefill-ar-overlap  [no gain meas.]    tried (T1-004)                   as expected
-├─ triton-linear / stock-flag-tweaks / uneven-tp / dequant-cublas-prefill   not-considered  -
-├─ pp2  [ruled out]                       idea-only (estimate)             as expected
-├─ spec-glue-graph  [open]                idea-only (T2-007 analysis)      -
-├─ marlin-tuning  [open]                  idea-only (R1-C)                 -
-├─ ce-ar-prefill  [open]                  idea-only                        -
-└─ flashinfer-pcie-ar  [open]             idea-only (dismissed, needs P2P) -
+├─ triton-linear  [harmful]               not-considered                   -
+└─ stock-flag-tweaks  [no gain]           not-considered                   -
 ```
-(In the PNG, greedy-fastpath carries a star because the plot marks `best_measured.adds`; it is not in the champion stack.)
+Counts: reached 3, tried 5, idea-only 1, not-considered 4. Missed wins 2, wrong causes 1, novel 0.
+(The hollow star on greedy-fastpath marks T2-006's best-measured-but-not-promoted stack.)
 
 ## Overlay
 Search for absence claims: `grep -rniE` over bank/*/record.md, bank/*/profiles/*.md, brainstorm/r1+r2/*, ideas.md,
@@ -78,33 +71,31 @@ shared_kb.md, journal.md, local_kb/*, reports/r*.md, final.md, tree.md, agents/l
 | prefill-graphs | not-considered | - | Leader-1 wrote down "graphs <=96 tokens; prefill steps eager" in r2 but went for AR overlap instead; never tested the capture flag | missed win | local_kb/leader-1.md:22; grep `prefill_cudagraph|max_prefill|prefill.*graph` no other hits |
 | host-allgather | idea-only | - | AF: "same building block also serves the logits all-gather"; superseded by head diet + sharded sampling | - | brainstorm/r1/adjacent_field.md idea 1 |
 | ar-kernel-tuning | tried | host-ar | unified blocks -2 us, per-warp flags worse; cause: ~10 us off PCIe floor, polling contention (component) | as expected | T1-002, KB3 |
-| ar-norm-fusion | idea-only | - | listed as left open (~1.6 ms/step norms etc.) | - | reports/r1_leader-1.md:10; reports/final.md:27 |
-| l2-prefetch | idea-only | - | AF measured L2-hot Marlin 41-48 us vs 50-56 in-server, ceiling ~+3% (component); not selected | - | R1-D (ideas.md); adjacent_field.md idea 4 |
-| ar-compression | not-considered | - | - | - | grep `compress`: no hits |
 | draft-head-diet | reached | BASE | +2.4% ab, acceptance unchanged | as expected | T2-001, KB4 |
-| reduced-vocab-draft-head | not-considered | - | allowed by task_definition.md:27 but never proposed | - | grep `reduced.?vocab|vocab.*subset`: only task_definition |
 | greedy-fastpath | tried (alt sharded-sampling reached) | BASE+draft-head-diet; host-ar+draft-head-diet | no gain vs sharded-sampling (ab); 699.5 official on host-ar but ABAB +0.2% | as expected | T2-004, T2-006, KB5, KB11 |
 | sharded-sampling | reached | BASE + draft-head-diet | 653.9 official (+2.8% with head diet) | as expected | T2-003 |
 | gdn-replay | not-considered | - | GDN decode (2.4-3.8 ms/step) appears in every anatomy, but no idea targeted the k+1 state writes | missed win | systematic_engineer.md:16, KB10, T2-005 (GDN 3.84->4.63); grep `gdn|recurrent state|replay` has no idea |
-| small-spec-state | not-considered | - | - | - | grep `spec.?state|mamba.*block|admission|capacity`: no hits |
-| draft-depth-3-small-state | not-considered | - | - | - | same grep |
 | draft-depth-3 | tried | BASE+draft-head-diet (T2-002); host-ar+draft-head-diet+sharded-sampling (T2-005) | -3.9% ab, flat (nsys); dropped for "step cost rises more" and "prefill steps dilute"; TTFT jump "cause not established, queueing behind 2048-token prefill chunks suspected" | wrong cause | T2-002 conclusion; T2-005 conclusion; KB6, KB13; REPORT_job1.md:30 |
 | nccl-env | tried | BASE | all protocol/channel knobs equal or worse at decode and prefill sizes (component) | as expected | KB1; adjacent_field.md (NCCL bench); T1-001 results |
 | prefill-ar-overlap | tried | host-ar+draft-head-diet+sharded-sampling | big prefill steps -10% (nsys), 0.0% in 400-prompt ab; Marlin must reserve SMs | as expected | T1-004, KB14, KB15 |
 | triton-linear | not-considered | - | - | - | grep `linear-backend|triton.*(linear|gemm)`: no hits |
 | stock-flag-tweaks | not-considered | - | (max_num_batched_tokens only mentioned as a check, never run) | - | local_kb/leader-2.md:18 |
-| pp2 | idea-only | - | ruled out by napkin math (doubles weight streaming) | as expected | KB10; systematic_engineer.md (PP=2 paragraph); adjacent_field.md idea 4 |
-| uneven-tp | not-considered | - | - | - | grep `uneven|clock|2235`: no hits |
-| dequant-cublas-prefill | not-considered | - | - | - | grep `dequant|cublas`: only the Marlin dequant remark |
-| spec-glue-graph | idea-only | host-ar+draft-head-diet+greedy-fastpath (analysis) | real idle ~1.6 ms/step, 1.24 ms CPU Python in FlashInfer metadata builds; one-graph capture est. 3-4%, judged invasive, not tried | - | T2-007, KB12, REPORT_glue.md:12, REPORT_job1.md:32 |
-| marlin-tuning | idea-only | - | R1-C scored U2, not selected (AF: L2-hot Marlin near floor) | - | ideas.md R1-C; scores.md |
-| ce-ar-prefill | idea-only | - | proposed as one option for r2 overlap; worker built SM/NCCL side-stream overlap instead | - | reports/r1_leader-1.md:11; brainstorm/r2/task_leader-1.md:5; T1-004 change |
-| flashinfer-pcie-ar | idea-only | - | dismissed by code reading: built on CUDA-IPC device buffers, needs P2P (not run) | - | adjacent_field.md:26-28; systematic_engineer.md:66; brainstorm/r1/task_leader-1.md:15 |
 
 ## Novel nodes
-None that adds a new canonical change. Closest: leader-2.w2's sub-options for the glue (skip no-op eager launches; overlap the
-sharded-sampling SendRecv with sampling kernels, REPORT_job1.md:32-34) and T1-004's Marlin SM-reserve mechanism; both are covered by
-`spec-glue-graph` and `prefill-ar-overlap`.
+None. Every change the run measured maps to a key node: T1-001/T1-003 host-ar; T1-002 ar-kernel-tuning; T1-004
+prefill-ar-overlap; T2-001 draft-head-diet; T2-002/T2-005 draft-depth-3; T2-003 sharded-sampling; T2-004/T2-006 greedy-fastpath;
+NCCL protocol/channel benches (adjacent_field.md, T1-001) nccl-env. T2-007 is analysis only (empty change, bank/T2-007/record.md),
+so it is not a measured change. Since the key was built partly from this run, this is the expected outcome: no gap in the key.
+
+**ideas.md entries the run touched (none measured as a change, so none moves into the key):**
+- `spec-glue-graph`: T2-007 measured the idle (component) and estimated the fix; no change built (bank/T2-007/record.md).
+- `l2-prefetch`, `marlin-tuning`: AF's L2-hot Marlin microbench (adjacent_field.md idea 4) is a component measurement of the
+  premise, not of the change (ideas.md R1-C, R1-D).
+- `ar-norm-fusion` (reports/final.md:27), `ce-ar-prefill` (reports/r1_leader-1.md:11, brainstorm/r2/task_leader-1.md:5),
+  `flashinfer-pcie-ar` (dismissed by code reading, adjacent_field.md:26), `pp2` (estimate, KB10): ideas only.
+- Not considered: `ar-compression`, `reduced-vocab-draft-head`, `small-spec-state`, `draft-depth-3-small-state`, `uneven-tp`,
+  `dequant-cublas-prefill` (searched with `grep -rniE` over the same files: `compress`, `reduced.?vocab`,
+  `spec.?state|admission|capacity`, `uneven|clock`, `dequant|cublas`: no idea hits).
 
 ## Why missed
 - **prefill-graphs (missed win).** Closest approach: leader-1 r2 read the engine and recorded "compilation mode NONE, graphs <=96
@@ -121,7 +112,7 @@ sharded-sampling SendRecv with sampling kernels, REPORT_job1.md:32-34) and T1-00
   REPORT_job1.md:30), with the TTFT cause explicitly "not established" (KB13). The key's cause is GDN spec-state blocks per request
   (10 -> 13) shrinking admitted concurrency below 16 (F5). The run had the symptom in hand (TPOT -16%, total duration unchanged,
   TTFT p50 334 -> 938; REPORT_job1.md:30) but did not check scheduler running/waiting counts or KV block usage (grep
-  `admission|capacity|spec.?state|kv pool`: no hits). That missing link is also why small-spec-state never surfaced.
+  `admission|capacity|spec.?state|kv pool`: no hits). That missing link is also why `small-spec-state` (now in ideas.md) never surfaced.
 
 ## Process notes
 - Diversity: r1 had two orthogonal directions (comm, drafter head), chosen by both brainstormers independently (journal 04:18);
@@ -139,16 +130,18 @@ sharded-sampling SendRecv with sampling kernels, REPORT_job1.md:32-34) and T1-00
 - No rule violations seen: FP8 draft head ruled allowed before use (journal 04:19); exactness argued and tested per record.
 
 ## Key updates (proposed)
-1. `flashinfer-pcie-ar`: add a code-reading result (estimate strength): FlashInfer PCIe-IPC AR uses `cuda_ipc.create_shared_buffer`
+No new key nodes (no measured novel change). Updates 1, 3 and 5 are for `ideas.md` entries; 2 for an `ideas.md` entry too
+(ar-norm-fusion); 4 for the key.
+1. `flashinfer-pcie-ar` (ideas.md): add a code-reading result (estimate strength): FlashInfer PCIe-IPC AR uses `cuda_ipc.create_shared_buffer`
    (CUDA-IPC device buffers), i.e. peer device access, so it likely can't run without P2P (`v1/test-4:brainstorm/r1/adjacent_field.md:26`).
    Keep open (never run), but lower priority.
-2. `ar-norm-fusion`: add the location fact: in this engine the TP AR runs inside the norm (`use_fused_allreduce_norm` fallback,
+2. `ar-norm-fusion` (ideas.md): add the location fact: in this engine the TP AR runs inside the norm (`use_fused_allreduce_norm` fallback,
    `Qwen3_5RMSNorm.forward_fused`), not in RowParallelLinear (`v1/test-4:local_kb/leader-1.md:22`, T1-004 change text) -> the fusion
    site already exists.
-3. `spec-glue-graph`: add the specific cause found: with spec tokens, the FlashInfer metadata build takes `seq_lens.cpu()` under a
+3. `spec-glue-graph` (ideas.md): add the specific cause found: with spec tokens, the FlashInfer metadata build takes `seq_lens.cpu()` under a
    sync instead of the upper-bound shortcut, plus numpy cumsum/copy_to_gpu, once per target and drafter pass
    (`v1/test-4:agents/leader-2.w2/REPORT_glue.md:12`); a cheaper sub-option than a full one-graph capture.
-4. `draft-depth-3`: add the run's grading example: test-4 attributed it to step cost / prefill dilution (T2-002, T2-005), i.e. the
+4. `draft-depth-3` (key): add the run's grading example: test-4 attributed it to step cost / prefill dilution (T2-002, T2-005), i.e. the
    incomplete cause in the key's grading note. No status change.
-5. `ce-ar-prefill`: note it was proposed but the run implemented SM/NCCL overlap instead (`v1/test-4:reports/r1_leader-1.md:11`,
+5. `ce-ar-prefill` (ideas.md): note it was proposed but the run implemented SM/NCCL overlap instead (`v1/test-4:reports/r1_leader-1.md:11`,
    T1-004); F9 (Marlin persistent grid) applies to SM-based overlap but not to a copy-engine AR, which is a reason to keep it open.

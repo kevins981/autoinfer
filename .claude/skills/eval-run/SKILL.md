@@ -41,8 +41,15 @@ key already carries what other runs found). Output: `evals/<flavor>/<run>/judge-
      - `wrong cause`: dropped with a cause the key's facts contradict, or with none.
      - `new info`: a result on a base the key doesn't have, or one that contradicts it (a key
        update).
-     - Open nodes not tried: `-`.
-   Then list **novel** run nodes that match nothing in the key: what, builds_on (key ids), result.
+     - `-`: nothing to grade (e.g. a dead end the run never considered).
+   **Only measurements count.** A run gets credit for what it tested, never for what it only
+   thought: an `idea-only` node is never `as expected` (dropping a win on reasoning alone is a
+   `missed win`; an unmeasured dead end gets `-`), and an estimate is not a result.
+   Then list **novel** run nodes: changes the run **measured** (tried or reached) that match no
+   key node: what, builds_on (key ids), result. Every key node has a measured result; untested
+   ideas and estimate-only ones are in `answer_keys/<task>/ideas.md`, which you don't grade.
+   A run's own unmeasured ideas are not novel nodes; list new ones briefly under Key updates
+   (for the key's `ideas.md`), and say if the run measured one of its ideas (a key update).
 5. **Why missed.** For each `missed win` and `wrong cause`: the run's closest approach (nearest record or
    idea in the same direction) and where its path diverged, then what happened in plain words
    (e.g. dropped after one noisy A/B; never surfaced; out of budget; tried on the wrong base). Don't
@@ -60,6 +67,7 @@ key already carries what other runs found). Output: `evals/<flavor>/<run>/judge-
    ```
    Look at the PNG (it is the key as a tree, each node colored by contact, missed wins / wrong
    causes in red, novel nodes in purple under their parent) and fix the JSON if it misreads.
+   `novel` holds measured changes only (contact `reached` or `tried`).
    Schema (all key node ids must appear in `nodes`):
    ```
    {"run": "<flavor>/<run>", "source": "judge-<id>.md", "base": <BASE tok/s>,
@@ -71,7 +79,7 @@ key already carries what other runs found). Output: `evals/<flavor>/<run>/judge-
                            "verdict": "as expected|missed win|wrong cause|new info|-",
                            "records": "T2-002, T2-005"}},
     "novel": [{"id": "<short-id>", "title": "...", "builds_on": ["<key id>"],
-               "contact": "reached|tried|idea-only", "result": "+1.0% ab"}]}
+               "contact": "reached|tried", "result": "+1.0% ab"}]}
    ```
 
 **Grade the agents against the run's own rules and conditions.**

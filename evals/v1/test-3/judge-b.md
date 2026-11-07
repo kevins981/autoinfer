@@ -55,83 +55,61 @@ Notes:
 ## Overlay graph
 ![overlay](overlay.png)
 
-Note: the plot draws a star on `gdn-replay` because it is in `best_measured.adds`; it is NOT in the
-official champion's stack (T1-009).
+Graded against the key as revised on 2026-11-07: 13 measured nodes only; untested and estimate-only
+ideas moved to `answer_keys/qwen38-27b-fp8-2x4090/ideas.md` and are not graded. The hollow star on
+`gdn-replay` marks the best measured stack (T1-012), which is not the official champion (T1-009).
 
 ```
 BASE
 ├─ host-ar  [reached, as expected]                       T1-002
 │  ├─ prefill-graphs  [reached, as expected]             T1-001 (BASE, noise) -> T1-005
-│  │  └─ (novel) full-mixed-graph  [idea-only]
 │  ├─ host-allgather  [reached, as expected]             T1-004
-│  ├─ ar-kernel-tuning  [tried (component), as expected] T1-003 / KB5
-│  ├─ ar-norm-fusion  [idea-only, -]
-│  ├─ l2-prefetch  [idea-only, -]                        R1-D, R2-C, R3-D
-│  ├─ ar-compression  [idea-only, -]                     R3-C
-│  └─ (novel) ar-epilogue-host-write  [idea-only, ruled down]
+│  └─ ar-kernel-tuning  [tried (component), as expected] T1-003 / KB5
 ├─ draft-head-diet  [reached, as expected]               T1-006, T1-007
-│  └─ reduced-vocab-draft-head  [idea-only, as expected] R1-J
 ├─ greedy-fastpath  [reached, as expected]               T1-009
 ├─ sharded-sampling  [not-considered, -; alt greedy-fastpath reached]
-├─ gdn-replay  [tried, official +2.6%, not promoted by the 3% rule; as expected]  T1-012
-│  ├─ small-spec-state  [idea-only, -]                   R3-B v2
-│  │  └─ draft-depth-3-small-state  [idea-only, -]
-│  └─ (novel) replay-conv-state  [idea-only]
+├─ gdn-replay  [tried: official +2.6%, not promoted under the 3% rule; as expected]  T1-012
 ├─ draft-depth-3  [tried, as expected (cause found in r3)] T1-008, T1-010, T1-011
 ├─ nccl-env  [tried (component, brainstormer), as expected]
-├─ prefill-ar-overlap  [idea-only, as expected]          R1-L
+├─ prefill-ar-overlap  [idea-only, -]                    R1-L
 ├─ triton-linear  [not-considered: forbidden by task_definition, -]
-├─ stock-flag-tweaks  [not-considered, -]
-├─ pp2 / uneven-tp / dequant-cublas-prefill  [idea-only, ruled out by estimate, as expected]
-├─ spec-glue-graph  [idea-only, -]                       R1-H
-├─ marlin-tuning  [idea-only (+ component microbench), -] R1-E, R2-D
-├─ ce-ar-prefill  [idea-only, -]                         R2-E
-└─ flashinfer-pcie-ar  [idea-only, -]
+└─ stock-flag-tweaks  [not-considered, -]
 ```
 
 ## Overlay
+Unmeasured run ideas that match `ideas.md` entries are not graded. None of them was measured in this
+run, so none moves into the key (see Key updates).
+
 | node | contact | base | run's result and cause | verdict | evidence |
 |---|---|---|---|---|---|
 | host-ar | reached | BASE | +5.0% official (662.8); decode AR 60.8 -> 49.6 us, all gain in decode; bitwise == NCCL | as expected | bank/T1-002/record.md; T1-003; KB2 |
 | prefill-graphs | reached | BASE, then host-ar + host-allgather | on BASE +2.2% unofficial, noise, "GPU-bound" (T1-001, KB1); on host-ar +4.8% / official 699.2, cause "cuts launch-induced skew", not separated (KB4) | as expected (the run re-tried it on host-ar on its own, the key's grading point) | bank/T1-001, bank/T1-005; shared_kb.md:3,6 |
 | host-allgather | reached | host-ar | ~0 unofficial (666.8 vs 665.0); ~1% est, kept as exact building block | as expected | bank/T1-004; KB6 |
 | ar-kernel-tuning | tried (component) | host-ar | chunk pipelining at M=48: K=2..8 slower (54-85 vs 51-53 us), fences ~5 us each; "near floor" | as expected | bank/T1-003 results (b); KB5 |
-| ar-norm-fusion | idea-only | - | "Optionally fuse it with the following residual-add + RMSNorm", never scored or tried | - | brainstorm/r1/systematic_engineer.md:98 |
-| l2-prefetch | idea-only | (BASE r1, host-ar r2/r3) | proposed 3 times (N5), est +3-7%; deferred each round, r3: do after gdn-replay. 1-GPU-min kill test never run | - (open) | ideas.md:10,24,39; brainstorm/r3/task_leader-1.md:65 |
-| ar-compression | idea-only | host-ar | est +2-3%; manager ruled it baseline-precision; not selected | - | ideas.md:38; brainstorm/r3/adjacent_field.md:276-301,334-339 |
 | draft-head-diet | reached | host-ar + prefill-graphs | local argmax +1.1% (T1-006), + fp8 draft head +3.0% same-job (T1-007), acceptance 2.343 vs 2.340 | as expected | bank/T1-006, T1-007; KB10 |
-| reduced-vocab-draft-head | idea-only | draft-head-diet | ruled down in r3: net ≈ 0 once draft heads are FP8 (estimate) | as expected | ideas.md:16,43; brainstorm/r3/systematic_engineer.md:191-196 |
 | greedy-fastpath | reached | host-ar + prefill-graphs + draft-head-diet | +2.4% same-job; official 730.9; exact incl. ties (25,511 rows, 467 ties, 0 mismatches) | as expected | bank/T1-009; KB10, KB12 |
 | sharded-sampling | not-considered | - | no mention (`grep -rniE "sharded.sampl\|batch_sharded\|batch-sharded"` over all run .md outside workspaces: 0 hits). Alternative greedy-fastpath reached | - | grep |
 | gdn-replay | tried (best measured, not in champion) | host-ar + prefill-graphs + host-allgather + draft-head-diet + greedy-fastpath | official 749.7 (+2.6% vs T1-009), same-job A/B +2.2%, ceiling microbench ~2 ms/step; bitwise unit test with negative control. Not promoted: below the run's 3% bar; manager/leader recommended promotion to the human | as expected (correct under the run's rule) | bank/T1-012; KB15; reports/r3.md:19 |
-| small-spec-state | idea-only | gdn-replay | "R3-B v2", feasible but 1-2 days; risk unknown reader | - | ideas.md:46; reports/r3_leader-1.md:7; brainstorm/r3/adjacent_field.md:303-316 |
-| draft-depth-3-small-state | idea-only | gdn-replay + small-spec-state | "With idea 1: +5-8% on top" (est) | - | brainstorm/r3/systematic_engineer.md:158-159 |
 | draft-depth-3 | tried | host-ar + prefill-graphs + draft-head-diet (T1-008); + greedy-fastpath with KV 5.5-6.0 GiB (T1-010/011) | T1-008 -6.9% ab, TTFT p50 210->792, gate fail, dropped "cause undiagnosed" in r2 (KB11). r3 brainstormers found admission stall: Running 14 / Waiting 2 (KB13). T1-010 OOM at graph capture; T1-011 runtime OOM; final cause: needs smaller per-request state (KB16) | as expected (final drop cites capacity, F5/F6; r2 drop had no cause but was corrected in-run) | bank/T1-008, T1-010, T1-011; shared_kb.md:13,15,18 |
 | nccl-env | tried (component, by a brainstormer) | BASE | microbench: Simple same, LL128 worse, 8 ch -6% at prefill size / worse at decode | as expected | brainstorm/r1/adjacent_field.md:20-37; ideas.md:9 |
-| prefill-ar-overlap | idea-only | BASE / host-ar | R1-L; ruled down in r2: skew is GPU 0's clock, hides ≤4% with heavy engineering | as expected | ideas.md:18; brainstorm/r2/systematic_engineer.md:166-167; KB8 |
+| prefill-ar-overlap | idea-only | BASE / host-ar | R1-L; ruled down in r2: skew is GPU 0's clock, hides ≤4% with heavy engineering (estimate only; unmeasured dead end, so `-` under the "only measurements count" rule; matches the key's no-gain status) | - | ideas.md:18; brainstorm/r2/systematic_engineer.md:166-167; KB8 |
 | triton-linear | not-considered | - | true FP8 compute is forbidden by this run's task definition, so not a miss | - | task_definition.md:15-16; brainstorm/r1/systematic_engineer.md:212 |
 | stock-flag-tweaks | not-considered | - | no prefix-caching-off / attention-backend / batched-tokens tweaks tried (`grep -rniE "prefix.caching\|async.sched\|attention.backend\|max-num-batched"`: only r3 SE:148 declining prefix-caching-off as benchmark-tuned) | - | grep; brainstorm/r3/systematic_engineer.md:148-150 |
-| pp2 | idea-only | BASE | ruled out: doubles weight streaming (~58 ms vs 40 ms) | as expected | brainstorm/r1/systematic_engineer.md:203-205; adjacent_field.md:138-140 |
-| uneven-tp | idea-only | BASE | ruled out: nets ≈ 0 to +1.5% | as expected | KB8 (shared_kb.md:10); brainstorm/r2/adjacent_field.md:241-243; r2/systematic_engineer.md:68-69 |
-| dequant-cublas-prefill | idea-only | BASE | ruled out: Marlin ~75% of peak at large M, ≤2% | as expected | brainstorm/r2/adjacent_field.md:250-254; ideas.md:32 |
-| spec-glue-graph | idea-only | BASE | R1-H in-place FlashInfer draft-metadata (~1 ms gaps); never selected. r2 AF: step-start gap is an nsys artifact | - | ideas.md:14; brainstorm/r1/systematic_engineer.md:176-179; r2/adjacent_field.md:245-248 |
-| marlin-tuning | idea-only | BASE / host-ar | R1-E/R2-D; r3 microbench: in-kernel M=48 penalty 1.6 ms/step, retune ≤2%, ruled down | - (open; no change tried) | ideas.md:11,25,41; brainstorm/r3/systematic_engineer.md:62-84 |
-| ce-ar-prefill | idea-only | host-ar | R2-E, +1.5-3% est, half is GPU 0 skew | - | ideas.md:26; brainstorm/r2/adjacent_field.md:318-339 |
-| flashinfer-pcie-ar | idea-only | BASE | "check in 5 minutes", expected to fail (needs cudaIpc device memory = P2P); never run | - | brainstorm/r1/systematic_engineer.md:99-101; adjacent_field.md:38-40 |
 
 ## Novel nodes
-All of the run's tried records map onto key nodes (the key was built partly from this run). Untried
-ideas with no key node:
-- `full-mixed-graph`: FULL (not PIECEWISE) CUDA graphs for mixed prefill steps; builds_on
-  prefill-graphs. idea-only, open (bank/T1-001/record.md:21; reports/r1_leader-1.md:5).
-- `replay-conv-state`: remove redundant conv-state work in the GDN replay kernel; builds_on
-  gdn-replay. idea-only, open (ideas.md:47; reports/r3_leader-1.md:7).
-- `ar-epilogue-host-write`: Marlin epilogue writes AR partials straight to host memory to overlap
-  decode AR with the GEMM; builds_on host-ar. Ruled down by code reading (fp32 reduce writes C only
-  at the end) (brainstorm/r3/adjacent_field.md:319-320).
+None. Novel nodes are measured changes (tried or reached) that match no key node. Every measured
+change in the run maps onto a key node:
+- T1-001/T1-005 -> prefill-graphs; T1-002 -> host-ar; T1-003 (diagnosis + chunk-pipelining microbench)
+  -> ar-kernel-tuning; T1-004 -> host-allgather; T1-006/T1-007 -> draft-head-diet; T1-009 ->
+  greedy-fastpath; T1-012 -> gdn-replay; T1-008/T1-010/T1-011 -> draft-depth-3 (incl. raising
+  `--kv-cache-memory` and capping prefill graphs at 1024 to make room, already in the key's results and F6);
+  the r1 NCCL env microbench -> nccl-env.
+- Since the key was built from this run, nothing measured is missing from it.
+- The run's unmeasured ideas that are not in the key's ideas.md (full-mixed-graph, replay-conv-state,
+  ar-epilogue-host-write) are listed under Key updates for `ideas.md`.
 
 ## Why missed
-No missed wins and no standing wrong causes. Every key node with a win was reached, except
+No missed wins and no standing wrong causes against the 13-node key. Every key node with a win was reached, except
 `sharded-sampling` (its alternative `greedy-fastpath` was reached) and `gdn-replay`, which was
 reached with an official measurement but not promoted only because of the run's 3% rule
 (task_definition.md:4-5; reports/r3.md:19). That was the correct move under the run's rules, so it
@@ -167,24 +145,31 @@ delay on the k=3 line. By the end the run's cause matched the key (F5, F6).
   dual-path checks) (bank/T1-002, T1-009, T1-012).
 
 ## Key updates (proposed)
+No measured result in this run is missing from the key, and the run measured none of the `ideas.md`
+entries. (The r3 Marlin M-scaling microbench and the r1 L2/AR numbers are component measurements of
+bottlenecks, not of a change, so they don't move `marlin-tuning` or `l2-prefetch` into the key.)
+
+answer_key.md:
 1. `nccl-env`: cite the actual measurement `v1/test-3:brainstorm/r1/adjacent_field.md:20-37` (microbench:
-   LL128 worse, 8 channels -6% at prefill size / worse at decode), strength `component`, in addition to the
-   idea id R1-C.
-2. `flashinfer-pcie-ar`: add an estimate from code reading: the backend needs cudaIpc device memory
-   mapped across GPUs (`flashinfer/comm/cuda_ipc.py:268`), i.e. P2P, so it is expected to fail or fall back
-   here (`v1/test-3:brainstorm/r1/adjacent_field.md:38-40`). Still open (unmeasured).
-3. `ar-norm-fusion`: add origin `v1/test-3:brainstorm/r1/systematic_engineer.md:98`.
-4. `marlin-tuning`: add `component` numbers from `v1/test-3:brainstorm/r3/systematic_engineer.md:62-84`:
-   Marlin per step M=3 14.03 / M=48 15.66 / M=64 17.22 / M=80 24.67 ms; fp32-reduce off 15.45 ms at M=48;
-   retune ≤~2%. Also the in-server excess (~2.5 ms) is interference from GDN state writes (:40-60).
-5. New open nodes: `full-mixed-graph` (builds_on prefill-graphs; bank/T1-001/record.md:21),
-   `replay-conv-state` (builds_on gdn-replay; ideas.md:47). Optionally `ar-epilogue-host-write`
-   (builds_on host-ar; ruled down by code reading, brainstorm/r3/adjacent_field.md:319-320).
-6. `draft-depth-3` grading: add test-3's in-run history as an example. The r2 drop had no cause
-   (KB11); r3 found it from existing logs (KB13). Already covered by the key's evidence; no status change.
-7. Possible fact (low confidence, needs checking): the r3 SE claims align-mode prefix caching makes a GDN
+   LL128 worse, 8 channels -6% at prefill size / worse at decode), strength `component`, besides idea R1-C.
+2. `draft-depth-3` grading: test-3's history is a worked example (r2 drop had no cause, KB11; r3 found
+   it from the existing logs, KB13). Already in the key's evidence; no status change.
+3. Possible fact (low confidence, needs checking): the r3 SE claims align-mode prefix caching makes a GDN
    request hold up to `2 + k + 1` pages (brainstorm/r3/systematic_engineer.md:27-28,148), while r3 AF's
    count is `3 groups x (1+k) + 1` = 10/13, which fits the measured 5.24%/6.81% usage
-   (brainstorm/r3/adjacent_field.md:229-236). The key's F5 uses 10/13. The two counts disagree, so it is not
-   settled whether turning prefix caching off would shrink per-request state. That would also need a
-   validity ruling (task_definition.md:41-42).
+   (brainstorm/r3/adjacent_field.md:229-236). The key's F5 uses 10/13. Whether turning prefix caching off
+   would shrink per-request state is unsettled, and it would need a validity ruling (task_definition.md:41-42).
+
+ideas.md (unmeasured; not graded):
+4. `flashinfer-pcie-ar` (now in ideas.md if kept there): add the code-reading estimate that it needs cudaIpc
+   device memory, i.e. P2P (`flashinfer/comm/cuda_ipc.py:268`; `v1/test-3:brainstorm/r1/adjacent_field.md:38-40`),
+   so it is expected to fail or fall back here.
+5. `ar-norm-fusion`: add origin `v1/test-3:brainstorm/r1/systematic_engineer.md:98`.
+6. `marlin-tuning`: add `component` numbers from `v1/test-3:brainstorm/r3/systematic_engineer.md:62-84`
+   (Marlin per step M=3 14.03 / M=48 15.66 / M=64 17.22 / M=80 24.67 ms; fp32-reduce off 15.45 ms at M=48;
+   retune ≤~2%; in-server excess ~2.5 ms is interference from GDN state writes, :40-60).
+7. New ideas: `full-mixed-graph` (FULL rather than piecewise graphs for mixed prefill steps; builds_on
+   prefill-graphs; bank/T1-001/record.md:21, reports/r1_leader-1.md:5); `replay-conv-state` (drop
+   redundant conv-state work in the replay kernel; builds_on gdn-replay; ideas.md:47);
+   `ar-epilogue-host-write` (Marlin epilogue writes AR partials to host memory; builds_on host-ar; ruled
+   down by code reading, brainstorm/r3/adjacent_field.md:319-320).

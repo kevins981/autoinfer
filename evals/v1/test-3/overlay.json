@@ -1,38 +1,98 @@
-{"run": "v1/test-3", "source": "judge-b.md", "base": 631.4,
- "champion": {"record": "T1-009", "tok_s": 730.9, "pct": 15.8,
-              "stack": ["host-ar", "host-allgather", "prefill-graphs", "draft-head-diet", "greedy-fastpath"]},
- "best_measured": {"record": "T1-012", "tok_s": 749.7, "pct": 18.7, "adds": ["gdn-replay"]},
- "resources": {"wall_h": 4.84, "gpu_min": 166.3, "output_tokens": "695K"},
- "nodes": {
-  "host-ar": {"contact": "reached", "verdict": "as expected", "records": "T1-002, T1-003"},
-  "prefill-graphs": {"contact": "reached", "verdict": "as expected", "records": "T1-001, T1-005"},
-  "host-allgather": {"contact": "reached", "verdict": "as expected", "records": "T1-004"},
-  "ar-kernel-tuning": {"contact": "tried", "verdict": "as expected", "records": "T1-003 (KB5)"},
-  "ar-norm-fusion": {"contact": "idea-only", "verdict": "-", "records": "bs r1 SE idea 2"},
-  "l2-prefetch": {"contact": "idea-only", "verdict": "-", "records": "R1-D, R2-C, R3-D"},
-  "ar-compression": {"contact": "idea-only", "verdict": "-", "records": "R3-C"},
-  "draft-head-diet": {"contact": "reached", "verdict": "as expected", "records": "T1-006, T1-007"},
-  "reduced-vocab-draft-head": {"contact": "idea-only", "verdict": "as expected", "records": "R1-J"},
-  "greedy-fastpath": {"contact": "reached", "verdict": "as expected", "records": "T1-009"},
-  "sharded-sampling": {"contact": "not-considered", "verdict": "-", "records": "alt greedy-fastpath reached"},
-  "gdn-replay": {"contact": "tried", "verdict": "as expected", "records": "T1-012 (official, not promoted: 3% bar)"},
-  "small-spec-state": {"contact": "idea-only", "verdict": "-", "records": "R3-B v2"},
-  "draft-depth-3-small-state": {"contact": "idea-only", "verdict": "-", "records": "bs r3 SE idea 2"},
-  "draft-depth-3": {"contact": "tried", "verdict": "as expected", "records": "T1-008, T1-010, T1-011"},
-  "nccl-env": {"contact": "tried", "verdict": "as expected", "records": "R1-C (bs r1 AF M2 microbench)"},
-  "prefill-ar-overlap": {"contact": "idea-only", "verdict": "as expected", "records": "R1-L"},
-  "triton-linear": {"contact": "not-considered", "verdict": "-", "records": "forbidden by task_definition"},
-  "stock-flag-tweaks": {"contact": "not-considered", "verdict": "-", "records": ""},
-  "pp2": {"contact": "idea-only", "verdict": "as expected", "records": "bs r1 SE+AF ruled out"},
-  "uneven-tp": {"contact": "idea-only", "verdict": "as expected", "records": "KB8, bs r2"},
-  "dequant-cublas-prefill": {"contact": "idea-only", "verdict": "as expected", "records": "bs r2 AF D5"},
-  "spec-glue-graph": {"contact": "idea-only", "verdict": "-", "records": "R1-H"},
-  "marlin-tuning": {"contact": "idea-only", "verdict": "-", "records": "R1-E, R2-D"},
-  "ce-ar-prefill": {"contact": "idea-only", "verdict": "-", "records": "R2-E"},
-  "flashinfer-pcie-ar": {"contact": "idea-only", "verdict": "-", "records": "bs r1 SE:99, AF:38"}
+{
+ "run": "v1/test-3",
+ "source": "judge-b.md",
+ "base": 631.4,
+ "champion": {
+  "record": "T1-009",
+  "tok_s": 730.9,
+  "pct": 15.8,
+  "stack": [
+   "host-ar",
+   "host-allgather",
+   "prefill-graphs",
+   "draft-head-diet",
+   "greedy-fastpath"
+  ]
  },
- "novel": [
-  {"id": "full-mixed-graph", "title": "FULL (not piecewise) CUDA graphs for mixed prefill steps", "builds_on": ["prefill-graphs"], "contact": "idea-only", "result": "open (T1-001, r1 leader report)"},
-  {"id": "replay-conv-state", "title": "drop redundant conv-state work in the GDN replay kernel", "builds_on": ["gdn-replay"], "contact": "idea-only", "result": "open (ideas.md:47)"},
-  {"id": "ar-epilogue-host-write", "title": "GEMM epilogue writes AR partials straight to host memory", "builds_on": ["host-ar"], "contact": "idea-only", "result": "ruled down by code reading"}
- ]}
+ "best_measured": {
+  "record": "T1-012",
+  "tok_s": 749.7,
+  "pct": 18.7,
+  "adds": [
+   "gdn-replay"
+  ]
+ },
+ "resources": {
+  "wall_h": 4.84,
+  "gpu_min": 166.3,
+  "output_tokens": "695K"
+ },
+ "nodes": {
+  "host-ar": {
+   "contact": "reached",
+   "verdict": "as expected",
+   "records": "T1-002, T1-003"
+  },
+  "prefill-graphs": {
+   "contact": "reached",
+   "verdict": "as expected",
+   "records": "T1-001, T1-005"
+  },
+  "host-allgather": {
+   "contact": "reached",
+   "verdict": "as expected",
+   "records": "T1-004"
+  },
+  "ar-kernel-tuning": {
+   "contact": "tried",
+   "verdict": "as expected",
+   "records": "T1-003 (KB5)"
+  },
+  "draft-head-diet": {
+   "contact": "reached",
+   "verdict": "as expected",
+   "records": "T1-006, T1-007"
+  },
+  "greedy-fastpath": {
+   "contact": "reached",
+   "verdict": "as expected",
+   "records": "T1-009"
+  },
+  "sharded-sampling": {
+   "contact": "not-considered",
+   "verdict": "-",
+   "records": "alt greedy-fastpath reached"
+  },
+  "gdn-replay": {
+   "contact": "tried",
+   "verdict": "as expected",
+   "records": "T1-012 (official, not promoted: 3% bar)"
+  },
+  "draft-depth-3": {
+   "contact": "tried",
+   "verdict": "as expected",
+   "records": "T1-008, T1-010, T1-011"
+  },
+  "nccl-env": {
+   "contact": "tried",
+   "verdict": "as expected",
+   "records": "R1-C (bs r1 AF M2 microbench)"
+  },
+  "prefill-ar-overlap": {
+   "contact": "idea-only",
+   "verdict": "-",
+   "records": "R1-L"
+  },
+  "triton-linear": {
+   "contact": "not-considered",
+   "verdict": "-",
+   "records": "forbidden by task_definition"
+  },
+  "stock-flag-tweaks": {
+   "contact": "not-considered",
+   "verdict": "-",
+   "records": ""
+  }
+ },
+ "novel": []
+}

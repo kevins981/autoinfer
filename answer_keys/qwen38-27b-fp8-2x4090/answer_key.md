@@ -1,7 +1,9 @@
 # Answer key: qwen38-27b-fp8-2x4090
 
-A map of this task's search space, as far as we know it: a DAG of changes, each with what is known
-about it on each base (works, doesn't and why, or untested), plus the facts that explain them.
+A map of this task's search space, as far as we know it: a DAG of **measured** changes, each with
+what is known about it on each base (works, or doesn't and why), plus the facts that explain them.
+Untested ideas and estimates are not nodes: they are in `ideas.md` (not graded) until a run
+measures them.
 Merged and curated from all runs of any flavor; not a copy of any run's graph. A lower bound, and it
 evolves: format and update rules are in `EVAL.md` ("The answer key").
 
@@ -25,29 +27,16 @@ BASE
 ├─ host-ar  [win]
 │  ├─ prefill-graphs  [win on host-ar; no gain on BASE]
 │  ├─ host-allgather  [no gain]
-│  ├─ ar-kernel-tuning  [no gain]
-│  ├─ ar-norm-fusion  [open]
-│  ├─ l2-prefetch  [open]
-│  └─ ar-compression  [open]
+│  └─ ar-kernel-tuning  [no gain]
 ├─ draft-head-diet  [win]
-│  └─ reduced-vocab-draft-head  [ruled out by estimate]
 ├─ greedy-fastpath  [win]  alt: sharded-sampling
 ├─ sharded-sampling  [win]  alt: greedy-fastpath
 ├─ gdn-replay  [win]
-│  └─ small-spec-state  [open]
-│     └─ draft-depth-3-small-state  [open]  + draft-depth-3
 ├─ draft-depth-3  [harmful]
 ├─ nccl-env  [no gain]
 ├─ prefill-ar-overlap  [no gain measurable]
 ├─ triton-linear  [harmful]
-├─ stock-flag-tweaks  [no gain]
-├─ pp2  [ruled out by estimate]
-├─ uneven-tp  [ruled out by estimate]
-├─ dequant-cublas-prefill  [ruled out by estimate]
-├─ spec-glue-graph  [open]
-├─ marlin-tuning  [open]
-├─ ce-ar-prefill  [open]
-└─ flashinfer-pcie-ar  [open]  alt: host-ar
+└─ stock-flag-tweaks  [no gain]
 ```
 <!-- graph:end -->
 
@@ -57,7 +46,7 @@ BASE
 - builds_on: BASE | id [+ id]   the changes it needs (its result depends on them). Not the same as
                                 the stack it happened to be measured on, which goes in results.
 - alternative_to: id            optional: substitutes (same effect, don't stack); either counts.
-- status: win | win on <id> | no gain | harmful | ruled out by estimate | open   (summary)
+- status: win | win on <id> | no gain | harmful   (summary; every node has a measured result)
 - what / recognize              enough for a judge to spot it in a run by what the change does,
                                 and what it is not.
 - results:                      one line per base: `on <stack>: <result> <strength> (evidence)`
@@ -113,24 +102,6 @@ BASE
   null `component` (`v1/test-4:T1-002`).
 - cause: host-ar is within ~5-10 us of the PCIe floor (F3).
 
-### `ar-norm-fusion`: fuse residual-add + RMSNorm into the host all-reduce kernel
-- builds_on: host-ar
-- status: open
-- results: on host-ar: untested; ~1.6 ms/step of norms etc. (`v1/test-4` reports/final.md).
-
-### `l2-prefetch`: prefetch the next GEMM's weights into L2 during the all-reduce
-- builds_on: host-ar
-- status: open
-- results: on host-ar: est. +3-5%, low confidence (`v1/test-3` ideas R2-C, R3-D). `component`: L2-hot
-  Marlin at M=48 is 41-48 us vs ~50-56 us in-server, which caps it near +3%
-  (`v1/test-4:brainstorm/r1/adjacent_field.md:90`).
-- note: do it after `gdn-replay` (GDN state writes spill through L2).
-
-### `ar-compression`: bitwise-lossless compression of the all-reduce payload
-- builds_on: host-ar
-- status: open
-- results: on host-ar: est. +2-3%, depends on compressibility (`v1/test-3` idea R3-C).
-
 ### `draft-head-diet`: drafter output-head diet
 - builds_on: BASE
 - status: win
@@ -142,12 +113,6 @@ BASE
 - results:
   - on BASE: +2.4% `ab` (`v1/test-4:T2-001`).
   - on host-ar + prefill-graphs: +3.0% `ab` (`v1/test-3:T1-007`, KB10); local argmax alone ~+1%.
-
-### `reduced-vocab-draft-head`: draft head over a reduced vocabulary
-- builds_on: draft-head-diet
-- status: ruled out by estimate
-- results: on draft-head-diet: est. net ≈ 0 once the draft head is FP8 (`v1/test-3` idea R1-J,
-  ideas.md:43). A measurement overrides this.
 
 ### `greedy-fastpath`: exact greedy argmax over vocab shards for verification
 - builds_on: BASE
@@ -189,20 +154,6 @@ BASE
   independent of that stack; unmeasured on BASE.
 - grading: not promoted in test-3 only because of that run's 3% promotion bar.
 
-### `small-spec-state`: one GDN spec block per request
-- builds_on: gdn-replay
-- status: open
-- what: with replay, only the log slot is needed per request, so the per-request spec-state blocks
-  (F5) could shrink from k+1 to 1.
-- results: on gdn-replay: untested; frees spec pages so `draft-depth-3` fits 16 requests in 5 GiB
-  (`v1/test-3` ideas R3-B v2, KB17). Risk: silent state corruption from an unknown reader.
-
-### `draft-depth-3-small-state`: 3 draft tokens once spec state is small
-- builds_on: small-spec-state + draft-depth-3
-- status: open
-- results: est. +2-5% (`v1/test-3` idea R3-A). Acceptance rises 2.35 → ~2.75 (`draft-depth-3`); the
-  decode step costs +12.6% for +16.7% tokens on test-4's champion (`v1/test-4:KB13`).
-
 ### `draft-depth-3`: 3 (or more) MTP draft tokens
 - builds_on: BASE
 - status: harmful
@@ -219,7 +170,7 @@ BASE
   (10 → 13), so only 14 of 16 requests fit in the KV pool: admission stalls (F5; `v1/test-3:KB13`,
   KB17). Symptom: TPOT -16% with total duration unchanged, TTFT p50 334 → 938 ms
   (`v1/test-4:agents/leader-2.w2/REPORT_job1.md:30`).
-- revisit: via `draft-depth-3-small-state`. Raising `--kv-cache-memory` is not a fresh idea.
+- revisit: via `draft-depth-3-small-state` (`ideas.md`). Raising `--kv-cache-memory` is not a fresh idea.
 - grading: a correct drop cites capacity/admission (F5). "Slower compute", "step cost" or "queueing
   behind prefill steps" without the capacity cause is wrong or incomplete.
 
@@ -250,51 +201,6 @@ BASE
 - results: on qwen38_opt's BASE, all within noise: prefix caching off, Triton attention backend, GDN
   backend flags (flashinfer falls back on sm_89), `--max-num-batched-tokens 4096` (TTFT worse).
   `--no-async-scheduling` is -10% (async is the default) (`qwen38_opt`).
-
-### `pp2`: pipeline parallel 2 instead of TP=2
-- builds_on: BASE
-- status: ruled out by estimate
-- results: est. worse: doubles weight streaming per token (`v1/test-4:KB10`).
-
-### `uneven-tp`: uneven TP split to offset GPU 0's slower clock
-- builds_on: BASE
-- status: ruled out by estimate
-- results: est. ~0-1.5% (`v1/test-3:KB8`, brainstorm r2).
-
-### `dequant-cublas-prefill`: dequantize + cuBLAS for large-M (prefill) GEMMs
-- builds_on: BASE
-- status: ruled out by estimate
-- results: est. ≤ 2% overall (`v1/test-3:brainstorm/r2/adjacent_field.md:75`).
-
-### `spec-glue-graph`: capture the spec-decode glue in one CUDA graph
-- builds_on: BASE
-- status: open
-- what: drafter passes, sampling and attention-metadata builds run eagerly between graphs.
-- results: on host-ar + draft-head-diet + sharded-sampling: ~1.6 ms/step of real CPU idle, est.
-  +3-4% (`v1/test-4:KB12`). Sub-options, all estimates: skip no-op eager launches in decode
-  (`_zero_kv_blocks`, `_apply_write` x5, mamba pre/post), 0.5-1.0 ms
-  (`v1/test-4:agents/leader-2.w2/REPORT_job1.md:32`); pure launch fusion bounded at 0.1-0.2 ms
-  (`v1/test-4:T2-007`); in-place FlashInfer draft-metadata update, ~1 ms (`v1/test-3` idea R1-H).
-- caution: part of the step-start gap in node-level nsys is an artifact (F8).
-
-### `marlin-tuning`: in-kernel Marlin GEMM efficiency
-- builds_on: BASE
-- status: open
-- results: no change tried. `component`: near its floor: the M=48 penalty vs M=3 is ~1.6 ms/step
-  (`v1/test-3:KB14`); L2-hot Marlin is close to its own floor
-  (`v1/test-4:brainstorm/r1/adjacent_field.md:90`). Small upside (F7).
-
-### `ce-ar-prefill`: copy-engine full-duplex all-reduce for large (prefill) tensors
-- builds_on: BASE
-- status: open
-- results: est. +1.5-3%, but half the prefill AR time is GPU 0 skew (F2) (`v1/test-3` idea R2-E).
-  Complements `host-ar` (small sizes).
-
-### `flashinfer-pcie-ar`: `VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=1`
-- builds_on: BASE
-- alternative_to: host-ar
-- status: open
-- results: a 5-minute check, never run (`v1/test-3:brainstorm/r1/systematic_engineer.md:99`).
 
 ## Facts (cited by nodes; also used to judge whether a run's reasons were right)
 - **F1.** No GPU P2P: vLLM's custom all-reduce is disabled; TP all-reduce is NCCL over PCIe/host.
@@ -335,3 +241,6 @@ BASE
   D7 stock-flag-tweaks, D8 pp2 / uneven-tp, D9 dequant-cublas-prefill / reduced-vocab-draft-head,
   O1 spec-glue-graph, O2 small-spec-state, O3 ar-norm-fusion, O4 l2-prefetch, O5 ar-compression,
   O6 ce-ar-prefill, O7 flashinfer-pcie-ar.
+- 2026-11-07: only measured changes stay in the key (human's rule: untested ideas have no numbers,
+  so grading against them confuses). Moved the 9 open and 4 ruled-out-by-estimate nodes to
+  `ideas.md`: ar-norm-fusion, l2-prefetch, ar-compression, reduced-vocab-draft-head, small-spec-state, draft-depth-3-small-state, pp2, uneven-tp, dequant-cublas-prefill, spec-glue-graph, marlin-tuning, ce-ar-prefill, flashinfer-pcie-ar.

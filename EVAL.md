@@ -16,8 +16,11 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
   space as far as we know it, merged from all runs of all flavors (and hand studies). Details in
   "The answer key" below. It is a lower bound on what's possible, and it evolves.
 - **Overlay.** For each key node: how far the run got (reached, tried, idea only, never
-  considered), on which base, and whether its result and stated cause agree with the key. Run
-  nodes that match no key node are **novel**; they feed the key.
+  considered), on which base, and whether its result and stated cause agree with the key. Changes
+  the run **measured** that match no key node are **novel**; they feed the key. (Its unmeasured
+  ideas are not nodes; new ones may feed `ideas.md`.) **Only measurements count**, as in real
+  research: an idea a run thought of but never tested claims nothing, earns no credit and is
+  never novel.
 - **Why it was missed (qualitative).** For each missed node, find the run's closest approach (the
   nearest record or idea in the same direction) and where its path diverged. Then say what
   happened, e.g.:
@@ -45,7 +48,10 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
 ## The answer key
 A DAG of the task's search space (`answer_keys/<task>/answer_key.md`), curated: not a copy of any
 run's graph (run graphs have intermediate and duplicate steps; key nodes are canonical changes). It
-holds what we know, not only what works.
+holds what we know, not only what works, and **only what was measured**: a node needs a measured
+result of the change itself (official / abab / ab / component). Untested ideas and changes ruled
+out only by an estimate go to `answer_keys/<task>/ideas.md`, which is not graded and not drawn; an
+idea moves into the key once a run measures it.
 - **Node = one change**, with a status-neutral id (e.g. `host-ar`), because status can change and
   can differ per base.
 - **Edges:**
@@ -55,11 +61,10 @@ holds what we know, not only what works.
     one is recorded, the other isn't wrong.
 - **Results per base:** one line per stack it was measured on, with strength and evidence. So one
   node can be "no gain on BASE, win on `host-ar`".
-- **Status** (summary): win / win on <id> / no gain / harmful / ruled out by estimate / open. A
-  dead end is a conditional claim (on its bases, with its cause), not a verdict; it says what would
-  make it worth revisiting. An idea that would revive a dead end is its own node with edges (e.g.
-  `draft-depth-3-small-state` builds on `small-spec-state` + `draft-depth-3`).
-- **Open** nodes (no measured result) aren't counted as misses; they are noted when a run reaches them.
+- **Status** (summary): win / win on <id> / no gain / harmful. A dead end is a conditional claim
+  (on its bases, with its cause), not a verdict; it says what would make it worth revisiting. An
+  idea that would revive a dead end goes to `ideas.md` with its edges (e.g.
+  `draft-depth-3-small-state` builds on `small-spec-state` + `draft-depth-3`) until it is measured.
 - **Facts (F):** diagnoses and environment facts that explain nodes, used to judge whether a run's
   reasons were right.
 - **Frontier:** the best known stack and its official number.
@@ -80,7 +85,8 @@ section records them. Rules:
 - **Same base, conflicting results:** the stronger evidence wins. Also weigh exactness and gate
   results: a gain that breaks exactness or a gate is not a win. If the evidence is equally strong,
   mark the node disputed with both results, until a run settles it.
-- **Never delete;** change the status and log why in History. Wrong causes get corrected, with the
+- **Never delete;** change the status and log why in History. (Unmeasured entries live in
+  `ideas.md`, never in the key.) Wrong causes get corrected, with the
   evidence that corrected them.
 - **Merge, don't append:** a run's finding that matches an existing node adds evidence to it.
 - Box state (e.g. a locked GPU clock) is a fact with a date; nodes that depend on it name it.

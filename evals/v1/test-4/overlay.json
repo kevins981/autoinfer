@@ -1,33 +1,96 @@
-{"run": "v1/test-4", "source": "judge-b.md", "base": 635.9,
- "champion": {"record": "T1-003", "tok_s": 691.3, "pct": 8.7, "stack": ["host-ar", "draft-head-diet", "sharded-sampling"]},
- "best_measured": {"record": "T2-006", "tok_s": 699.5, "pct": 10.0, "adds": ["greedy-fastpath"]},
- "resources": {"wall_h": 3.26, "gpu_min": 164.5, "output_tokens": "411K"},
- "nodes": {
-  "host-ar": {"contact": "reached", "verdict": "as expected", "records": "T1-001, T1-003"},
-  "prefill-graphs": {"contact": "not-considered", "verdict": "missed win", "records": "leader-1 KB:22 noted"},
-  "host-allgather": {"contact": "idea-only", "verdict": "-", "records": "brainstorm/r1/adjacent_field.md (idea 1)"},
-  "ar-kernel-tuning": {"contact": "tried", "verdict": "as expected", "records": "T1-002"},
-  "ar-norm-fusion": {"contact": "idea-only", "verdict": "-", "records": "reports/r1_leader-1.md:10, final.md:27"},
-  "l2-prefetch": {"contact": "idea-only", "verdict": "-", "records": "R1-D (component, AF job 3)"},
-  "ar-compression": {"contact": "not-considered", "verdict": "-", "records": ""},
-  "draft-head-diet": {"contact": "reached", "verdict": "as expected", "records": "T2-001, T2-003, T1-003"},
-  "reduced-vocab-draft-head": {"contact": "not-considered", "verdict": "-", "records": ""},
-  "greedy-fastpath": {"contact": "tried", "verdict": "as expected", "records": "T2-004, T2-006"},
-  "sharded-sampling": {"contact": "reached", "verdict": "as expected", "records": "T2-003, T1-003"},
-  "gdn-replay": {"contact": "not-considered", "verdict": "missed win", "records": ""},
-  "small-spec-state": {"contact": "not-considered", "verdict": "-", "records": ""},
-  "draft-depth-3-small-state": {"contact": "not-considered", "verdict": "-", "records": ""},
-  "draft-depth-3": {"contact": "tried", "verdict": "wrong cause", "records": "T2-002, T2-005"},
-  "nccl-env": {"contact": "tried", "verdict": "as expected", "records": "AF job 1, T1-001 (KB1)"},
-  "prefill-ar-overlap": {"contact": "tried", "verdict": "as expected", "records": "T1-004"},
-  "triton-linear": {"contact": "not-considered", "verdict": "-", "records": ""},
-  "stock-flag-tweaks": {"contact": "not-considered", "verdict": "-", "records": ""},
-  "pp2": {"contact": "idea-only", "verdict": "as expected", "records": "KB10 (estimate)"},
-  "uneven-tp": {"contact": "not-considered", "verdict": "-", "records": ""},
-  "dequant-cublas-prefill": {"contact": "not-considered", "verdict": "-", "records": ""},
-  "spec-glue-graph": {"contact": "idea-only", "verdict": "-", "records": "T2-007 (analysis), KB12"},
-  "marlin-tuning": {"contact": "idea-only", "verdict": "-", "records": "R1-C"},
-  "ce-ar-prefill": {"contact": "idea-only", "verdict": "-", "records": "r1_leader-1.md:11, brainstorm/r2/task_leader-1.md:5"},
-  "flashinfer-pcie-ar": {"contact": "idea-only", "verdict": "-", "records": "adjacent_field.md:26 (dismissed: needs P2P)"}
+{
+ "run": "v1/test-4",
+ "source": "judge-b.md",
+ "base": 635.9,
+ "champion": {
+  "record": "T1-003",
+  "tok_s": 691.3,
+  "pct": 8.7,
+  "stack": [
+   "host-ar",
+   "draft-head-diet",
+   "sharded-sampling"
+  ]
  },
- "novel": []}
+ "best_measured": {
+  "record": "T2-006",
+  "tok_s": 699.5,
+  "pct": 10.0,
+  "adds": [
+   "greedy-fastpath"
+  ]
+ },
+ "resources": {
+  "wall_h": 3.26,
+  "gpu_min": 164.5,
+  "output_tokens": "411K"
+ },
+ "nodes": {
+  "host-ar": {
+   "contact": "reached",
+   "verdict": "as expected",
+   "records": "T1-001, T1-003"
+  },
+  "prefill-graphs": {
+   "contact": "not-considered",
+   "verdict": "missed win",
+   "records": "leader-1 KB:22 noted"
+  },
+  "host-allgather": {
+   "contact": "idea-only",
+   "verdict": "-",
+   "records": "brainstorm/r1/adjacent_field.md (idea 1)"
+  },
+  "ar-kernel-tuning": {
+   "contact": "tried",
+   "verdict": "as expected",
+   "records": "T1-002"
+  },
+  "draft-head-diet": {
+   "contact": "reached",
+   "verdict": "as expected",
+   "records": "T2-001, T2-003, T1-003"
+  },
+  "greedy-fastpath": {
+   "contact": "tried",
+   "verdict": "as expected",
+   "records": "T2-004, T2-006"
+  },
+  "sharded-sampling": {
+   "contact": "reached",
+   "verdict": "as expected",
+   "records": "T2-003, T1-003"
+  },
+  "gdn-replay": {
+   "contact": "not-considered",
+   "verdict": "missed win",
+   "records": ""
+  },
+  "draft-depth-3": {
+   "contact": "tried",
+   "verdict": "wrong cause",
+   "records": "T2-002, T2-005"
+  },
+  "nccl-env": {
+   "contact": "tried",
+   "verdict": "as expected",
+   "records": "AF job 1, T1-001 (KB1)"
+  },
+  "prefill-ar-overlap": {
+   "contact": "tried",
+   "verdict": "as expected",
+   "records": "T1-004"
+  },
+  "triton-linear": {
+   "contact": "not-considered",
+   "verdict": "-",
+   "records": ""
+  },
+  "stock-flag-tweaks": {
+   "contact": "not-considered",
+   "verdict": "-",
+   "records": ""
+  }
+ },
+ "novel": []
+}

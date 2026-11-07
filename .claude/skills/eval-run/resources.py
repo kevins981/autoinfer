@@ -67,11 +67,14 @@ def main():
     rows, known = [], set()
     for mf in sorted(glob.glob(os.path.join(run, "agents", "*", "meta.json"))):
         m = json.load(open(mf))
-        sid = m.get("session_id")
-        hits = glob.glob(os.path.join(a.transcripts, "*", f"{sid}.jsonl")) if sid else []
-        if sid:
-            known.add(sid)
-        rows.append((m["name"], m.get("role", "?"), m.get("started"), m.get("stopped"), hits[0] if hits else None))
+        # an agent restarted with new sessions (baseline flavor: new_run --resume) lists them all
+        sids = [s["session_id"] for s in m.get("sessions", [])] or [m.get("session_id")]
+        for i, sid in enumerate(sids):
+            hits = glob.glob(os.path.join(a.transcripts, "*", f"{sid}.jsonl")) if sid else []
+            if sid:
+                known.add(sid)
+            name = m["name"] if len(sids) == 1 else f"{m['name']}#{i + 1}"
+            rows.append((name, m.get("role", "?"), m.get("started"), m.get("stopped"), hits[0] if hits else None))
     for d in proj_dirs:
         for f in sorted(glob.glob(os.path.join(d, "*.jsonl"))):
             sid = os.path.basename(f)[:-len(".jsonl")]

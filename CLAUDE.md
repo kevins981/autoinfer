@@ -24,26 +24,27 @@ same model (floating-point reordering is fine; changing the math, e.g. dropping 
 
 ## Two loops
 - **Outer loop: flavors** (`flavors/<name>/`, free-form names). Each flavor is one AutoInfer
-  algorithm: agent structure, prompts, tools. Designer agents work on this loop. **A flavor is
-  frozen once it has runs**; to change it, copy it under a new name, so every result stays tied to
-  the exact flavor that produced it. Outer-loop tooling stays manual (copy folders by hand).
+  algorithm: agent structure, prompts, tools. Designer agents work on this loop. Flavors may be
+  edited after they have runs; each run records the autoinfer commit it started from
+  (`flavor_commit.txt`), so every result traces back to the exact flavor code. Outer-loop tooling
+  stays manual (copy folders by hand).
 - **Inner loop: runs** (`flavors/<name>/runs/<run>/`, free-form names). A run is one invocation of
   a flavor on a task, with the human's focus/scope and a budget. Inside a run, agents iterate on the
   engine. `../qwen38_opt/` is a hand-driven example of one such inner loop.
 
 ## Pausing and resuming a run
-Both are messages to the run's top agent (v1: the manager; baseline: the researcher); no script.
+This is how runs are paused and resumed: by messages to the run's top agent (v1: the manager,
+which handles its own agents and GPU work; baseline: the researcher). No script.
 - **Pause:** tell it to pause gracefully: finish or stop what's running (GPU jobs, servers, its
   agents), leave things in a state it can pick up, report where it stands, then wait. Don't stop
   the session: an idle session costs no tokens or GPU. Check `nvidia-smi` that nothing of the run
-  is left on the GPUs. Talk to it with `claude attach <id>` (ids: `claude agents`), or have the
-  designer send the message.
-- **Resume:** tell it to resume. The v1 manager resumes its own agents and GPU work.
-- **Only if the session died or was stopped** (crash, reboot): `flavors/<flavor>/tools/new_run
-  <run> --resume ["note"]` restarts the **same** session (context intact; v1:
-  `runs/<run>/manager_session.json`, baseline: `agents/researcher/meta.json`) with its settings,
-  env and prompt. `--fresh` starts a new session that rebuilds its picture from the run's files
-  instead (if the old one is broken; older v1 runs have no recorded session and always get a new one).
+  is left on the GPUs.
+- **Resume:** message it; what to say is decided case by case (e.g. "resume", or resume with a
+  change of plan or limits).
+- Talk to it with `claude attach <id>` (ids: `claude agents`), or have the designer send the message.
+- If a session died (crash, reboot), its id is recorded (v1: `runs/<run>/manager_session.json`;
+  baseline: `agents/researcher/meta.json`) and can be continued by hand with `claude --bg --resume
+  <id>` (same settings and env as `new_run` uses).
 - Wall-clock time includes the pause (logs keep real timestamps); tokens and GPU-minutes are per
   message / per job, so they are unaffected. Limit runs by experiments or budgets, not hours, when
   a pause is likely.

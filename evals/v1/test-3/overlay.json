@@ -36,7 +36,7 @@
    "covered_by_alt": null,
    "wrong_cause": false,
    "base": "BASE",
-   "evidence": "T1-002 official +5.0% (key best +5.7%, within noise)"
+   "evidence": "T1-002 official +5.0% (key best +5.7%, bar 4.1)"
   },
   "prefill-graphs": {
    "type": "win",

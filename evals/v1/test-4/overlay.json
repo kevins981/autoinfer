@@ -46,17 +46,17 @@
    "covered_by_alt": null,
    "wrong_cause": false,
    "base": "BASE",
-   "evidence": "T2-001 +2.4% ab (key best +3.0%, within noise)"
+   "evidence": "T2-001 +2.4% ab (key best +3.0%, -0.6 pt)"
   },
   "greedy-fastpath": {
    "type": "win",
    "idea": true,
    "implementation": true,
-   "result": false,
-   "covered_by_alt": "sharded-sampling",
+   "result": true,
+   "covered_by_alt": null,
    "wrong_cause": false,
    "base": "BASE+draft-head-diet; host-ar+...",
-   "evidence": "T2-004/T2-006: only vs alt (ABAB +0.2%)"
+   "evidence": "swap for sharded-sampling: T2-004 -0.1%, T2-006 ABAB +0.2%"
   },
   "sharded-sampling": {
    "type": "win",

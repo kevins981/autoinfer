@@ -78,17 +78,17 @@ BASE evals are in "round None" (5.7 min).
 ## Win nodes
 | node | idea | impl | result | base | run's result (strength) | missed? / wrong cause | evidence |
 |---|---|---|---|---|---|---|---|
-| host-ar | yes | yes | yes | BASE | +5.0% official (662.8 vs 631.4) | no | idea: `brainstorm/r1/adjacent_field.md:46` (Idea 1), `brainstorm/r1/systematic_engineer.md:88` (Idea 2). impl+result: `bank/T1-002` (host_staged_ar.{py,cu}, /dev/shm cudaHostRegister, bitwise == NCCL, official #1 662.8). Key best +5.7% official (test-4); 5.0 vs 5.7 is within the 3% noise, so yes. |
+| host-ar | yes | yes | yes | BASE | +5.0% official (662.8 vs 631.4) | no | idea: `brainstorm/r1/adjacent_field.md:46` (Idea 1), `brainstorm/r1/systematic_engineer.md:88` (Idea 2). impl+result: `bank/T1-002` (host_staged_ar.{py,cu}, /dev/shm cudaHostRegister, bitwise == NCCL, official #1 662.8). Key best +5.7% official (test-4); the bar is 5.7 − 1.6 = 4.1 points, and 5.0 ≥ 4.1, so yes. |
 | prefill-graphs | yes | yes | yes | host-ar (+ host-allgather) | +4.8% ab on host-ar (699.0 vs 666.8, same job); official 699.2 (T1-005) vs 662.8 (T1-002) | no | idea: `brainstorm/r1/systematic_engineer.md:61` (Idea 1, the exact flag). impl: T1-001 (on BASE, +2.2%, noise), T1-005 (on T1-004). Result equals the key's best (+4.8% ab, which comes from this run, KB4). |
 | draft-head-diet | yes | yes | yes | host-ar + prefill-graphs | +3.0% ab (718.0 vs 696.9 same job), acceptance 2.343 vs 2.340 | no | idea: `brainstorm/r1/adjacent_field.md:116` (Idea 4a, 4c), ideas.md R1-F/R1-I (lines 12, 15), `brainstorm/r2/systematic_engineer.md` Idea 1. impl: T1-006 (`use_local_argmax_reduction`), T1-007 (+ `draft_lm_head_quantization: fp8`). Equals the key's best (+3.0% ab). |
-| greedy-fastpath | yes | yes | yes | host-ar + prefill-graphs + draft-head-diet | +2.4% ab (732.6 vs 715.3); official 730.9 = +4.5% vs T1-005 (with draft-head-diet) | no | idea: `brainstorm/r1/adjacent_field.md:116` (Idea 4b), ideas.md R1-G (line 13). impl: T1-009 (LogitsProcessor.get_greedy_tokens, RejectionSampler.verify_greedy_ids; 25,511 real rows incl. 467 ties, 0 mismatches). Key's best ~+1.5-2%; +2.4% ab meets it. |
+| greedy-fastpath | yes | yes | yes | host-ar + prefill-graphs + draft-head-diet | +2.4% ab (732.6 vs 715.3); official 730.9 = +4.5% vs T1-005 (with draft-head-diet) | no | idea: `brainstorm/r1/adjacent_field.md:116` (Idea 4b), ideas.md R1-G (line 13). impl: T1-009 (LogitsProcessor.get_greedy_tokens, RejectionSampler.verify_greedy_ids; 25,511 real rows incl. 467 ties, 0 mismatches). Key's best ~+1.5-2%; +2.4% ab is above it (bar ≤ 0.4 points). |
 | sharded-sampling | no | no | no | - | none | covered by its alternative greedy-fastpath (passed result); not a miss | searched `grep -rniE "sharded.sampl\|batch_sharded\|batch-sharded"` over brainstorm, reports, local_kb, bank, KB, ideas, journal: no hits. The only nearby text is T1-009's eligibility list excluding the "batch sharder" (`bank/T1-009/record.md`), which is not a proposal. |
 | gdn-replay | yes | yes | yes | T1-009 stack | +2.6% official (749.7 vs 730.9); ab +2.2% (712.4 vs 697.3) | no (not promoted only because of the 3% bar, a run rule) | idea: `brainstorm/r1/systematic_engineer.md:191` (Idea 6), R2-B (`brainstorm/r2/adjacent_field.md` Idea 1), R3-B. impl+result: `bank/T1-012` (csrc gdn_decode_replay_kernel + flush kernel, bitwise unit test with negative control). Equals the key's best (+2.6% official). ☆ best measured. |
 
 ## Dead-end nodes
 | node | reason | how | run's stated reason vs the key's cause | evidence |
 |---|---|---|---|---|
-| host-allgather | right (see ambiguity) | measured | Run: "works and exact, but a ~1% effect, not measurable against 3% noise. Kept as a building block". Key: ~0 `ab`, "Kept in test-3's stack as a neutral, exact building block (not a contradiction)". Same conclusion. | `bank/T1-004`, KB6 |
+| host-allgather | right | measured | Run: "works and exact, but a ~1% effect, not measurable against 3% noise. Kept as a building block". Key: ~0 `ab`, "Kept in test-3's stack as a neutral, exact building block (not a contradiction)". Same conclusion. A stated neutral building block is not wrong (EVAL.md). | `bank/T1-004`, KB6 |
 | ar-kernel-tuning | right | measured | Run: chunk pipelining loses (K=2..8 slower), each chunk fence ~5 us, chain "near its floor", <2% left, not recommended. Key: host-ar within ~5-10 us of the PCIe floor (F3). Same. | `bank/T1-003` (b), KB5 |
 | draft-depth-3 | right | measured | T1-008: -6.9% ab, TTFT p50 210→792 ms, "cause not diagnosed" (KB11). Round 3 diagnosed it from T1-008's own log as capacity (Running 14 / Waiting 2; 10 vs 13 GDN blocks per request, KB13), retried with more KV (T1-010: OOM at graph capture; T1-011: runtime OOM) and concluded "k=3 at c=16 needs smaller per-request state, not more KV" (KB16, T1-011). k=4 ruled out by the Marlin M=80 cliff (KB14). Key's cause: capacity/admission (F5), memory ceiling (F6). The final reason matches. | `bank/T1-008`, `T1-010`, `T1-011`; KB11, KB13, KB16, KB17 |
 | nccl-env | right | measured (component) | bs-r1-adjacent_field microbench: Simple / LL128 / 8 / 16 channels, at most -6% at prefill size, worse at decode size; "a flag-only approach is ruled out". Key: no gain `component`. Same. | `brainstorm/r1/adjacent_field.md:20-34,141`; ideas.md:9 (R1-C) |
@@ -116,7 +116,7 @@ BASE evals are in "round None" (5.7 min).
     correctly not promoted; the manager flagged it for the human (`journal.md:18`). It was idea'd in round 1
     (SE Idea 6, scored N4/U2) and waited two rounds: with one leader, the manager chose to continue the winning
     comms/logits line (search-policy rule 1) over the novel slot (`journal.md:11`).
-  - **draft-depth-3 cause, first wrong then corrected.** T1-008 was dropped in round 2 with "cause not
+  - **draft-depth-3 cause, first missing then corrected** (graded on the final reason, per EVAL.md). The reason was missing for about one round: undiagnosed from the round-2 drop (T1-008, 01:40Z) until the round-3 brainstorms (KB13, ~02:09Z). T1-008 was dropped in round 2 with "cause not
     diagnosed" / "TTFT blows up" (KB11). The leader had not read the scheduler's Running/Waiting lines
     (`local_kb/leader-1.md`, round-3 "Lesson"). Both r3 brainstormers found the capacity cause from the existing
     log (KB13) at no GPU cost, so the final drop reason is right.
@@ -145,9 +145,7 @@ BASE evals are in "round None" (5.7 min).
    saves ~1.3% of Marlin time at M=48 in isolation (`v1/test-3:agents/bs-r3-systematic_engineer/mb/gpu0.out`);
    note the probable precision change. Also the config microbench there: M=64 costs +1.56 ms/step over M=48
    (already in KB14 / F-list).
-2. `draft-depth-3` grading note: this run is an example of a drop whose first stated cause was "undiagnosed"
-   (KB11) and later corrected to capacity (KB13). Suggest saying which reason counts when a run revises it (I
-   graded the final one).
+2. (Withdrawn: EVAL.md now says to grade a revised reason by its final version.)
 3. `host-allgather`: confirmed (no new evidence). `prefill-graphs`: an official-vs-official number is
    available, T1-005 699.2 vs T1-002 662.8 (+5.5%, though T1-005 also has host-allgather, ~0).
 4. No new nodes, no overturned dead ends. Unmeasured ideas from this run are already in the key's `ideas.md`
@@ -155,13 +153,8 @@ BASE evals are in "round None" (5.7 min).
    flashinfer-pcie-ar, spec-glue-graph R1-H).
 
 ## Ambiguous calls
-- **host-allgather "right".** The definition says wrong includes "kept it in the stack as if it helped". The
-  run kept it while saying it is within noise (~1%). The key explicitly says this is "not a contradiction", so I
-  graded right. A stricter reading would make it wrong.
+(Re-checked against the tightened EVAL.md: 1.6-point result tolerance, the alternative-swap rule, the neutral-block rule and the final-reason rule. No label changed. host-ar now passes on the 1.6-point bar (5.0 vs 5.7), not on the old 3% noise. The host-allgather and draft-depth-3 calls are now explicit in the definitions and no longer ambiguous. sharded-sampling was never measured, even as a swap, so it stays "covered by its alternative".)
 - **triton-linear "not considered".** The only mention is a one-line rule-out of W8A8 as forbidden. "Right"
   needs "a reason the key's cause and facts support"; a validity reason is neither the key's cause nor
   contradicted by it. I used the stricter label, not considered, and the node was out of bounds by the human's
   task definition.
-- **draft-depth-3.** The definition grades "the run's reason" but doesn't say which one when the run revises
-  it. The reason at the round-2 drop was "cause not diagnosed" (incomplete per the key's grading note). The
-  final reason in round 3 cites capacity. I graded the final reason as right.

@@ -16,3 +16,8 @@
 - First: nsys (task/scripts/profile_nsys.sh) of T2-003 with n=2 vs n=3 at c=16; compare per-step kernel breakdown
   (Marlin M=48 vs 64, GDN, attention, the draft pass, cudagraph padding / capture sizes, host gaps).
 - Check the cudagraph capture sizes and the max_num_batched_tokens interaction with prefill chunks (TTFT p99).
+## R2
+- nsys node-level trace inflates cudaGraphLaunch to ~1.2 ms and delays graph start: artifact (graph-level: ~120 us).
+- Depth 3 on champion (T2-005): step +12.6%, tokens/step +16.7%, end-to-end flat (prefill steps 35-38% of wall); TTFT p99 fails. Closed.
+- T2-006 = T1-003 + T2-004 fastpath, no batch-sharded: OFFICIAL 699.5 vs champion 691.3, BUT controlled ABAB same-job: +0.2% (noise). Fast path == sharded sampling, also with host AR. Lesson: one-server-per-arm A/Bs show ~2% drift.
+- Remaining idle ~1.6 ms/step is CPU python (FlashInfer metadata builds per pass) (T2-007); fix = one graph for glue+sampling+drafter, invasive.

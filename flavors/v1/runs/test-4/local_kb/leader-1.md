@@ -18,3 +18,14 @@
 - T1-003 nsys (job 17): decode span 39.5->33.0 ms, AR 8.10->5.88 ms/step (44.5 us/AR avg). Step period only 39.8->37.0:
   ~4 ms/step now between decode sub-steps (small clusters of lm_head Kernel2 + allgather + drafter), idle 5.3%->10.8% (under nsys; unverified without it).
   Prefill steps unchanged: NCCL AR ~31% of big prefill steps (181 of 590 ms); NCCL prefill AR = 8% of span; host AR 12.4%; Marlin 51%.
+## Round 2: overlap prefill-step AR with GEMMs (champion T1-003 691.3)
+- Engine: compilation mode NONE, graphs <=96 tokens; prefill steps eager. AR happens in the norm (use_fused_allreduce_norm fallback), not RowParallelLinear.
+- ws leader-1.overlap (from T1-003), worker leader-1.w2, 30 GPU-min allowance; budget 55.
+- w2 mb (job 18): T=1024 GEMM K=3072 265us, K=8704 676us, NCCL AR 757/1485us (T=1024/2048). Pipelined: -13..-21% per layer (<30% bar).
+  Independent GEMM||AR barely overlap at T=1024 (1400 vs 1428): Marlin persistent grid = all SMs blocks NCCL CTAs; high-prio stream no help.
+  Chunked GEMM bitwise 99.94-100%, max 1 ulp. Next: Marlin sms reserve (needs C++ build) -> retest.
+- Marlin SM reserve (env VLLM_MARLIN_SM_RESERVE, getenv per call) fixes overlap: conc K8704 T1024 1404->751us. Pipeline n=4 R=2: -23% (T1024) / -25% (T2048) per layer; Marlin@126 SMs +2%.
+- job 23 A/B (bench 100, T1-003 args): OFF 646.3/643.2, ON 649.4/654.2 (+1.1%); TTFT p50 ~250 vs 254-272; TPOT p50 22.2 vs 23.0. gsm8k50 44/50, 128K ok.
+- Confirm job: 400-prompt OFF/ON/OFF/ON requested (~24 min). Then official if positive. Diff consumers marker-aware (norms + mtp); aux-hidden path (eagle3) would double AR - inactive here.
+- job 25 bench-400 OFF 682.4/692.5 ON 686.1/688.2 => 0.0%. TTFT p50 +6% ON, p99 better. Null. Mismatch vs napkin ~3%: profiling.
+- T1-004 null filed; nsys: big prefill steps -10%, -3.8% of profile, cancelled by step-mix variation. Only down_proj hides AR; o_proj chunks too short. w2 stopped.

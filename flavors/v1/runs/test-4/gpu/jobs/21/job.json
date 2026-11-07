@@ -1,0 +1,19 @@
+{
+  "id": 21,
+  "pid": 3380622,
+  "team": "T2",
+  "agent": "leader-2.w2",
+  "label": "j2",
+  "timeout_min": 15.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-4/agents/leader-2.w2/j2/job2.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-4/agents/leader-2.w2",
+  "submitted": "2026-11-07T06:03:19+00:00",
+  "state": "done",
+  "started": "2026-11-07T06:03:19+00:00",
+  "ended": "2026-11-07T06:12:44+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 9.413
+}

@@ -1,0 +1,21 @@
+{
+  "id": 24,
+  "pid": 3392293,
+  "team": "T2",
+  "agent": "leader-2",
+  "label": "official:T2-006",
+  "timeout_min": 20.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-4/workspaces/eval-T2-006-1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-4/bank/T2-006/official/1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-4/bank/T2-006/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-4",
+  "submitted": "2026-11-07T06:14:50+00:00",
+  "state": "done",
+  "started": "2026-11-07T06:23:54+00:00",
+  "ended": "2026-11-07T06:34:28+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 10.566
+}

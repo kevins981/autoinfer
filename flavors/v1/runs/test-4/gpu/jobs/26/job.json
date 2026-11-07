@@ -1,0 +1,19 @@
+{
+  "id": 26,
+  "pid": 3410441,
+  "team": "T2",
+  "agent": "leader-2",
+  "label": "T2-abab",
+  "timeout_min": 24.0,
+  "command": [
+    "bash",
+    "agents/leader-2/abab/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-4",
+  "submitted": "2026-11-07T06:35:34+00:00",
+  "state": "done",
+  "started": "2026-11-07T06:48:16+00:00",
+  "ended": "2026-11-07T06:58:44+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 10.46
+}

@@ -1,0 +1,14 @@
+{
+  "record": "T2-006",
+  "n": 1,
+  "diff_sha256": "5fba5a2a2f63450888231c4fe0d42cb522d26912c46ae6ec42b6414d3c246a56",
+  "baseline_commit": "4527515cd705db206ae927cf5acef506abc64bdd",
+  "harness": "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness",
+  "harness_version": "fac9917",
+  "workspace": "eval-T2-006-1",
+  "requested_by": "leader-2",
+  "team": "T2",
+  "started": "2026-11-07T06:14:48+00:00",
+  "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"use_local_argmax_reduction\":true,\"draft_lm_head_quantization\":\"fp8\"}'",
+  "ended": "2026-11-07T06:34:28+00:00"
+}

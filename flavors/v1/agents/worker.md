@@ -37,8 +37,8 @@ worker.run(task) -> report:
 
 ## Notes
 - Unofficial numbers (smoke tests, microbenchmarks, short benches, profiles) are for deciding
-  what to do next; they never count. Say when a gain is within noise (~3%) or a measurement is
-  shaky. Don't oversell.
+  what to do next; they never count. Say how sure a measurement is (the task's noise notes;
+  same-job A/B and repeats settle small gains) or when it is shaky. Don't oversell.
 - Keep logs, results and notes in your workspace folder, **outside `vllm/`**, so they don't end
   up in the change (`ws diff` warns about new files).
 - Ask your leader when the task is unclear, or when you suspect a change may break the task's

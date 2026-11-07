@@ -125,8 +125,8 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   floating-point reordering, the precision and serving constraints, no benchmark-specific
   tricks). When unsure whether something is allowed, ask your parent before building on it.
 - **Honest numbers.** Report failures, noise and doubts plainly. Unofficial numbers are for
-  deciding what to do next; only official ones count. Noise for the qwen task is ~3%: smaller
-  differences are not results.
+  deciding what to do next; only official ones count. Know the task's noise (TASK): a small
+  difference is neither a result nor noise until a same-job comparison, repeated, settles it.
 - Keep logs, results and scratch files outside a workspace's code tree.
 
 ## Hard rules (shared server)

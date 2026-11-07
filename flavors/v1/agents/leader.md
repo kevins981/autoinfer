@@ -41,7 +41,8 @@ leader.run(task) -> report:
                 # task_definition.md and the known loopholes: same math, the precision and serving
                 # constraints, no benchmark-specific tricks. A worker's "it's correct" is not enough.
             if record.validity.ok and wants_official_eval(record):
-                # typically: the unofficial result beats CHAMPION by more than the noise (~3%)
+                # typically: the unofficial result clearly beats CHAMPION (task's noise notes; for a
+                # small gain, first a same-job A/B against CHAMPION, repeated)
                 # If you're confident in several changes, you may stack them into one record and
                 # request one official eval; evaluate an uncertain change on its own.
                 evaluate(record)

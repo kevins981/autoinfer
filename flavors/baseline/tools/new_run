@@ -73,6 +73,10 @@ def confine(s, run):
     dirs += sorted(r for f in (ROOT / "flavors").iterdir() if (f / "runs").is_dir()
                    for r in (f / "runs").iterdir() if r.is_dir() and r.resolve() != own)
     dirs += [QWEN38_OPT / d for d in ("results", "logs", "ext", "vllm", "build")]
+    # the shared cache: only the engine trees, build cache and downloads are for runs (runtime
+    # caches are per run since 2026-11-07; the shared ones hold older runs' generated kernels)
+    shared_ok = {"tasks", "ccache", "huggingface", "pip", "uv", "conda-pkgs"}
+    dirs += sorted(d for d in (ROOT / ".cache").iterdir() if d.is_dir() and d.name not in shared_ok)
     files = [ROOT / "EVAL.md", ROOT / "CLAUDE.md"] + [e for e in flav if not e.is_dir()] + [QWEN38_OPT / f for f in ("FINDINGS.md", "TODO.md", "CLAUDE.md")]
     # Claude Code's per-session folders (transcripts, memory, background-job output, scratchpads),
     # named after each session's working directory: deny all that exist at launch except this run's
@@ -94,6 +98,9 @@ def confine(s, run):
     deny += [f"Edit({p})" for p in ro]
     off = ", ".join(str(p) for p in dirs + files if p.parent.name != "runs" and QWEN38_OPT not in p.parents
                     and not any(r in p.parents for r in sess_roots))
+    # Hard rule for messaging (the classifier rule alone let a probe message a session outside the run)
+    s.setdefault("hooks", {}).setdefault("PreToolUse", []).append({"matcher": "SendMessage", "hooks": [
+        {"type": "command", "command": f"python3 {TOOLS / '_msg_guard.py'} {run.name}"}]})
     s["includeGitInstructions"] = False   # else the system prompt holds the autoinfer repo's recent commits
     s["autoMode"] = {"soft_deny": ["$defaults", (
         f"Leaving the run: this agent belongs to one AutoInfer optimization run, folder {run}. "
@@ -104,10 +111,13 @@ def confine(s, run):
         f"other Claude sessions' transcripts, memory and scratch folders (under ~/.claude/projects/ and "
         f"/tmp/claude-{os.getuid()}/, every folder except this run's own); and the autoinfer repository "
         f"on GitHub (kevins981/autoinfer: no gh, git clone, curl or web fetches of it or its files; "
-        f"other GitHub use, e.g. vLLM issues and PRs, is fine). They hold "
+        f"other GitHub use, e.g. vLLM issues and PRs, is fine). Never message or contact agents or Claude "
+        f"sessions outside this run (SendMessage, agent tool or anything else): only this run's agents, "
+        f"listed by `agent list` (the human may also message you; answer). They hold "
         f"the evaluators' answers and grades, design notes, or other runs' results; using them invalidates "
         f"the experiment. Allowed outside the run: running the run's tools; reading the flavor's agents/ "
-        f"and tools/; the engine code and caches under {ROOT}/.cache; {QWEN38_OPT}/env (the conda env) "
+        f"and tools/; the engine code, build cache and downloads under {ROOT}/.cache (tasks/, ccache/, "
+        f"huggingface/, pip/, uv/); this run's own .cache/; {QWEN38_OPT}/env (the conda env) "
         f"and {QWEN38_OPT}/.cache (model weights); git inside the agent's own workspaces; installed "
         f"system software and documentation.")]}
     return s

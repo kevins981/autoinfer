@@ -67,6 +67,14 @@ Found by the first audit (test-4, 2026-11-07):
 - `import vllm` under `task/env.sh` now loads the task's baseline tree (9b2a78e).
 - Run-scoped agent names (`<run>-<name>`) fixed the cross-run messaging (ecb20fa).
 
+- **Messaging** (added 2026-11-07): run agents could message any Claude session on the machine
+  (other runs, designer, judges); the classifier rule did not stop a probe. Now a PreToolUse hook
+  (`tools/_msg_guard.py`) blocks SendMessage to anything but `<run>-*` names, `main` and subagent ids.
+- **Shared runtime caches** (added 2026-11-07): Triton, torch.compile, vLLM, FlashInfer and
+  torch-extension caches (and TMPDIR) are per run (`$AUTOINFER_RUN/.cache`, task env.sh); they hold
+  generated kernels' source. The old shared ones under `autoinfer/.cache` are denied; runs keep
+  `tasks/`, `ccache/`, `huggingface/`, `pip/`, `uv/`. Cost: the first server start in a run compiles cold.
+
 **Decided: runs stay in the repo** (2026-11-07, human). Moving `flavors/<f>/runs/` out behind a
 symlink would only stop git and relative paths from reaching the repo; absolute paths still reach
 it, so the deny rules stay the protection. Costs: existing runs have absolute paths baked in

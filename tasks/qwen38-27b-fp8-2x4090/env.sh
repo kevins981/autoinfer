@@ -10,7 +10,13 @@ export CCACHE_DIR=$CACHE_ROOT/ccache
 export CCACHE_BASEDIR=$AUTOINFER_ROOT          # hits across workspaces at different paths
 export CCACHE_NOHASHDIR=true
 export PIP_CACHE_DIR=$CACHE_ROOT/pip UV_CACHE_DIR=$CACHE_ROOT/uv CONDA_PKGS_DIRS=$CACHE_ROOT/conda-pkgs
-export TMPDIR=$CACHE_ROOT/tmp
+
+# Runtime caches and temp files: per run when in a run ($AUTOINFER_RUN/.cache), so a run never sees
+# another run's generated kernels (Triton, torch.compile, JIT extensions hold their source).
+# The first inference server start in a run compiles from scratch (a few minutes longer).
+RUN_CACHE=${AUTOINFER_RUN:+$AUTOINFER_RUN/.cache}
+RUN_CACHE=${RUN_CACHE:-$CACHE_ROOT}
+export TMPDIR=$RUN_CACHE/tmp
 
 # Model weights and datasets: read from qwen38_opt's HF cache, offline (no downloads, no writes)
 export HF_HOME=$CACHE_ROOT/huggingface
@@ -18,13 +24,13 @@ export HF_HUB_CACHE=$QWEN38_OPT/.cache/huggingface/hub
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
 # Runtime caches
-export TRITON_CACHE_DIR=$CACHE_ROOT/triton
-export TORCHINDUCTOR_CACHE_DIR=$CACHE_ROOT/inductor
-export VLLM_CACHE_ROOT=$CACHE_ROOT/vllm
-export FLASHINFER_WORKSPACE_BASE=$CACHE_ROOT/flashinfer
-export CUDA_CACHE_PATH=$CACHE_ROOT/nv-compute
-export XDG_CACHE_HOME=$CACHE_ROOT/xdg
-export TORCH_EXTENSIONS_DIR=$CACHE_ROOT/torch_extensions   # torch cpp_extension load()/load_inline JIT builds
+export TRITON_CACHE_DIR=$RUN_CACHE/triton
+export TORCHINDUCTOR_CACHE_DIR=$RUN_CACHE/inductor
+export VLLM_CACHE_ROOT=$RUN_CACHE/vllm
+export FLASHINFER_WORKSPACE_BASE=$RUN_CACHE/flashinfer
+export CUDA_CACHE_PATH=$RUN_CACHE/nv-compute
+export XDG_CACHE_HOME=$RUN_CACHE/xdg
+export TORCH_EXTENSIONS_DIR=$RUN_CACHE/torch_extensions   # torch cpp_extension load()/load_inline JIT builds
 export PYTHONNOUSERSITE=1
 
 # Build settings: RTX 4090 = sm_89; moderate parallelism (shared server)

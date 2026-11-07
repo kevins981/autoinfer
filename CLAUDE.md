@@ -35,6 +35,7 @@ same model (floating-point reordering is fine; changing the math, e.g. dropping 
 ```
 autoinfer/
   CLAUDE.md            # this file: for designer agents
+  EVAL.md              # how runs and flavors are evaluated (all flavors)
   design/              # design notes, split by topic (index below)
   tasks/<task>/        # TASK.md, harness/, scripts/ (read-only to run agents), baseline/
   flavors/<flavor>/
@@ -54,6 +55,8 @@ autoinfer/
 ```
 
 ## Design notes
+- [EVAL.md](EVAL.md): how we evaluate runs and flavors (answer key overlaid on each run's graph,
+  LLM judges, resources used, single-agent control).
 - [design/principles.md](design/principles.md): agreed design principles. Respect them; propose
   changes to the human explicitly instead of silently deviating.
 - [design/open_questions.md](design/open_questions.md): undecided items and TODOs shared by all

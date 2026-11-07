@@ -25,25 +25,34 @@ key already carries what other runs found). Output: `evals/<flavor>/<run>/judge-
 3. **Read the run's own artifacts, not just summaries:** the graph (`graph.md`, older runs
    `tree.md`), every `bank/*/record.md`, `shared_kb.md`, `ideas.md`, `brainstorm/r*/`,
    `journal.md`, `assumption_ledger.md`. Open diffs and logs when a claim depends on them.
-4. **Overlay.** For each answer-key node (K, D, O), find the run's matching records/ideas by what
-   the change *does* (use the node's "Recognize" line), not by name. Label it:
-   - K nodes: `reached` / `partial` (weaker or narrower version) / `tried-dropped` /
-     `idea-only` (surfaced in ideas or a brainstorm, never tried) / `never-considered`.
-     For alternatives (e.g. K4a | K4b), reaching either counts; say which.
-     A node reached without its prerequisites is `partial` unless the gain still showed.
-   - D nodes: `not-tried` / `tried, dropped, right cause` / `tried, dropped, wrong or no cause` /
-     `tried, kept` (a contradiction: flag it under key updates).
-   - O nodes: `not-tried` / `idea-only` / `tried` (with the result: a key update).
-   Then list **novel** run nodes that match nothing in the key, with results.
-5. **Why missed.** For each K node not `reached`: the run's closest approach (nearest record or
+4. **Overlay.** For each answer-key node, find the run's matching records/ideas by what the change
+   *does* (the node's "recognize" line), not by name. Record:
+   - **contact:** `reached` (tried and kept in the run's stack) / `tried` (tried, not kept) /
+     `idea-only` (in ideas or a brainstorm, never tried) / `not-considered`. For a node with
+     `alternative_to`, say which alternative the run reached.
+   - **base:** the stack the run tried it on, in key ids (e.g. "host-ar + draft-head-diet").
+     `reached` without the node's `builds_on` is still `reached` if the gain showed; note it.
+   - **run's result and stated cause**, with strength (official / abab / ab / component / estimate).
+   - **verdict vs the key:**
+     - `as expected`: matches what the key knows on that base, incl. dropping a dead end for the
+       right cause.
+     - `missed win`: a node with a win on some base, not reached (including tried only on a base
+       where it doesn't pay, e.g. `prefill-graphs` on BASE).
+     - `wrong cause`: dropped with a cause the key's facts contradict, or with none.
+     - `new info`: a result on a base the key doesn't have, or one that contradicts it (a key
+       update).
+     - Open nodes not tried: `-`.
+   Then list **novel** run nodes that match nothing in the key: what, builds_on (key ids), result.
+5. **Why missed.** For each `missed win` and `wrong cause`: the run's closest approach (nearest record or
    idea in the same direction) and where its path diverged, then what happened in plain words
    (e.g. dropped after one noisy A/B; never surfaced; out of budget; tried on the wrong base). Don't
    force a fixed category.
 6. **Process notes** (short): diversity of directions per round; whether drops and promotions
    rest on measurements (and how strong: official / abab / ab / component / estimate); where GPU
    time or tokens went without producing information; anything that violated the flavor's rules.
-7. **Key updates (proposals only; don't edit the key).** Novel wins, D nodes the run overturned or
-   confirmed on a new base, O nodes it measured, new facts, corrections. Each with evidence.
+7. **Key updates (proposals only; don't edit the key).** New nodes (with `builds_on`),
+   results on new bases, overturned or confirmed dead ends, measured open nodes, new facts,
+   corrections. Each with evidence.
 
 **Grade the agents against the run's own rules and conditions.**
 - Separate the human's decisions (stopping the run, rulings, budget changes; see `journal.md`,
@@ -65,7 +74,8 @@ Report layout:
 # Judge <id>: <flavor>/<run>
 ## Resources        (resources.py output)
 ## Config and outcome
-## Overlay          (table: node | label | run evidence | note)
+## Overlay graph    (the key's outline, each line annotated with contact / verdict)
+## Overlay          (table: node | contact | base | run's result and cause | verdict | evidence)
 ## Novel nodes
 ## Why missed
 ## Process notes

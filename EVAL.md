@@ -15,10 +15,9 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
 - **Answer key** (per task, `answer_keys/<task>/answer_key.md`). A map of the task's search
   space as far as we know it, merged from all runs of all flavors (and hand studies). Details in
   "The answer key" below. It is a lower bound on what's possible, and it evolves.
-- **Overlay.** For each key node, where did the run get? Wins: reached / partial / tried and
-  dropped / idea only / never considered. Dead ends: not tried / dropped for the right cause /
-  dropped for a wrong or no cause / kept (a contradiction worth checking). Run nodes that match
-  no key node are **novel**; they feed the key.
+- **Overlay.** For each key node: how far the run got (reached, tried, idea only, never
+  considered), on which base, and whether its result and stated cause agree with the key. Run
+  nodes that match no key node are **novel**; they feed the key.
 - **Why it was missed (qualitative).** For each missed node, find the run's closest approach (the
   nearest record or idea in the same direction) and where its path diverged. Then say what
   happened, e.g.:
@@ -44,23 +43,32 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
    information.
 
 ## The answer key
-A DAG of the search space, curated (not a copy of any run's graph: run graphs have intermediate
-and duplicate steps; key nodes are canonical changes). It holds what we know, not only what works:
-- **Wins (K):** changes with a measured gain on a stated base.
-- **Alternatives:** wins that substitute for each other (K4a | K4b). Reaching either counts; the
-  better one is recorded, the other isn't wrong.
-- **Dead ends (D):** no gain or harmful, **on a stated base, with the cause**. A dead end is a
-  conditional claim, not a verdict: a change can be dead on BASE and a win on top of another one.
-  Each says what would make it worth revisiting.
-- **Open (O):** promising, not measured. Not counted as misses; noted when a run reaches them.
-- **Facts (F):** diagnoses and environment facts that explain nodes, used to judge whether a
-  run's reasons were right.
-- **Edges:** prerequisites ("needs K1"): the base on which the gain was measured or exists.
+A DAG of the task's search space (`answer_keys/<task>/answer_key.md`), curated: not a copy of any
+run's graph (run graphs have intermediate and duplicate steps; key nodes are canonical changes). It
+holds what we know, not only what works.
+- **Node = one change**, with a status-neutral id (e.g. `host-ar`), because status can change and
+  can differ per base.
+- **Edges:**
+  - `builds_on`: the changes a node needs (its result depends on them). This is not the stack it
+    happened to be measured on; that goes in its results.
+  - `alternative_to`: substitutes (same effect, don't stack). Reaching either counts; the better
+    one is recorded, the other isn't wrong.
+- **Results per base:** one line per stack it was measured on, with strength and evidence. So one
+  node can be "no gain on BASE, win on `host-ar`".
+- **Status** (summary): win / win on <id> / no gain / harmful / ruled out by estimate / open. A
+  dead end is a conditional claim (on its bases, with its cause), not a verdict; it says what would
+  make it worth revisiting. An idea that would revive a dead end is its own node with edges (e.g.
+  `draft-depth-3-small-state` builds on `small-spec-state` + `draft-depth-3`).
+- **Open** nodes (no measured result) aren't counted as misses; they are noted when a run reaches them.
+- **Facts (F):** diagnoses and environment facts that explain nodes, used to judge whether a run's
+  reasons were right.
 - **Frontier:** the best known stack and its official number.
+- **Outline:** generated from the edges by `.claude/skills/eval-run/keygraph.py` (each node under
+  its first parent, "+ X" for other parents). Regenerate it after every edit.
 
 Each node needs enough detail for a judge to recognize it in a run by what the change does
-(flags, code locations, mechanism), what it is not (nearby look-alikes), its gain with the
-measurement's strength and base, and evidence ids (`<flavor>/<run>:<record or KB>`).
+(flags, code locations, mechanism) and what it is not (nearby look-alikes); evidence ids are
+`<flavor>/<run>:<record, KB or path:line>`.
 
 ### Updating the key
 After each evaluation, the reconciled report proposes updates; the human approves; the History

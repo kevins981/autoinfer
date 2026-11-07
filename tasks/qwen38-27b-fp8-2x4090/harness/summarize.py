@@ -1,4 +1,4 @@
-"""Turn an eval output folder into results.json (and print it).
+"""Turn an eval output folder into results.json (and print it). With trial<t>/ subfolders, the\nscore and latencies are the mean over trials.
 usage: python summarize.py <output dir> [baseline results.json]"""
 import json, re, sys
 from pathlib import Path
@@ -25,26 +25,50 @@ def read_metrics(path):
     return out
 
 
+KEYS = ("completed", "output_throughput", "total_token_throughput", "median_ttft_ms", "p99_ttft_ms",
+        "median_tpot_ms", "p99_tpot_ms", "median_itl_ms", "median_e2el_ms")
+
+
+def bench_metrics(d):
+    """Metrics of one bench folder (bench_c16.json or, for unofficial benches, bench.json)."""
+    b = d / "bench_c16.json"
+    if not b.exists():                              # unofficial benches (scripts/lib.sh): bench.json
+        b = d / "bench.json"
+    if not b.exists():
+        return None
+    r = json.loads(b.read_text())
+    res = {k: r.get(k) for k in KEYS}
+    before, after = read_metrics(d / "metrics_before.txt"), read_metrics(d / "metrics_after.txt")
+    delta = {k: after.get(k, 0) - before.get(k, 0) for k in after}
+    drafts = delta.get(SPEC + "drafts", 0)
+    if drafts:
+        res["mtp_acceptance_length"] = round(1 + delta.get(SPEC + "accepted_tokens", 0) / drafts, 3)
+        res["mtp_acceptance_per_position"] = [
+            round(delta[k] / drafts, 3) for k in sorted(k for k in delta if "accepted_tokens_per_pos[" in k)]
+    return res
+
+
 def main():
     d = Path(sys.argv[1])
     res = {"ok": not (d / "failed_stage").exists()}
     if not res["ok"]:
         res["failed_stage"] = (d / "failed_stage").read_text().strip()
-    b = d / "bench_c16.json"
-    if not b.exists():                              # unofficial benches (scripts/lib.sh): bench.json
-        b = d / "bench.json"
-    if b.exists():
-        r = json.loads(b.read_text())
-        res.update({k: r.get(k) for k in (
-            "completed", "output_throughput", "total_token_throughput", "median_ttft_ms", "p99_ttft_ms",
-            "median_tpot_ms", "p99_tpot_ms", "median_itl_ms", "median_e2el_ms")})
-        before, after = read_metrics(d / "metrics_before.txt"), read_metrics(d / "metrics_after.txt")
-        delta = {k: after.get(k, 0) - before.get(k, 0) for k in after}
-        drafts = delta.get(SPEC + "drafts", 0)
-        if drafts:
-            res["mtp_acceptance_length"] = round(1 + delta.get(SPEC + "accepted_tokens", 0) / drafts, 3)
-            res["mtp_acceptance_per_position"] = [
-                round(delta[k] / drafts, 3) for k in sorted(k for k in delta if "accepted_tokens_per_pos[" in k)]
+    trial_dirs = sorted((x for x in d.glob("trial*") if x.name[5:].isdigit()), key=lambda x: int(x.name[5:]))
+    trials = [m for m in (bench_metrics(x) for x in trial_dirs) if m] if trial_dirs else \
+             [m for m in [bench_metrics(d)] if m]
+    if trials:
+        # Official score: the MEAN over trials (each on a fresh server); per-trial values kept below.
+        for k in KEYS + ("mtp_acceptance_length",):
+            v = [t[k] for t in trials if t.get(k) is not None]
+            if v:
+                res[k] = round(sum(v) / len(v), 3)
+        res["n_trials"] = len(trials)
+        if len(trials) > 1:
+            tp = [t["output_throughput"] for t in trials]
+            m = sum(tp) / len(tp)
+            res["output_throughput_trials"] = [round(x, 1) for x in tp]
+            res["output_throughput_cv_pct"] = round(100 * (sum((x - m) ** 2 for x in tp) / (len(tp) - 1)) ** 0.5 / m, 2)
+        res["trials"] = trials
     g = d / "gsm8k.json"
     if g.exists():
         gj = json.loads(g.read_text())

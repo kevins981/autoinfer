@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Monitor",
+      "ToolSearch",
+      "TaskStop",
+      "Bash(experiment *)",
+      "Bash(experiment)",
+      "Bash(gpujob *)",
+      "Bash(ws *)"
+    ],
+    "deny": [
+      "Bash(sudo *)",
+      "Bash(su *)",
+      "Bash(doas *)",
+      "Bash(pkexec *)",
+      "Bash(git push *)",
+      "Bash(git push)",
+      "Edit(//home/**)",
+      "Write(//home/**)",
+      "NotebookEdit(//home/**)",
+      "Edit(//scratch/kevinsong/learning/qwen38_opt/**)",
+      "Write(//scratch/kevinsong/learning/qwen38_opt/**)",
+      "Edit(//usr/**)",
+      "Write(//usr/**)",
+      "Edit(//etc/**)",
+      "Write(//etc/**)"
+    ]
+  },
+  "claudeMdExcludes": [
+    "/scratch/kevinsong/learning/autoinfer/CLAUDE.md",
+    "/scratch/kevinsong/learning/autoinfer/flavors/*/CLAUDE.md"
+  ],
+  "autoMemoryEnabled": false
+}

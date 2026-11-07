@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""new_run: create a baseline-flavor run and start its single agent as a background Claude session.
+
+Usage: new_run <run name> --task <task> [--no-start]
+       new_run <run name> --resume ["<note for the new session>"]
+  e.g. flavors/baseline/tools/new_run base-1 --task qwen38-27b-fp8-2x4090
+
+Creates runs/<run>/ (task link, config.md, run.json, results.tsv, folders), prepares the task
+(`ws setup-task`), creates the workspace `main` with the code tree on branch autoresearch/<run>
+(+ a setup commit adding an empty serve_args.txt), then starts the agent in the run folder with
+program.md as its instructions. Edit runs/<run>/config.md (limits) before starting if needed:
+use --no-start, edit, then --resume. The run's wall clock starts when the agent first starts.
+Talk to it with `claude attach <id>`; stop it with `claude stop <id>`.
+
+--resume starts a NEW session on an existing run (e.g. after a crash): it rebuilds its picture from
+results.tsv, git log and experiments/. Stop the old session first.
+"""
+import argparse, json, os, re, shutil, subprocess, sys, uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+TOOLS = Path(__file__).resolve().parent
+FLAVOR = TOOLS.parent
+ROOT = TOOLS.parents[2]                 # autoinfer/
+GIT_ID = {"GIT_AUTHOR_NAME": "autoinfer-researcher", "GIT_AUTHOR_EMAIL": "researcher@autoinfer.local",
+          "GIT_COMMITTER_NAME": "autoinfer-researcher", "GIT_COMMITTER_EMAIL": "researcher@autoinfer.local"}
+HEADER = "commit\ttok_s\tgates\tstatus\texperiment\tdescription\n"
+
+
+def die(msg):
+    print(f"new_run: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def git(tree, *args):
+    r = subprocess.run(["git", "-C", str(tree), *args], capture_output=True, text=True)
+    if r.returncode != 0:
+        die(f"git {' '.join(args)} failed: {r.stderr.strip()}")
+    return r.stdout.strip()
+
+
+def model_of(run):
+    m = re.search(r"^\s*-?\s*model:\s*(\S+)\s*/\s*(\S+)", (run / "config.md").read_text(), re.M)
+    return (m.group(1), m.group(2)) if m else ("claude-opus-5-5", "medium")
+
+
+def write_settings(run):
+    s = json.loads((TOOLS / "agent_settings.json").read_text())
+    s["claudeMdExcludes"] = [str(ROOT / "CLAUDE.md"), str(FLAVOR / "CLAUDE.md")]
+    # `claude --bg` may hand the session to a pre-started process with the daemon's environment,
+    # so the run's env must live in the settings.
+    s["env"] = {"AUTOINFER_RUN": str(run), "AUTOINFER_AGENT": "researcher",
+                "AUTOINFER_ROLE": "researcher", "AUTOINFER_TEAM": "",
+                **GIT_ID,
+                "PATH": f"{TOOLS}:{os.environ.get('PATH', '')}"}
+    (run / "agent_settings.json").write_text(json.dumps(s, indent=2) + "\n")
+
+
+def create(run, task_name):
+    task = ROOT / "tasks" / task_name
+    if not task.is_dir():
+        die(f"no task {task}")
+    if run.exists():
+        die(f"{run} already exists (to resume it: new_run {run.name} --resume)")
+    run.mkdir(parents=True)
+    (run / "task").symlink_to(os.path.relpath(task, run))
+    for d in ("experiments", "gpu", "agents/researcher", "scratch", "workspaces"):
+        (run / d).mkdir(parents=True)
+    shutil.copy(FLAVOR / "config_default.md", run / "config.md")
+    (run / "results.tsv").write_text(HEADER)
+    (run / "run.json").write_text(json.dumps({"flavor": "baseline", "run": run.name, "task": task_name,
+                                              "created": now(), "started": None}, indent=2) + "\n")
+    env = dict(os.environ, AUTOINFER_RUN=str(run))
+    for cmd in (["setup-task"], ["create", "main"]):
+        r = subprocess.run([str(TOOLS / "ws"), *cmd], env=env, capture_output=True, text=True)
+        print(r.stdout.strip())
+        if r.returncode != 0:
+            die(f"ws {' '.join(cmd)} failed:\n{r.stderr}")
+    tree = run / "workspaces" / "main" / "vllm"
+    git(tree, "checkout", "-q", "-b", f"autoresearch/{run.name}")
+    (tree / "serve_args.txt").write_text("")
+    git(tree, "add", "serve_args.txt")
+    git(tree, "-c", "user.name=autoinfer-researcher", "-c", "user.email=researcher@autoinfer.local",
+        "commit", "-q", "-m", "setup: empty serve_args.txt (extra vllm serve flags)")
+    print(f"created run folder {run} (code tree {tree}, branch autoresearch/{run.name})")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="new_run", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("run")
+    p.add_argument("--task", help="task name in tasks/ (required for a new run)")
+    p.add_argument("--no-start", action="store_true", help="only create the folder")
+    p.add_argument("--resume", nargs="?", const="", metavar="NOTE",
+                   help="start a new session on an existing run (optional note for it)")
+    a = p.parse_args()
+    run = FLAVOR / "runs" / a.run
+
+    if a.resume is not None:
+        if not run.is_dir():
+            die(f"no run {run}")
+        first = (f"You are a NEW session resuming run `{a.run}` (run folder {run}, AUTOINFER_RUN is set). "
+                 f"Rebuild your picture from results.tsv, `git log` in the code tree, experiments/ and "
+                 f"final.md if any, then continue the experiment loop of program.md.")
+        if a.resume:
+            first += f"\nNote from the human: {a.resume}"
+    else:
+        if not a.task:
+            die("--task is required for a new run")
+        create(run, a.task)
+        if a.no_start:
+            print(f"edit {run / 'config.md'} if needed, then: {TOOLS / 'new_run'} {a.run} --resume")
+            return
+        first = (f"Run folder: {run} (AUTOINFER_RUN is set). Task: {a.task}. Setup is done: check it "
+                 f"(program.md, Setup), then start the experiment loop with the baseline run.")
+
+    info = json.loads((run / "run.json").read_text())
+    if not info.get("started"):
+        info["started"] = now()
+        (run / "run.json").write_text(json.dumps(info, indent=2) + "\n")
+    write_settings(run)
+    model, effort = model_of(run)
+    sid = str(uuid.uuid4())
+    meta_p = run / "agents" / "researcher" / "meta.json"
+    sessions = json.loads(meta_p.read_text()).get("sessions", []) if meta_p.exists() else []
+    sessions.append({"session_id": sid, "started": now()})
+    meta = {"name": "researcher", "role": "researcher", "model": model, "effort": effort,
+            "session_id": sid, "started": info["started"], "stopped": None, "sessions": sessions}
+    meta_p.write_text(json.dumps(meta, indent=2) + "\n")
+    prompt = (FLAVOR / "program.md").read_text()
+    prompt += f"\n\n# This run\nRun `{a.run}`; run folder {run}; task {info['task']}.\n"
+    env = dict(os.environ, AUTOINFER_RUN=str(run), AUTOINFER_AGENT="researcher",
+               AUTOINFER_ROLE="researcher", PATH=f"{TOOLS}:{os.environ.get('PATH', '')}", **GIT_ID)
+    env.pop("AUTOINFER_TEAM", None)
+    print(f"researcher: {model} / {effort} (config.md); session {sid}")
+    r = subprocess.run(["claude", "--bg", "--name", f"researcher-{a.run}", "--session-id", sid,
+                        "--permission-mode", "auto", "--model", model, "--effort", effort,
+                        "--autocompact", os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),
+                        "--settings", str(run / "agent_settings.json"),
+                        "--append-system-prompt", prompt, first],
+                       cwd=run, env=env, capture_output=True, text=True)
+    print(r.stdout.strip() or r.stderr.strip())
+    if r.returncode != 0:
+        die("could not start the agent (see above). The folder is ready; fix and use --resume.")
+
+
+if __name__ == "__main__":
+    main()

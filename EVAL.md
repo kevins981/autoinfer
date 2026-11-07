@@ -85,7 +85,8 @@ section records them. Rules:
   re-measures, repeats) on the same task with the same resources. AutoInfer's claim is that more
   agents and tokens give better results, and this control is the reference for that claim.
 
-## LLM as judge (procedure: `.claude/skills/eval-run/SKILL.md`; reports in each run's `eval/` folder)
+## LLM as judge (procedure: `.claude/skills/eval-run/SKILL.md`; reports in `evals/<flavor>/<run>/`, outside the run folder
+so a continued run's agents never see its grades)
 Most of the grading (matching records to key nodes, judging reasons, "why missed") needs an LLM
 judge. Rules:
 - **Each run is judged on its own**: a judge sees one run (plus the key), never other runs or
@@ -106,6 +107,6 @@ judge. Rules:
       `resources.py` (tokens per agent/role, wall clock, GPU-minutes from transcripts + ledger).
 - [ ] The flavor should record the manager's session id (v1's agents/manager/meta.json has none;
       resources.py finds the transcript by start time).
-- [ ] Keep run agents away from `answer_keys/` and other runs' `eval/` (part of the general "agents stay in
+- [ ] Keep run agents away from `answer_keys/` and `evals/` (part of the general "agents stay in
       their run" TODO).
 - [ ] Evaluate test-3 and test-4 with the skill, as the first trial of the framework.

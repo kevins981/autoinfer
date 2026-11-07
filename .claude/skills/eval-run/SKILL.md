@@ -12,7 +12,8 @@ Inputs: a run folder `flavors/<flavor>/runs/<run>/`, and the task's answer key a
 Two modes. The person who asked tells you which; default is **judge**.
 
 ## Judge mode (one of 2-3 independent judges)
-Work alone: don't read other judges' reports. Output: `evals/<flavor>/<run>/judge-<your id>.md`
+Work alone, on this one run: don't read other judges' reports or other runs' folders (the answer
+key already carries what other runs found). Output: `flavors/<flavor>/runs/<run>/eval/judge-<your id>.md`
 (the id is given to you, else a short random one).
 
 1. **Resources.** Run `python3 .claude/skills/eval-run/resources.py flavors/<flavor>/runs/<run>`
@@ -62,7 +63,7 @@ Report layout:
 ```
 
 ## Reconcile mode (after the judges)
-Read all `evals/<flavor>/<run>/judge-*.md`. Write `evals/<flavor>/<run>/eval.md`:
+Read all `flavors/<flavor>/runs/<run>/eval/judge-*.md`. Write `flavors/<flavor>/runs/<run>/eval/eval.md`:
 - The overlay with one label per node. Where judges agree, keep it. Where they disagree, check
   the cited evidence yourself and decide; list each disagreement and its resolution. Drop claims
   whose citations don't hold up.

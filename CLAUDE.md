@@ -37,7 +37,6 @@ autoinfer/
   CLAUDE.md            # this file: for designer agents
   EVAL.md              # how runs and flavors are evaluated (all flavors)
   answer_keys/<task>/  # answer_key.md: the evolving map of each task's search space (for judges)
-  evals/<flavor>/<run>/  # judge reports and reconciled evaluations
   .claude/skills/eval-run/  # skill: evaluate a run (judge / reconcile), resources.py
   design/              # design notes, split by topic (index below)
   tasks/<task>/        # TASK.md, harness/, scripts/ (read-only to run agents), baseline/
@@ -53,7 +52,7 @@ autoinfer/
       infra/           #   specs of the infrastructure (agent runtime, workspaces, GPU queue,
                        #   official eval, run layout)
       *.md             #   detailed notes per topic (evaluation, budget, example round, ...)
-    runs/<run>/        # one folder per run (layout: design/infra/run_layout.md)
+    runs/<run>/        # one folder per run (layout: design/infra/run_layout.md); eval/ = its evaluation
   .cache/              # caches, task materialization, test runs (not in git)
 ```
 

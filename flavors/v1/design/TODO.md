@@ -16,3 +16,9 @@ Open design items for this flavor's algorithm (`DESIGN.md`). Items shared by all
   briefing contents, and tuning the default `search_policy.md`. (Decided: personas come from
   CONFIG, all brainstormers can access everything, round 1 starts from the task's baseline
   profile; see DESIGN.md.)
+
+## Benchmark temperature (human, 2026-11-07)
+- Future task versions: run the official benchmark at a non-zero temperature (e.g. 0.5), not 0, so
+  gains don't rely on greedy-only paths (real traffic rarely uses T=0). Needs a new task version
+  (re-measure BASE, the noise and the accuracy gate's reference; MTP acceptance changes with
+  rejection sampling). Don't change it under a live run: runs read tasks/ live. test-3 stays at T=0.

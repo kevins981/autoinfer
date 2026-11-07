@@ -31,6 +31,22 @@ same model (floating-point reordering is fine; changing the math, e.g. dropping 
   a flavor on a task, with the human's focus/scope and a budget. Inside a run, agents iterate on the
   engine. `../qwen38_opt/` is a hand-driven example of one such inner loop.
 
+## Pausing and resuming a run
+No pause script: pausing is a conversation, resuming is a command.
+- **Pause:** tell the run's top agent (v1: the manager; baseline: the researcher) to pause
+  gracefully: finish or stop what's running (GPU jobs, servers, workers), leave things in a state it
+  can pick up, report where it stands. Attach with `claude attach <id>` (ids: `claude agents`), or
+  the designer sends the message. When it confirms, `claude stop <id>`. Check `nvidia-smi` that
+  nothing of the run is left on the GPUs.
+- **Resume:** `flavors/<flavor>/tools/new_run <run> --resume ["note"]` continues the **same**
+  session (context intact; v1: `runs/<run>/manager_session.json`, baseline:
+  `agents/researcher/meta.json`) with a resume message; the v1 manager resumes its own agents and
+  GPU work. `--fresh` starts a new session that rebuilds its picture from the run's files instead
+  (if the old session is broken; older v1 runs have no recorded session and always get a new one).
+- Wall-clock time then includes the pause (logs keep real timestamps); tokens and GPU-minutes are
+  per message / per job, so they are unaffected. Limit runs by experiments or budgets, not hours,
+  when a pause is likely.
+
 ## Layout
 ```
 autoinfer/

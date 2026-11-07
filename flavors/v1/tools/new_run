@@ -11,11 +11,15 @@ the task (`ws setup-task`), then starts the manager in the flavor folder with AU
 and the run's permission settings. Talk to it with `claude attach <id>` (printed at the end).
 The first time, run `claude` once in the flavor folder and accept the trust prompt.
 
---resume starts a NEW manager session on an existing run (e.g. after a crash, or to pick up a
-model change in config.md): it rebuilds its picture from the run's files. Stop the old manager
-first (`claude stop <id>`): session names are machine-global.
+--resume continues the run's manager: the SAME session (context intact; its id is in
+runs/<run>/manager_session.json), with the note as its next message; the manager resumes the rest
+of the run (agents, GPU work) itself. To pause a run, tell the manager to pause gracefully first
+(`claude attach <id>`), then `claude stop <id>`. --fresh (with --resume), or a run without a
+recorded session, starts a NEW manager session that rebuilds its picture from the run's files
+(e.g. after a crash, or to pick up a model change in config.md). Stop the old manager first.
 """
-import argparse, json, os, shutil, subprocess, sys
+import argparse, json, os, shutil, subprocess, sys, uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
@@ -81,7 +85,8 @@ def main():
     p.add_argument("--task", help="task name in tasks/ (required for a new run)")
     p.add_argument("--no-start", action="store_true", help="only create the folder")
     p.add_argument("--resume", nargs="?", const="", metavar="NOTE",
-                   help="start a new manager on an existing run (optional note for it)")
+                   help="continue the run's manager session (optional note for it)")
+    p.add_argument("--fresh", action="store_true", help="with --resume: a new manager session instead")
     a = p.parse_args()
 
     flavor = FLAVOR
@@ -91,10 +96,18 @@ def main():
             die(f"no run {run}")
         task_name = (run / "task").resolve().name
         write_settings(run, flavor)
+        ms = run / "manager_session.json"
+        resume_sid = None if a.fresh or not ms.exists() else json.loads(ms.read_text())["session_id"]
+        if not resume_sid and not a.fresh:
+            print("note: no recorded manager session (manager_session.json): starting a NEW manager session")
         first = (f"You are a NEW manager session resuming run `{a.run}`. Run folder: {run} "
                  f"(AUTOINFER_RUN is set). Task: {task_name}. Run `agent register manager --role "
                  f"manager`, then follow the 'Resuming a run' step of AutoInfer(): rebuild your "
                  f"picture from the files, tell the human where things stand, and continue.")
+        if resume_sid:
+            first = ("[the human] Resuming the run. Re-register (`agent register manager --role manager`), "
+                     "check the state of the run's agents and GPU work (`agent list --all`, `gpu status`), "
+                     "restart or re-task what was paused or interrupted, then continue.")
         if a.resume:
             first += f"\nNote from the human: {a.resume}"
     else:
@@ -123,6 +136,7 @@ def main():
         if r.returncode != 0:
             die(f"ws setup-task failed:\n{r.stderr}")
         print(f"created run folder {run}")
+        resume_sid = None
         if a.no_start:
             return
         first = (f"You are the manager of a new run. Run folder: {run} (AUTOINFER_RUN is set). "
@@ -139,7 +153,14 @@ def main():
     prompt = "\n\n".join((flavor / "agents" / f).read_text() for f in ("common.md", "manager.md"))
     prompt += (f"\n\n# Who you are in this run\nYou are `manager` (role manager) of run `{a.run}`; "
                f"run folder {run}; task {task_name}.\n")
-    r = subprocess.run(["claude", "--bg", "--name", "manager", "--permission-mode", "auto",
+    if resume_sid:
+        session_args = ["--resume", resume_sid]
+    else:
+        sid = str(uuid.uuid4())
+        session_args = ["--session-id", sid]
+        (run / "manager_session.json").write_text(json.dumps(
+            {"session_id": sid, "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}) + "\n")
+    r = subprocess.run(["claude", "--bg", "--name", "manager", *session_args, "--permission-mode", "auto",
                         "--model", mgr_model, "--effort", mgr_effort,
                         "--autocompact", os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),
                         "--settings", str(run / "manager_settings.json"),

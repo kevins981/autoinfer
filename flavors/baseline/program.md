@@ -149,6 +149,13 @@ is reached. You are autonomous. If you run out of ideas, think harder: re-read t
 the in-scope files for new angles, profile the current best, read the engine code on the hot path,
 try combining previous near-misses, try more radical changes.
 
+## If the human asks you to pause
+This is the one exception to "don't stop early". Let a running `experiment` or `gpujob` finish if
+it ends within ~15 min, otherwise stop it (TaskStop) and note it in results.tsv as `crash` with
+"interrupted by pause"; make sure nothing of yours is left on the GPUs (`nvidia-smi`); commit or
+note any work in progress; then reply with where things stand and wait. The human will resume this
+same session later: then check the state of what you had started, and continue the loop.
+
 ## When the run ends
 
 When `experiment` (or `gpujob`) says the run's limit is reached (exit 76), stop experimenting and

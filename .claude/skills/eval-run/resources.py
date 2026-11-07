@@ -85,6 +85,14 @@ def main():
     flavor_dir = os.path.dirname(os.path.dirname(run))
     fenc = os.path.join(a.transcripts, re.sub(r"[^A-Za-z0-9]", "-", flavor_dir))
     mgr = next((r for r in rows if r[1] == "manager" and not r[4]), None)
+    ms = os.path.join(run, "manager_session.json")      # v1 new_run records the manager's session id
+    if mgr and os.path.exists(ms):
+        sid = json.load(open(ms))["session_id"]
+        hits = glob.glob(os.path.join(a.transcripts, "*", f"{sid}.jsonl"))
+        if hits:
+            known.add(sid)
+            rows = [r for r in rows if r[4] != hits[0]]
+            rows[rows.index(mgr)] = mgr = (mgr[0], "manager", mgr[2], mgr[3], hits[0])
     if mgr and mgr[2]:
         for f in sorted(glob.glob(os.path.join(fenc, "*.jsonl"))):
             sid = os.path.basename(f)[:-len(".jsonl")]

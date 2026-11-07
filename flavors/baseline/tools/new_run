@@ -12,8 +12,11 @@ program.md as its instructions. Edit runs/<run>/config.md (limits) before starti
 use --no-start, edit, then --resume. The run's wall clock starts when the agent first starts.
 Talk to it with `claude attach <id>`; stop it with `claude stop <id>`.
 
---resume starts a NEW session on an existing run (e.g. after a crash): it rebuilds its picture from
-results.tsv, git log and experiments/. Stop the old session first.
+--resume continues the run's agent: the SAME session (its context intact), with the note as its
+next message. To pause a run, tell the agent to stop gracefully (e.g. `claude attach <id>`: "pause:
+finish or stop what's running, then wait"), then `claude stop <id>`; resume later with --resume.
+--fresh (with --resume) starts a NEW session instead, which rebuilds its picture from results.tsv,
+git log and experiments/ (e.g. if the old session is broken). Stop the old session first.
 """
 import argparse, json, os, re, shutil, subprocess, sys, uuid
 from datetime import datetime, timezone
@@ -96,16 +99,28 @@ def main():
     p.add_argument("--task", help="task name in tasks/ (required for a new run)")
     p.add_argument("--no-start", action="store_true", help="only create the folder")
     p.add_argument("--resume", nargs="?", const="", metavar="NOTE",
-                   help="start a new session on an existing run (optional note for it)")
+                   help="continue the run's agent session (optional note for it)")
+    p.add_argument("--fresh", action="store_true", help="with --resume: a new session instead")
     a = p.parse_args()
     run = FLAVOR / "runs" / a.run
 
+    resume_sid = None
     if a.resume is not None:
         if not run.is_dir():
             die(f"no run {run}")
-        first = (f"You are a NEW session resuming run `{a.run}` (run folder {run}, AUTOINFER_RUN is set). "
-                 f"Rebuild your picture from results.tsv, `git log` in the code tree, experiments/ and "
-                 f"final.md if any, then continue the experiment loop of program.md.")
+        meta_p = run / "agents" / "researcher" / "meta.json"
+        resume_sid = None if a.fresh or not meta_p.exists() else json.loads(meta_p.read_text()).get("session_id")
+        if resume_sid:
+            first = ("[the human] Resuming the run. If you were paused, check the state of anything you had "
+                     "started (e.g. the last experiment folder, `nvidia-smi`) before continuing; then continue "
+                     "the experiment loop of program.md.")
+        elif meta_p.exists():
+            first = (f"You are a NEW session resuming run `{a.run}` (run folder {run}, AUTOINFER_RUN is set). "
+                     f"Rebuild your picture from results.tsv, `git log` in the code tree, experiments/ and "
+                     f"final.md if any, then continue the experiment loop of program.md.")
+        else:                               # created with --no-start: the first start
+            first = (f"Run folder: {run} (AUTOINFER_RUN is set). Task: {json.loads((run / 'run.json').read_text())['task']}. "
+                     f"Setup is done: check it (program.md, Setup), then start the experiment loop with the baseline run.")
         if a.resume:
             first += f"\nNote from the human: {a.resume}"
     else:
@@ -124,20 +139,24 @@ def main():
         (run / "run.json").write_text(json.dumps(info, indent=2) + "\n")
     write_settings(run)
     model, effort = model_of(run)
-    sid = str(uuid.uuid4())
     meta_p = run / "agents" / "researcher" / "meta.json"
-    sessions = json.loads(meta_p.read_text()).get("sessions", []) if meta_p.exists() else []
-    sessions.append({"session_id": sid, "started": now()})
-    meta = {"name": "researcher", "role": "researcher", "model": model, "effort": effort,
-            "session_id": sid, "started": info["started"], "stopped": None, "sessions": sessions}
+    meta = json.loads(meta_p.read_text()) if meta_p.exists() else {
+        "name": "researcher", "role": "researcher", "started": info["started"], "stopped": None, "sessions": []}
+    if resume_sid:
+        sid, session_args = resume_sid, ["--resume", resume_sid]
+        meta.setdefault("resumes", []).append(now())
+    else:
+        sid = str(uuid.uuid4()); session_args = ["--session-id", sid]
+        meta["sessions"].append({"session_id": sid, "started": now()})
+    meta.update(model=model, effort=effort, session_id=sid)
     meta_p.write_text(json.dumps(meta, indent=2) + "\n")
     prompt = (FLAVOR / "program.md").read_text()
     prompt += f"\n\n# This run\nRun `{a.run}`; run folder {run}; task {info['task']}.\n"
     env = dict(os.environ, AUTOINFER_RUN=str(run), AUTOINFER_AGENT="researcher",
                AUTOINFER_ROLE="researcher", PATH=f"{TOOLS}:{os.environ.get('PATH', '')}", **GIT_ID)
     env.pop("AUTOINFER_TEAM", None)
-    print(f"researcher: {model} / {effort} (config.md); session {sid}")
-    r = subprocess.run(["claude", "--bg", "--name", f"researcher-{a.run}", "--session-id", sid,
+    print(f"researcher: {model} / {effort} (config.md); session {sid}" + (" (resumed)" if resume_sid else ""))
+    r = subprocess.run(["claude", "--bg", "--name", f"researcher-{a.run}", *session_args,
                         "--permission-mode", "auto", "--model", model, "--effort", effort,
                         "--autocompact", os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),
                         "--settings", str(run / "agent_settings.json"),

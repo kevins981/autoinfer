@@ -12,22 +12,13 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
 ## The picture: the run's graph overlaid on an answer key
 - **Run graph.** Every run produces a DAG of records (`graph.md`; edges are each record's
   `builds_on`). This is what the run actually did.
-- **Answer key** (per task). Known optimizations for the task: the target nodes a good run should
-  eventually reach. Each node has:
-  - what it is;
-  - its measured gain and the base it was measured on;
-  - its prerequisites (key nodes can build on each other, so the key is a small DAG too);
-  - evidence (where it was measured);
-  - known dead ends near it, with their causes.
-
-  The key is a lower bound on what's possible, not the optimum. It grows as runs find new things.
-- **Overlay.** For each key node, did the run's graph reach it? Labels:
-  - **reached**: found and kept.
-  - **partial**: a weaker or narrower version.
-  - **tried and dropped**: record whether the stated reason was right.
-  - **never considered**.
-
-  Run nodes that match no key node are **novel**. Novel nodes that work get added to the key.
+- **Answer key** (per task, `answer_keys/<task>/answer_key.md`). A map of the task's search
+  space as far as we know it, merged from all runs of all flavors (and hand studies). Details in
+  "The answer key" below. It is a lower bound on what's possible, and it evolves.
+- **Overlay.** For each key node, where did the run get? Wins: reached / partial / tried and
+  dropped / idea only / never considered. Dead ends: not tried / dropped for the right cause /
+  dropped for a wrong or no cause / kept (a contradiction worth checking). Run nodes that match
+  no key node are **novel**; they feed the key.
 - **Why it was missed (qualitative).** For each missed node, find the run's closest approach (the
   nearest record or idea in the same direction) and where its path diverged. Then say what
   happened, e.g.:
@@ -52,6 +43,40 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
    promotions were backed by measurements; and where tokens or GPU time went without producing
    information.
 
+## The answer key
+A DAG of the search space, curated (not a copy of any run's graph: run graphs have intermediate
+and duplicate steps; key nodes are canonical changes). It holds what we know, not only what works:
+- **Wins (K):** changes with a measured gain on a stated base.
+- **Alternatives:** wins that substitute for each other (K4a | K4b). Reaching either counts; the
+  better one is recorded, the other isn't wrong.
+- **Dead ends (D):** no gain or harmful, **on a stated base, with the cause**. A dead end is a
+  conditional claim, not a verdict: a change can be dead on BASE and a win on top of another one.
+  Each says what would make it worth revisiting.
+- **Open (O):** promising, not measured. Not counted as misses; noted when a run reaches them.
+- **Facts (F):** diagnoses and environment facts that explain nodes, used to judge whether a
+  run's reasons were right.
+- **Edges:** prerequisites ("needs K1"): the base on which the gain was measured or exists.
+- **Frontier:** the best known stack and its official number.
+
+Each node needs enough detail for a judge to recognize it in a run by what the change does
+(flags, code locations, mechanism), what it is not (nearby look-alikes), its gain with the
+measurement's strength and base, and evidence ids (`<flavor>/<run>:<record or KB>`).
+
+### Updating the key
+After each evaluation, the reconciled report proposes updates; the human approves; the History
+section records them. Rules:
+- **Evidence strength**, strongest first: official eval (fresh-server trials) > interleaved
+  same-job A/B (abab) > one same-job A/B > component measurement (microbench, nsys) > estimate.
+- **A result holds on its base.** A positive result on base Y doesn't contradict a negative on
+  base X: keep both, each with its base (the node becomes "win on Y, no gain on X").
+- **Same base, conflicting results:** the stronger evidence wins. Also weigh exactness and gate
+  results: a gain that breaks exactness or a gate is not a win. If the evidence is equally strong,
+  mark the node disputed with both results, until a run settles it.
+- **Never delete;** change the status and log why in History. Wrong causes get corrected, with the
+  evidence that corrected them.
+- **Merge, don't append:** a run's finding that matches an existing node adds evidence to it.
+- Box state (e.g. a locked GPU clock) is a fact with a date; nodes that depend on it name it.
+
 ## Comparing runs and flavors
 - Compare at **matched config and resources**. Otherwise, say what differs and don't attribute the
   gap to the flavor.
@@ -60,7 +85,7 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
   re-measures, repeats) on the same task with the same resources. AutoInfer's claim is that more
   agents and tokens give better results, and this control is the reference for that claim.
 
-## LLM as judge
+## LLM as judge (procedure: `.claude/skills/eval-run/SKILL.md`; reports in `evals/<flavor>/<run>/`)
 Most of the grading (matching records to key nodes, judging reasons, "why missed") needs an LLM
 judge. Rules:
 - **2-3 independent judges** per evaluation, same inputs, no shared context. A designer, or the
@@ -73,11 +98,12 @@ judge. Rules:
 ## TODO
 - [ ] Single-agent control harness: a very basic auto-research loop (one agent, the task's
       harness and GPU queue, same budget), and its run layout.
-- [ ] Answer key for `qwen38-27b-fp8-2x4090`, from `../qwen38_opt` and the finished runs, every
-      node with evidence. Decide where keys live so that run agents can't read them (a task ships
-      no history).
-- [ ] Record resources used in every run: tokens per role, wall clock, GPU-minutes. Check what
-      the flavors already log.
-- [ ] Judge prompt and output format (overlay table + notes with citations), and how to reconcile
-      the judges.
-- [ ] Evaluate test-3 and test-4 with it, as the first trial of the framework.
+- [x] Answer key for `qwen38-27b-fp8-2x4090`: `answer_keys/qwen38-27b-fp8-2x4090/answer_key.md`
+      (from v1 test-3, test-4 and qwen38_opt).
+- [x] Judge and reconcile procedure: the `eval-run` skill (`.claude/skills/eval-run/`), with
+      `resources.py` (tokens per agent/role, wall clock, GPU-minutes from transcripts + ledger).
+- [ ] The flavor should record the manager's session id (v1's agents/manager/meta.json has none;
+      resources.py finds the transcript by start time).
+- [ ] Keep run agents away from `answer_keys/` and `evals/` (part of the general "agents stay in
+      their run" TODO).
+- [ ] Evaluate test-3 and test-4 with the skill, as the first trial of the framework.

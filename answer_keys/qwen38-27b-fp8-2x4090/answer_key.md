@@ -34,7 +34,10 @@ BASE
 ├─ D8 PP=2 / uneven TP split ........................ ruled out by estimate only
 ├─ O1 one-graph capture of the spec-decode glue ..... open
 ├─ O4 L2 prefetch of next GEMM weights during the AR  open
-└─ O5 lossless AR payload compression ............... open
+├─ O5 lossless AR payload compression ............... open
+├─ O6 copy-engine AR for prefill sizes (needs K1) ... open
+├─ O7 FlashInfer PCIe all-reduce flag ............... open (compare with K1)
+└─ D9 other estimate-only rule-outs
 ```
 
 ## Wins
@@ -55,7 +58,9 @@ BASE
 ### K2. CUDA graphs for prefill-containing steps (needs K1)
 - **What:** serve flag `--compilation-config '{"max_prefill_cudagraph_capture_tokens": 2048}'`
   (captures mixed prefill/decode steps up to 2048 tokens in CUDA graphs).
-- **Recognize:** that flag (or an equivalent change that graphs the mixed prefill steps).
+- **Recognize:** that flag (or an equivalent change that graphs the mixed prefill steps). On BASE
+  only steps up to 96 tokens are graphed, so prefill steps run eager (`v1/test-4:local_kb/leader-1.md:22`).
+  A run that notes "prefill steps are eager" without testing this came close.
 - **Gain:** on BASE (NCCL) +2.2% `ab`, noise (`v1/test-3:T1-001`, KB1). On K1: +4.8% `ab`
   (`v1/test-3:KB4`); official 699.2 vs 662.8 for K1 (`v1/test-3:T1-005`). Super-additive with K1;
   cause not separated (AR skew vs launch count). Host-staged comms also shrink graph memory (KB7).
@@ -81,6 +86,8 @@ gain and don't add up (`v1/test-4:KB5`: custom greedy vs sharded sampling, ABAB 
   730.9, +4.5% vs K1+K2 official (includes K3's ~+3%), so ~+1.5-2% (KB10).
 - **K4b. `--enable-batch-sharded-sampling` (flag):** exact, works with MTP on the V2 runner.
   `v1/test-4:T2-003`: K3 + K4b = +2.8% official on BASE.
+- On K1+K3 (`v1/test-4`): K4a 699.5 (T2-006) vs K4b 691.3 (T1-003) official, but interleaved ABAB
+  +0.2% (`v1/test-4:journal.md:14`): a tie. K4b adds an NCCL SendRecv of ~0.41 ms/decode step (F11).
 - **Recognize:** K4a = new greedy argmax path in LogitsProcessor/Sampler/RejectionSampler; K4b =
   the flag.
 
@@ -93,7 +100,8 @@ gain and don't add up (`v1/test-4:KB5`: custom greedy vs sharded sampling, ABAB 
   with a flush/materialize path; hooks in the GDN layer / mamba hybrid code. Not K5: GDN backend
   flags (D7).
 - **Gain:** +2.6% official on K1+K2+K3+K4a (`v1/test-3:T1-012`), ~2 ms/decode step including the
-  L2 spill into the next GEMMs (KB15). Measured only on that base; expected to be roughly
+  L2 spill into the next GEMMs (KB15); same-job A/B +2.2% (712.4 vs 697.3, TPOT p50 19.57 vs
+  20.41 ms). Not promoted in test-3 only because of that run's 3% bar. Measured only on that base; expected to be roughly
   independent of K1-K4.
 
 ## Dead ends (each holds on its base; a stronger result on another base can overturn it)
@@ -105,8 +113,14 @@ gain and don't add up (`v1/test-4:KB5`: custom greedy vs sharded sampling, ABAB 
   M=80 (`v1/test-3:KB14`).
 - Evidence: `v1/test-3:T1-008` (-6.9%), KB11, KB13 (cause), KB17; `v1/test-4:T2-002` (-3.9%),
   T2-005 (flat on the champion, KB13); `qwen38_opt` (k=2 beat k=3 by 12% at c=16).
-- **Revisit when:** per-request spec state shrinks (O2) or more KV memory is freed.
-- A correct drop cites capacity/admission (F5); "slower compute" is the wrong cause.
+- "More KV" doesn't work: k=3 with 5.5-6.0 GiB KV OOMs in graph capture or at runtime
+  (`v1/test-3:T1-010`, T1-011; F6). Raising `--kv-cache-memory` is not a fresh idea.
+- Symptoms (`v1/test-4:agents/leader-2.w2/REPORT_job1.md:30`): TPOT -16% but total duration
+  unchanged, TTFT p50 334 → 938 ms: the decode gain moves into queueing.
+- **Revisit when:** per-request spec state shrinks (O2).
+- A correct drop cites capacity/admission (F5); "slower compute", "step cost" or "queueing behind
+  prefill steps" without the capacity cause is wrong or incomplete. Test-3 found the cause (KB13);
+  test-4 dropped it with the cause "NOT established" (`v1/test-4:KB13`, REPORT_job1.md:30).
 
 ### D2. NCCL env knobs (protocol, channels, buffer size): no gain
 - `v1/test-4:KB1` (decode and prefill sizes); `v1/test-3` idea R1-C.
@@ -123,6 +137,7 @@ gain and don't add up (`v1/test-4:KB5`: custom greedy vs sharded sampling, ABAB 
 
 ### D5. Host-staged all-gather for the logits: no gain (needs K1)
 - ~0 (`v1/test-3:T1-004`, KB6). Superseded by K3/K4, which remove most logits all-gathers.
+  Test-3 kept it in the stack as a neutral, exact building block: not a contradiction.
 
 ### D6. `--linear-backend triton` (true FP8 tensor-core GEMMs): harmful
 - TTFT -14% but decode ITL +14%, net -4% (`qwen38_opt`, old BASE). A mixed prefill/decode GEMM
@@ -138,17 +153,34 @@ gain and don't add up (`v1/test-4:KB5`: custom greedy vs sharded sampling, ABAB 
   clock nets ~0-1.5% by napkin math (`v1/test-3:KB8`, brainstorm r2). Weak evidence: a measured
   result overrides it.
 
+### D9. Other ideas ruled out by estimate only (weak evidence; a measurement overrides)
+- Dequantize + cuBLAS for large-M (prefill) GEMMs: ≤ 2% overall
+  (`v1/test-3:brainstorm/r2/adjacent_field.md:75`).
+- Reduced-vocab draft lm_head: net ≈ 0 once the draft head is FP8 (`v1/test-3` idea R1-J, ideas.md:43).
+
 ## Open (no measured result yet)
 - **O1. One-graph capture of the spec-decode glue** (drafter passes, sampling, attention-metadata
   builds): ~1.6 ms/step of CPU idle on `v1/test-4:T1-003`, est. +3-4% (`v1/test-4:KB12`).
+  Sub-options: skip no-op eager launches in decode (`_zero_kv_blocks`, `_apply_write` x5, mamba
+  pre/post), est. 0.5-1.0 ms (`v1/test-4:agents/leader-2.w2/REPORT_job1.md:32`); pure launch fusion
+  bounded at 0.1-0.2 ms (`v1/test-4:T2-007`); in-place FlashInfer draft-metadata update, ~1 ms
+  (`v1/test-3` idea R1-H). Caution: part of the decode step-start gap seen in node-level nsys is an
+  artifact (F8).
 - **O2. One GDN spec block per request** (only the replay log slot; needs K5): k=3 could fit 16
   requests in 5 GiB, which unblocks D1. Est. +2-5% (`v1/test-3` ideas R3-A/R3-B v2, KB17).
 - **O3. Fuse residual-add + RMSNorm into the K1 kernel** (~1.6 ms/step of norms etc.;
   `v1/test-4` final report).
 - **O4. L2 prefetch of the next GEMM's weights during the AR window** (needs K1; after K5 to avoid
-  the GDN L2 spill). Est. +3-5%, low confidence (`v1/test-3` ideas R2-C/R3-D).
+  the GDN L2 spill). Est. +3-5%, low confidence (`v1/test-3` ideas R2-C/R3-D). Component measurement caps it near
+  +3%: L2-hot Marlin at M=48 is 41-48 us vs ~50-56 us in-server (`v1/test-4:brainstorm/r1/adjacent_field.md:90`).
 - **O5. Bitwise-lossless AR payload compression** (needs K1). Est. +2-3% (`v1/test-3` idea R3-C).
-- **Marlin in-kernel efficiency:** probably near its floor (F7), untested.
+- **Marlin in-kernel efficiency:** near its floor by component measurements: the M=48 penalty vs
+  M=3 is ~1.6 ms/step (`v1/test-3:KB14`) and L2-hot Marlin is close to its own floor
+  (`v1/test-4:brainstorm/r1/adjacent_field.md:90`). Small upside; no change tried.
+- **O6. Copy-engine full-duplex AR for large M (prefill)** (needs K1). Est. +1.5-3%, but half the
+  prefill AR time is GPU 0 skew (F2) (`v1/test-3` idea R2-E). Low.
+- **O7. `VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=1`** (FlashInfer's PCIe all-reduce): a 5-minute
+  check, never run (`v1/test-3:brainstorm/r1/systematic_engineer.md:99`). Compare with K1.
 
 ## Facts (cited by nodes; also used to judge whether a run's reasons were right)
 - **F1.** No GPU P2P: vLLM's custom all-reduce is disabled; TP all-reduce is NCCL over PCIe/host.
@@ -168,11 +200,17 @@ gain and don't add up (`v1/test-4:KB5`: custom greedy vs sharded sampling, ABAB 
   bound at ~80% of peak (`qwen38_opt` ncu).
 - **F8.** Measurement: one server per arm drifts ~2%; close calls need interleaved fresh-server
   repeats (`v1/test-4:KB11`). Short runs can't judge p99 latency (`v1/test-4:KB9`). A ~10% speedup
-  of big prefill steps is invisible at c=16 (`v1/test-4:KB15`).
+  of big prefill steps is invisible at c=16 (`v1/test-4:KB15`). Node-level nsys
+  (`--cuda-graph-trace=node`) inflates cudaGraphLaunch to ~1.2 ms vs ~120 us at graph level (`v1/test-4:KB12`).
 - **F9.** Marlin's persistent grid occupies all SMs and blocks concurrent kernels (NCCL included)
   until it drains (`v1/test-4:KB14`).
 - **F10.** Greedy verification has bf16 ties for the max in ~1.8% of rows: exact argmax must break
   ties like the stock path (`v1/test-3:KB12`).
 
+- **F11.** `--enable-batch-sharded-sampling` adds an NCCL SendRecv of ~0.41 ms per decode step
+  (`v1/test-4:agents/leader-2.w2/REPORT_job1.md:13`).
+
 ## History
 - 2026-11-07: created from v1 test-3, v1 test-4 and qwen38_opt (test-1/test-2 had no KB).
+- 2026-11-07: first judged evaluations (evals/v1/test-3, evals/v1/test-4, judge a each): added
+  evidence to K2, K4, K5, D1, D5, O1, O4, Marlin, F8; new D9, O6, O7, F11. All citations checked.

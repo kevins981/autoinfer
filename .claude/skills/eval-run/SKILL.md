@@ -45,6 +45,16 @@ key already carries what other runs found). Output: `evals/<flavor>/<run>/judge-
 7. **Key updates (proposals only; don't edit the key).** Novel wins, D nodes the run overturned or
    confirmed on a new base, O nodes it measured, new facts, corrections. Each with evidence.
 
+**Grade the agents against the run's own rules and conditions.**
+- Separate the human's decisions (stopping the run, rulings, budget changes; see `journal.md`,
+  `config.md`, `reports/`) from the agents' own choices. Something the human decided is not an
+  agent miss: report it as context.
+- Judge each decision by the rules in force during the run (the flavor's prompts at that time,
+  e.g. a promotion bar), not by today's rules or today's key. A correct move under the run's rules
+  is not a miss, even if the key now knows better.
+- Read every record (`bank/*/record.md`), not a sample. Open a record's diff or worker report when
+  a label depends on it.
+
 **Citations are mandatory.** Every claim cites a record id, KB entry, idea id, or file path + line.
 An uncited claim doesn't count. Every `never-considered` / `not-tried` says what you searched
 (e.g. `grep -i "prefill_cudagraph"` over records, ideas, brainstorms, KB, journal). Prefer
@@ -69,5 +79,7 @@ Read all `evals/<flavor>/<run>/judge-*.md`. Write `evals/<flavor>/<run>/eval.md`
   whose citations don't hold up.
 - Merged why-missed notes and process notes, and the resources and outcome.
 - Proposed key updates, merged and checked against the rules in `EVAL.md` ("Updating the key").
-Then show the human the proposed key updates. Apply them to the answer key only with the human's
+With one judge per run, still write `eval.md`: the judge's overlay plus your corrections (claims
+whose citations don't hold, or that blame agents for the human's decisions). Then show the human
+the proposed key updates. Apply them to the answer key only with the human's
 OK, and add a line to its History.

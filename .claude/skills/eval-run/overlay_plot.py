@@ -121,6 +121,8 @@ def plot(key_path, ov_path, out):
                     mark, mark_c = f"! wrong reason ({o.get('how', '?')})", CRIT
             else:
                 fill, txt, _ = STAGE[stage_of(o)]
+                if o.get("result") and o.get("result_at_gpu_min") is not None:
+                    ev = f"@{o['result_at_gpu_min']:g} GPU-min  " + ev
                 ok = lambda k: "✓" if o.get(k) else "✗"
                 line2 = f"idea {ok('idea')}  impl {ok('implementation')}  result {ok('result')}   {d['status']}{extra}"
                 if not o.get("result"):

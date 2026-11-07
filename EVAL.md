@@ -33,7 +33,8 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
 
 ## What every evaluation records
 1. **Outcome:** champion speedup vs BASE (official eval), plus the speedup after each round /
-   official eval, as a curve against resources used.
+   official eval, as a curve against resources used; and for each win node the run reached, when
+   (GPU-minutes into the run), so runs that get to the same place can be compared on speed.
 2. **Resources actually used** (not the budget):
    - tokens per agent role;
    - wall-clock time;

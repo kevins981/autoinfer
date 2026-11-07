@@ -109,8 +109,8 @@ brainstorm(round) -> directions:
 
     # 4. Selection: a portfolio, not a ranking.
     directions = select(ideas, k = number of leaders, SEARCH_POLICY)
-        # SEARCH_POLICY may reserve a slot first: e.g. the champion-producing leader's own "next"
-        # (from its report) for its team; brainstorm ideas fill the other slots.
+        # SEARCH_POLICY may reserve slots first: e.g. each leader whose round beat the starting
+        # champion keeps its own "next" (from its report); brainstorm ideas fill the other slots.
     TREE.add(directions, status = assigned, round)  # a direction enters the tree once worked on
     IDEAS.add(ideas - directions, scores, round)    # ideas.md: scored but untried ideas, kept out
         # of the tree. An archive, not a queue: never selected directly. Only this round's ideas (and a slot

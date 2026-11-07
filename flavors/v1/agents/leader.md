@@ -58,7 +58,8 @@ leader.run(task) -> report:
         # + proposed insights for SHARED_KB (the manager decides what goes in)
         # + what was left open
         # + next: the ONE direction you would pursue next round (what, why, the evidence). If your
-        #   round produced a new champion, your team usually continues with it (SEARCH_POLICY).
+        #   round beat the champion you started from, your team usually continues with it
+        #   (SEARCH_POLICY).
         # + if you left the direction: what you changed, why, and the evidence
         # + anything that went wrong (GPUs used by others, a stuck worker, ...)
 

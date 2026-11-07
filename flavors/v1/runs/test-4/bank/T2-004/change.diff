@@ -1,0 +1,283 @@
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+index 5286d9008d..f0cf38f5f1 100644
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -170,6 +170,7 @@ from vllm.v1.worker.gpu.spec_decode.adaptive_verification import (
+ from vllm.v1.worker.gpu.spec_decode.eagle.eagle3_utils import (
+     set_eagle3_aux_hidden_state_layers,
+ )
++from vllm.v1.worker.gpu.spec_decode.greedy_fastpath import vocab_parallel_argmax
+ from vllm.v1.worker.gpu.spec_decode.rejection_sampler import (
+     RejectionSampler,
+     get_max_chunk_logits,
+@@ -1698,6 +1699,78 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         )
+         return block_tables, slot_mappings
+ 
++    def _greedy_fastpath_head(self):
++        """(lm_head, logits_processor) of the target when the argmax can be
++        taken per vocab shard, else None. Cached."""
++        cached = getattr(self, "_greedy_fastpath_head_cache", False)
++        if cached is not False:
++            return cached
++        result = None
++        try:
++            from vllm.model_executor.layers.vocab_parallel_embedding import (
++                ParallelLMHead,
++            )
++            from vllm.v1.worker.gpu.model_states.interface import ModelState
++
++            lm = (
++                self.model.get_language_model()
++                if hasattr(self.model, "get_language_model")
++                else self.model
++            )
++            head = getattr(lm, "lm_head", None)
++            lp = getattr(lm, "logits_processor", None)
++            if (
++                isinstance(head, ParallelLMHead)
++                and lp is not None
++                and lp.scale == 1.0
++                and lp.soft_cap is None
++                and hasattr(self.model, "compute_logits_local")
++                and type(self.model_state).compute_sample_logits
++                is ModelState.compute_sample_logits
++            ):
++                result = (head, lp)
++        except Exception:
++            result = None
++        self._greedy_fastpath_head_cache = result
++        return result
++
++    def _try_greedy_fastpath(
++        self,
++        sample_hidden_states: torch.Tensor,
++        input_batch: InputBatch,
++        grammar_output: GrammarOutput | None,
++    ) -> SamplerOutput | None:
++        """Greedy spec-decode verification without the logits all-gather.
++        Returns None when the batch needs the full logits."""
++        rs = self.rejection_sampler
++        if (
++            rs is None
++            or type(rs) is not RejectionSampler
++            or input_batch.num_draft_tokens == 0
++            or input_batch.num_reqs == 0
++            or self.speculator is None
++            or not rs.can_use_greedy_fastpath(
++                input_batch, self.speculator.draft_logits, grammar_output
++            )
++        ):
++            return None
++        head_info = self._greedy_fastpath_head()
++        if head_info is None:
++            return None
++        head, lp = head_info
++        local_logits = self.model.compute_logits_local(sample_hidden_states)
++        lp._mask_outside_vocab(local_logits, head)
++        target_ids = vocab_parallel_argmax(
++            local_logits,
++            head.shard_indices.org_vocab_start_index,
++            head.tp_size,
++        )
++        if not getattr(self, "_greedy_fastpath_logged", False):
++            self._greedy_fastpath_logged = True
++            logger.info("Greedy spec-decode verification fast path in use "
++                        "(no logits all-gather).")
++        return rs.verify_greedy_from_argmax(target_ids, input_batch)
++
+     def sample(
+         self,
+         hidden_states: torch.Tensor,
+@@ -1725,6 +1798,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+             logits = logits[:, : self.vocab_size]
+         else:
+             sample_hidden_states = hidden_states[input_batch.logits_indices]
++            fast_output = self._try_greedy_fastpath(
++                sample_hidden_states, input_batch, grammar_output
++            )
++            if fast_output is not None:
++                return fast_output, fast_output.num_sampled, fast_output.num_rejected
+             logits = self.model_state.compute_sample_logits(sample_hidden_states)
+ 
+         # A diffusion prefill has no logit rows even when a bitmask row
+diff --git a/vllm/v1/worker/gpu/spec_decode/greedy_fastpath.py b/vllm/v1/worker/gpu/spec_decode/greedy_fastpath.py
+new file mode 100644
+index 0000000000..bb9c5406f8
+--- /dev/null
++++ b/vllm/v1/worker/gpu/spec_decode/greedy_fastpath.py
+@@ -0,0 +1,93 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Greedy speculative verification without the full-vocab logits all-gather.
++
++Each TP rank takes the (max, argmax) of its local lm_head shard, the pairs are
++exchanged (O(rows * 2 * tp) instead of O(rows * vocab)) and reduced to the
++global argmax, lowest global index on ties (what argmax over the gathered row
++returns). Draft tokens are then verified against it exactly like the greedy
++branch of `rejection_sample`.
++"""
++
++import torch
++
++from vllm.distributed import tensor_model_parallel_all_gather
++from vllm.triton_utils import tl, triton
++
++
++def vocab_parallel_argmax(
++    local_logits: torch.Tensor,
++    vocab_start: int,
++    tp_size: int,
++) -> torch.Tensor:
++    """Global argmax over vocab-sharded logits.
++
++    `local_logits` [n, shard] (bf16/fp16/fp32) must already have padding / rows
++    past the real vocab set to -inf. Returns int64 [n] global token ids.
++    """
++    local_max, local_idx = local_logits.max(dim=-1)  # lowest index on ties
++    global_idx = local_idx + vocab_start
++    if tp_size == 1:
++        return global_idx
++    # float32 holds token ids < 2^24 exactly; values are upcast losslessly.
++    pair = torch.stack([local_max.float(), global_idx.float()], dim=-1)
++    gathered = tensor_model_parallel_all_gather(pair, dim=-1)
++    gathered = gathered.view(local_logits.shape[0], tp_size, 2)
++    # argmax over ranks: first (lowest rank == lowest vocab range) on ties.
++    best_rank = gathered[:, :, 0].argmax(dim=-1, keepdim=True)
++    return gathered[:, :, 1].gather(-1, best_rank).squeeze(-1).to(torch.int64)
++
++
++@triton.jit
++def _greedy_verify_kernel(
++    sampled_ptr,  # [num_reqs, S + 1]
++    sampled_stride,
++    num_accepted_ptr,  # [num_reqs]
++    target_ptr,  # [num_logits] target argmax per logit row
++    draft_ptr,  # [num_logits] input token of each row (-1: placeholder)
++    cu_num_logits_ptr,  # [num_reqs + 1]
++):
++    req_idx = tl.program_id(0)
++    start = tl.load(cu_num_logits_ptr + req_idx).to(tl.int64)
++    end = tl.load(cu_num_logits_ptr + req_idx + 1)
++    num_draft = end - start - 1
++    accepted_length = tl.zeros((), tl.int64)
++    verifying = True
++    for i in range(num_draft):
++        t = tl.load(target_ptr + start + i).to(tl.int64)
++        d = tl.load(draft_ptr + start + i + 1).to(tl.int64)
++        if verifying:
++            accepted = (t == d) & (d >= 0)
++            verifying = accepted
++            accepted_length += accepted
++            # Accepted: draft == target. Rejected: store the target argmax.
++            tl.store(sampled_ptr + req_idx * sampled_stride + i, t)
++    # Bonus token (all accepted) or the target argmax at the first rejection
++    # was stored above; the bonus row is the last one.
++    last = tl.load(target_ptr + start + accepted_length).to(tl.int64)
++    tl.store(sampled_ptr + req_idx * sampled_stride + accepted_length, last)
++    tl.store(num_accepted_ptr + req_idx, accepted_length)
++
++
++def greedy_verify(
++    target_ids: torch.Tensor,
++    draft_sampled: torch.Tensor,
++    cu_num_logits: torch.Tensor,
++    num_speculative_steps: int,
++) -> tuple[torch.Tensor, torch.Tensor]:
++    """Returns (sampled [num_reqs, S+1] int64, num_sampled [num_reqs] int32)."""
++    num_reqs = cu_num_logits.shape[0] - 1
++    sampled = torch.zeros(
++        num_reqs, num_speculative_steps + 1, dtype=torch.int64, device=target_ids.device
++    )
++    num_accepted = torch.empty(num_reqs, dtype=torch.int64, device=target_ids.device)
++    _greedy_verify_kernel[(num_reqs,)](
++        sampled,
++        sampled.stride(0),
++        num_accepted,
++        target_ids,
++        draft_sampled,
++        cu_num_logits,
++        num_warps=1,
++    )
++    return sampled, (num_accepted + 1).to(torch.int32)
+diff --git a/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py b/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
+index f5f40ea271..406051cb50 100644
+--- a/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
++++ b/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
+@@ -21,6 +21,7 @@ from vllm.v1.worker.gpu.sample.logprob import compute_topk_scores
+ from vllm.v1.worker.gpu.sample.output import SamplerOutput, SamplingMaskTensors
+ from vllm.v1.worker.gpu.sample.sampler import Sampler
+ from vllm.v1.worker.gpu.spec_decode.draft_logits import DraftLogitsCache
++from vllm.v1.worker.gpu.spec_decode.greedy_fastpath import greedy_verify
+ from vllm.v1.worker.gpu.spec_decode.rejection_sampler_utils import (
+     rejection_sample,
+ )
+@@ -180,6 +181,68 @@ class RejectionSampler:
+             assert spec_config.fly_window_size is not None
+             self.fly_window_size = spec_config.fly_window_size
+ 
++    def can_use_greedy_fastpath(
++        self,
++        input_batch: InputBatch,
++        draft_logits: DraftLogitsCache | None,
++        grammar_output: Any,
++    ) -> bool:
++        """Whether verification needs nothing but the target argmax per row:
++        every request is greedy and nothing reads or edits the full logits."""
++        sampler = self.sampler
++        idx = input_batch.idx_mapping_np
++        return (
++            draft_logits is None
++            and grammar_output is None
++            and self.watermark_key is None
++            and self.synthetic_conditional_rates is None
++            and not self.use_block_verification
++            and self.fly_window_size == 0
++            and not self.enable_adaptive_verification
++            and not sampler.compute_nans
++            and not sampler.return_sampling_mask
++            and sampler.trace_replay_state is None
++            and not np.any(sampler.needs_logits_processing[idx])
++            and not np.any(sampler.may_mask_logits[idx])
++            and sampler.get_logprobs_dims(idx) is None
++            and not sampler.sampling_states.temperature.np[idx].any()
++        )
++
++    def verify_greedy_from_argmax(
++        self, target_ids: torch.Tensor, input_batch: InputBatch
++    ) -> SamplerOutput:
++        """Greedy verification given the target argmax of every logit row
++        (same result as __call__ on the gathered logits)."""
++        draft_sampled, _ = gather_draft_sampled(
++            input_batch.input_ids,
++            input_batch.positions,
++            input_batch.logits_indices,
++            input_batch.expanded_idx_mapping,
++            input_batch.expanded_local_pos,
++            self.sampler.req_states.prefill_len.gpu,
++        )
++        sampled, num_sampled = greedy_verify(
++            target_ids,
++            draft_sampled,
++            input_batch.cu_num_logits,
++            self.num_speculative_steps,
++        )
++        num_sampled, num_rejected = get_num_sampled_and_rejected(
++            num_sampled,
++            input_batch.seq_lens,
++            input_batch.cu_num_logits,
++            input_batch.idx_mapping,
++            self.sampler.req_states.prefill_len.gpu,
++        )
++        return SamplerOutput(
++            sampled_token_ids=sampled,
++            logprobs_tensors=None,
++            num_nans=None,
++            num_sampled=num_sampled,
++            num_rejected=num_rejected,
++            sampling_mask_tensors=None,
++        )
++
+     def _get_logprobs_tensors(
+         self,
+         sampled: torch.Tensor,

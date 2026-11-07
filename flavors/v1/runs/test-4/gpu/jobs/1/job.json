@@ -1,0 +1,19 @@
+{
+  "id": 1,
+  "pid": 3287387,
+  "team": null,
+  "agent": "bs-r1-adjacent_field",
+  "label": "bs-ar-bench",
+  "timeout_min": 12.0,
+  "command": [
+    "bash",
+    "job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-4/agents/bs-r1-adjacent_field",
+  "submitted": "2026-11-07T03:53:24+00:00",
+  "state": "done",
+  "started": "2026-11-07T03:53:24+00:00",
+  "ended": "2026-11-07T04:05:01+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 11.623
+}

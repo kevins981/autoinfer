@@ -1,0 +1,19 @@
+{
+  "id": 2,
+  "pid": 3287908,
+  "team": null,
+  "agent": "bs-r1-systematic_engineer",
+  "label": "se-ar-proto",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "arjob.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-4/agents/bs-r1-systematic_engineer",
+  "submitted": "2026-11-07T03:53:46+00:00",
+  "state": "timed out",
+  "started": "2026-11-07T04:05:03+00:00",
+  "ended": "2026-11-07T04:13:04+00:00",
+  "exit_code": 124,
+  "gpu_minutes": 8.02
+}

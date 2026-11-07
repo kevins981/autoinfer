@@ -54,7 +54,7 @@ Claude makes the easy decisions and asks only about critical ones; then Claude i
   has the whole algorithm, leader/worker/brainstormer their own functions, common.md the global
   state (mapped to files), interface and record format. Brainstormer personas are files in
   `agents/personas/` (`agent start --persona`). Defaults: 1 leader, 2 workers, 5 rounds,
-  80 GPU-min per team per round (sized in config_default.md), full model ids. Tool help: every
+  55 GPU-min per team per round, 2 leaders x 1 worker (sized in config_default.md), full model ids. Tool help: every
   subcommand has a description and examples; `gpu run` budget-exhausted exit code is now 76
   (2 is argparse's usage error).
 - 2026-11-06: per-role model/effort in `config.md` (human: manager + leaders Opus 5.5 medium,

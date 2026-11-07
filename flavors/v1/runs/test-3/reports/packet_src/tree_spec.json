@@ -1,0 +1,189 @@
+{
+ "title": "AutoInfer run test-3: Qwen3.8-27B-FP8 on 2x RTX 4090",
+ "subtitle": "Handoff packet after round 3 of 5 (stopped at the human checkpoint). Goal: output tok/s at concurrency 16, same math as the baseline.",
+ "champion": "T1-009",
+ "gates": {
+  "ttft": 1784,
+  "tpot": 58.1,
+  "gsm8k": 89.6
+ },
+ "kpis": [
+  {
+   "v": "631.4",
+   "l": "BASE tok/s"
+  },
+  {
+   "v": "730.9",
+   "l": "Champion T1-009 (+15.8%)"
+  },
+  {
+   "v": "749.7",
+   "l": "Best measured T1-012 (+18.7%)"
+  },
+  {
+   "v": "3",
+   "l": "rounds · 12 experiments"
+  }
+ ],
+ "progress": [
+  {
+   "label": "BASE",
+   "v": 631.4
+  },
+  {
+   "label": "Round 1",
+   "v": 699.2,
+   "note": "T1-005"
+  },
+  {
+   "label": "Round 2",
+   "v": 730.9,
+   "note": "T1-009"
+  },
+  {
+   "label": "Round 3",
+   "v": 749.7,
+   "note": "T1-012 (below bar)"
+  }
+ ],
+ "directions": [
+  {
+   "title": "R1-A: CUDA-graph mixed prefill steps",
+   "meta": "Round 1 · from systematic_engineer",
+   "nodes": [
+    {
+     "id": "T1-001",
+     "parent": "BASE",
+     "depth": 0,
+     "title": "Prefill graph cap 96 → 2048 (flag)",
+     "result": "+2.2% unoff.",
+     "status": "null",
+     "takeaway": "Graphing prefill steps alone barely helps: they are GPU-bound, not CPU-bound."
+    }
+   ]
+  },
+  {
+   "title": "R1-B: host-staged all-reduce (no P2P)",
+   "meta": "Round 1 · from both brainstormers",
+   "nodes": [
+    {
+     "id": "T1-002",
+     "parent": "BASE",
+     "depth": 0,
+     "title": "Host-staged 2-rank AR",
+     "result": "662.8 (+5.0%)",
+     "status": "win",
+     "path": true,
+     "takeaway": "A custom all-reduce through pinned host memory beats NCCL on this no-P2P box; bitwise equal to NCCL."
+    },
+    {
+     "id": "T1-003",
+     "parent": "T1-002",
+     "depth": 1,
+     "title": "Diagnosis (nsys + microbench)",
+     "result": "",
+     "status": "diag",
+     "takeaway": "Diagnosis: decode AR near its PCIe floor; prefill-step AR time is mostly rank skew (later traced to GPU 0's locked clock)."
+    },
+    {
+     "id": "T1-004",
+     "parent": "T1-002",
+     "depth": 1,
+     "title": "+ host-staged all-gather",
+     "result": "~0 unoff.",
+     "status": "null",
+     "path": true,
+     "takeaway": "Moving the logits all-gather to the host path is a wash on its own; kept as a building block."
+    },
+    {
+     "id": "T1-005",
+     "parent": "T1-004",
+     "depth": 2,
+     "title": "+ prefill graph flag",
+     "result": "699.2 (+10.7%)",
+     "status": "win",
+     "path": true,
+     "takeaway": "The host AR and the prefill-graph flag stack super-additively: champion of round 1."
+    }
+   ]
+  },
+  {
+   "title": "R2-A: logits diet",
+   "meta": "Round 2 · from both brainstormers",
+   "nodes": [
+    {
+     "id": "T1-006",
+     "parent": "T1-005",
+     "depth": 0,
+     "title": "+ local-argmax drafts (flag)",
+     "result": "+1.1% unoff.",
+     "status": "null",
+     "path": true,
+     "takeaway": "Draft tokens via local argmax instead of gathering full draft logits: small, real."
+    },
+    {
+     "id": "T1-007",
+     "parent": "T1-006",
+     "depth": 1,
+     "title": "+ FP8 draft lm_head (flag)",
+     "result": "+3.0% unoff.",
+     "status": "win",
+     "path": true,
+     "takeaway": "FP8 draft head (drafter only, allowed by ruling 1) costs no acceptance."
+    },
+    {
+     "id": "T1-008",
+     "parent": "T1-007",
+     "depth": 2,
+     "title": "3 draft tokens",
+     "result": "−6.9% unoff.",
+     "status": "fail",
+     "takeaway": "3 draft tokens fail, later diagnosed as capacity: only 14 of 16 requests fit in the KV pool."
+    },
+    {
+     "id": "T1-009",
+     "parent": "T1-007",
+     "depth": 2,
+     "title": "+ greedy verification fast path",
+     "result": "730.9 (+15.8%)",
+     "status": "champ",
+     "path": true,
+     "takeaway": "Greedy verification gathers (max, argmax) instead of full logits; exact incl. ties. Current champion."
+    }
+   ]
+  },
+  {
+   "title": "R3: spec-decode capacity + GDN state traffic",
+   "meta": "Round 3 · from both brainstormers",
+   "nodes": [
+    {
+     "id": "T1-010",
+     "parent": "T1-009",
+     "depth": 0,
+     "title": "k=3 + KV 5.5–6.0 GiB",
+     "result": "OOM",
+     "status": "fail",
+     "takeaway": "3 draft tokens with a bigger KV budget: OOM during CUDA-graph capture."
+    },
+    {
+     "id": "T1-011",
+     "parent": "T1-010",
+     "depth": 1,
+     "title": "k=3 + KV 5.6 GiB + fewer graphs",
+     "result": "OOM",
+     "status": "fail",
+     "takeaway": "Trimming graphs to make room: runtime OOM. KV ~5.0 GiB is the ceiling."
+    },
+    {
+     "id": "T1-012",
+     "parent": "T1-009",
+     "depth": 0,
+     "title": "GDN state checkpoint + replay",
+     "result": "749.7 (+18.7%)",
+     "status": "pend",
+     "takeaway": "GDN layers write one recurrent state per step instead of k+1 (replay); bitwise exact. +2.6%: below the 3% bar."
+    }
+   ]
+  }
+ ]
+}

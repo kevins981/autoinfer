@@ -1,0 +1,849 @@
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..4664cd4ca3 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -2,7 +2,10 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ 
++import os
++
+ import torch
++import torch.distributed as dist
+ from torch.distributed import ProcessGroup
+ 
+ import vllm.envs as envs
+@@ -112,6 +115,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             if is_symmetric_memory_enabled():
+                 register_nccl_symmetric_ops(self.pynccl_comm)
+ 
++        self.host_ar_comm = None
+         self.ca_comm: CustomAllreduce | None = None
+         self.qr_comm: QuickAllReduce | None = None
+         self.symm_mem_comm: SymmMemCommunicator | None = None
+@@ -165,6 +169,26 @@ class CudaCommunicator(DeviceCommunicatorBase):
+                 register_graph_buffers=register,
+             )
+ 
++        # 2-rank TP without GPU peer-to-peer: all-reduce through shared pinned
++        # host memory (NCCL goes through host memory too, but slower).
++        if (
++            unique_name.split(":")[0] == "tp"
++            and self.world_size == 2
++            and current_platform.is_cuda()
++            and not envs.VLLM_BATCH_INVARIANT
++            and os.environ.get("VLLM_DISABLE_HOST_STAGED_AR", "0") != "1"
++        ):
++            from vllm.distributed.device_communicators.custom_all_reduce import (
++                _can_p2p,
++            )
++
++            if not _can_p2p(dist.get_rank(self.cpu_group), self.world_size):
++                from vllm.distributed.device_communicators.host_staged_ar import (
++                    HostStagedAllReduce,
++                )
++
++                self.host_ar_comm = HostStagedAllReduce(self.cpu_group, self.device)
++
+         # AITER custom all-gather/reduce-scatter DP-attention dispatch/combine.
+         # AITER requires a torch.distributed-registered group and exchanges IPC
+         # handles via the default store; stateless groups satisfy neither.
+@@ -426,6 +450,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             out = aiter_ar_comm.custom_all_reduce(input_)
+             assert out is not None
+             return out
++        host_ar = self.host_ar_comm
++        if host_ar is not None and host_ar.should_use(input_):
++            return host_ar.all_reduce(input_)
+         ca_comm = self.ca_comm
+         if (
+             ca_comm is not None
+@@ -486,6 +513,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         # gather-before-GEMM uses dim=0 with tp-aligned (uniform) shards.
+         if dim < 0:
+             dim += input_.dim()
++        host_ar = self.host_ar_comm
++        if host_ar is not None and host_ar.should_use_all_gather(input_, dim):
++            return host_ar.all_gather(input_, dim)
+         if dim == 0 and should_nccl_symm_mem_ag_rs():
+             return self._all_gather_symm_mem(input_.contiguous())
+ 
+diff --git a/vllm/distributed/device_communicators/host_staged_ar.cu b/vllm/distributed/device_communicators/host_staged_ar.cu
+new file mode 100644
+index 0000000000..4ca5400473
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_staged_ar.cu
+@@ -0,0 +1,162 @@
++#include <torch/extension.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <sys/mman.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <string>
++
++#define MAXB 128
++#define MAXK 8
++#define FSTRIDE 16   // ints between flags (64B)
++
++static __device__ __forceinline__ uint4 ld_cv(const uint4* p) {
++  uint4 r;
++  asm volatile("ld.global.cv.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(r.x),"=r"(r.y),"=r"(r.z),"=r"(r.w) : "l"(p) : "memory");
++  return r;
++}
++static __device__ __forceinline__ void st_cs(uint4* p, uint4 v) {
++  asm volatile("st.global.cs.v4.u32 [%0], {%1,%2,%3,%4};" :: "l"(p),"r"(v.x),"r"(v.y),"r"(v.z),"r"(v.w) : "memory");
++}
++static __device__ __forceinline__ int ld_vol(const int* p) {
++  int r; asm volatile("ld.volatile.global.s32 %0, [%1];" : "=r"(r) : "l"(p) : "memory"); return r;
++}
++static __device__ __forceinline__ uint32_t add_bf16x2(uint32_t a, uint32_t b) {
++  __nv_bfloat162 x = *reinterpret_cast<__nv_bfloat162*>(&a), y = *reinterpret_cast<__nv_bfloat162*>(&b);
++  float2 fx = __bfloat1622float2(x), fy = __bfloat1622float2(y);
++  __nv_bfloat162 r = __floats2bfloat162_rn(fx.x + fy.x, fx.y + fy.y);
++  return *reinterpret_cast<uint32_t*>(&r);
++}
++static __device__ __forceinline__ uint4 add4(uint4 a, uint4 b) {
++  return make_uint4(add_bf16x2(a.x,b.x), add_bf16x2(a.y,b.y), add_bf16x2(a.z,b.z), add_bf16x2(a.w,b.w));
++}
++
++struct Params {
++  const uint4* x; uint4* out;
++  uint4* slot[2][2];      // [rank][parity] device ptr to host-mapped data slots
++  int* flags[2];          // [rank] flag base (host-mapped)
++  int* state;             // device: [0]=epoch, [1]=done counter
++  int rank; long n_vec; int K; int mode; int gather; long inner_vec;
++};
++
++__global__ void hostar_kernel(Params p) {
++  __shared__ int s_epoch;
++  const int G = gridDim.x / 2, tid = threadIdx.x, nt = blockDim.x;
++  const bool writer = blockIdx.x < G;
++  const int g = writer ? blockIdx.x : blockIdx.x - G;
++  if (tid == 0) s_epoch = *(volatile int*)&p.state[0];
++  __syncthreads();
++  const int epoch = s_epoch, par = epoch & 1;
++  uint4* mine = p.slot[p.rank][par];
++  const uint4* peer = p.slot[1 - p.rank][par];
++  int* myf = p.flags[p.rank] + (size_t)g * MAXK * FSTRIDE;
++  const int* pf = p.flags[1 - p.rank] + (size_t)g * MAXK * FSTRIDE;
++  const int K = p.K;
++  long total_chunks = (long)G * K;
++  long cs = (p.n_vec + total_chunks - 1) / total_chunks;
++  for (int c = 0; c < K; c++) {
++    long lo = ((long)c * G + g) * cs, hi = lo + cs;
++    if (lo > p.n_vec) lo = p.n_vec; if (hi > p.n_vec) hi = p.n_vec;
++    if (writer && p.gather) {
++      // all-gather: publish my shard and place it in my slot of the output
++      for (long i = lo + tid; i < hi; i += nt) {
++        uint4 v = p.x[i];
++        st_cs(mine + i, v);
++        p.out[(i / p.inner_vec * 2 + p.rank) * p.inner_vec + i % p.inner_vec] = v;
++      }
++      __threadfence_system();
++      __syncthreads();
++      if (tid == 0) asm volatile("st.volatile.global.s32 [%0], %1;" :: "l"(myf + c * FSTRIDE), "r"(epoch) : "memory");
++    } else if (writer) {
++      long i = lo + tid;
++      for (; i + 3 * nt < hi; i += 4 * nt) {
++        uint4 v0 = p.x[i], v1 = p.x[i+nt], v2 = p.x[i+2*nt], v3 = p.x[i+3*nt];
++        st_cs(mine+i, v0); st_cs(mine+i+nt, v1); st_cs(mine+i+2*nt, v2); st_cs(mine+i+3*nt, v3);
++      }
++      for (; i < hi; i += nt) st_cs(mine + i, p.x[i]);
++      if (!(p.mode & 4)) __threadfence_system();
++      __syncthreads();
++      if (tid == 0 && (p.mode & 4)) __threadfence_system();
++      if (tid == 0) asm volatile("st.volatile.global.s32 [%0], %1;" :: "l"(myf + c * FSTRIDE), "r"(epoch) : "memory");
++    } else {
++      if (tid == 0) {
++        if (p.mode & 8) { while (ld_vol(pf + c * FSTRIDE) != epoch) { } }  // test-only: old racy check
++        else { while ((int)(ld_vol(pf + c * FSTRIDE) - epoch) < 0) { } }   // monotonic: peer may be ahead
++        __threadfence_system();
++      }
++      __syncthreads();
++      if (p.gather) {
++        const int pr = 1 - p.rank;
++        long j = lo + tid;
++        for (; j + 3 * nt < hi; j += 4 * nt) {
++          uint4 v0 = ld_cv(peer + j), v1 = ld_cv(peer + j + nt), v2 = ld_cv(peer + j + 2*nt), v3 = ld_cv(peer + j + 3*nt);
++          #define PUT(jj, vv) p.out[((jj) / p.inner_vec * 2 + pr) * p.inner_vec + (jj) % p.inner_vec] = vv
++          PUT(j, v0); PUT(j + nt, v1); PUT(j + 2*nt, v2); PUT(j + 3*nt, v3);
++        }
++        for (; j < hi; j += nt) { uint4 v = ld_cv(peer + j); PUT(j, v); }
++        continue;
++      }
++      long i = lo + tid;
++      for (; i + 3 * nt < hi; i += 4 * nt) {
++        uint4 v0 = ld_cv(peer + i), v1 = ld_cv(peer + i + nt), v2 = ld_cv(peer + i + 2*nt), v3 = ld_cv(peer + i + 3*nt);
++        p.out[i] = add4(p.x[i], v0); p.out[i+nt] = add4(p.x[i+nt], v1);
++        p.out[i+2*nt] = add4(p.x[i+2*nt], v2); p.out[i+3*nt] = add4(p.x[i+3*nt], v3);
++      }
++      for (; i < hi; i += nt) p.out[i] = add4(p.x[i], ld_cv(peer + i));
++    }
++  }
++  __syncthreads();
++  if (tid == 0) {
++    __threadfence();
++    int d = atomicAdd(&p.state[1], 1);
++    if (d == (int)gridDim.x - 1) { p.state[1] = 0; __threadfence(); *(volatile int*)&p.state[0] = epoch + 1; }
++  }
++}
++
++struct Ctx {
++  void* base[1]; size_t slot_bytes; Params p; int* state; bool init=false;
++};
++static Ctx C;
++
++// Layout of shm file: [rank 0..1][parity 0..1] data slots, then flags [rank][MAXB*MAXK*FSTRIDE ints]
++size_t total_bytes(size_t slot_bytes) { return 4 * slot_bytes + 2 * (size_t)MAXB * MAXK * FSTRIDE * 4; }
++
++void hostar_init(std::string path, int64_t slot_bytes, int64_t rank, bool create) {
++  size_t tot = total_bytes(slot_bytes);
++  int fd = open(path.c_str(), O_RDWR | (create ? (O_CREAT) : 0), 0600);
++  TORCH_CHECK(fd >= 0, "open failed");
++  if (create) TORCH_CHECK(ftruncate(fd, tot) == 0, "ftruncate");
++  void* m = mmap(nullptr, tot, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++  TORCH_CHECK(m != MAP_FAILED, "mmap");
++  close(fd);
++  TORCH_CHECK(cudaHostRegister(m, tot, cudaHostRegisterMapped) == cudaSuccess, "hostregister");
++  void* d; TORCH_CHECK(cudaHostGetDevicePointer(&d, m, 0) == cudaSuccess, "getdevptr");
++  char* b = (char*)d;
++  for (int r = 0; r < 2; r++) for (int q = 0; q < 2; q++) C.p.slot[r][q] = (uint4*)(b + ((size_t)(r * 2 + q)) * slot_bytes);
++  for (int r = 0; r < 2; r++) C.p.flags[r] = (int*)(b + 4 * slot_bytes + (size_t)r * MAXB * MAXK * FSTRIDE * 4);
++  void* st; cudaMalloc(&st, 64); cudaMemset(st, 0, 64);
++  int one = 1; cudaMemcpy(st, &one, 4, cudaMemcpyHostToDevice);
++  C.p.state = (int*)st; C.p.rank = rank; C.slot_bytes = slot_bytes; C.init = true;
++}
++void hostar_zero(std::string path) {}  // flags are zero from ftruncate
++
++void hostar_allreduce(torch::Tensor x, torch::Tensor out, int64_t grid, int64_t K, int64_t threads, int64_t mode) {
++  TORCH_CHECK(C.init);
++  size_t bytes = x.numel() * 2;
++  TORCH_CHECK(bytes % 16 == 0 && bytes <= C.slot_bytes && K <= MAXK && grid <= 2*MAXB && grid%2==0);
++  Params p = C.p; p.x = (const uint4*)x.data_ptr(); p.out = (uint4*)out.data_ptr();
++  p.n_vec = bytes / 16; p.K = K; p.mode = mode; p.gather = 0; p.inner_vec = 1;
++  hostar_kernel<<<grid, threads, 0, at::cuda::getCurrentCUDAStream()>>>(p);
++}
++void hostar_allgather(torch::Tensor x, torch::Tensor out, int64_t grid, int64_t K, int64_t threads, int64_t inner_bytes) {
++  TORCH_CHECK(C.init);
++  size_t bytes = x.numel() * x.element_size();
++  TORCH_CHECK(bytes % 16 == 0 && inner_bytes % 16 == 0 && bytes <= C.slot_bytes && K <= MAXK && grid <= 2*MAXB && grid%2==0);
++  Params p = C.p; p.x = (const uint4*)x.data_ptr(); p.out = (uint4*)out.data_ptr();
++  p.n_vec = bytes / 16; p.K = K; p.mode = 4; p.gather = 1; p.inner_vec = inner_bytes / 16;
++  hostar_kernel<<<grid, threads, 0, at::cuda::getCurrentCUDAStream()>>>(p);
++}
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("init", &hostar_init); m.def("allreduce", &hostar_allreduce); m.def("allgather", &hostar_allgather);
++}
+diff --git a/vllm/distributed/device_communicators/host_staged_ar.py b/vllm/distributed/device_communicators/host_staged_ar.py
+new file mode 100644
+index 0000000000..b40eaf4e0d
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_staged_ar.py
+@@ -0,0 +1,128 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Host-staged 2-rank all-reduce for GPUs without peer-to-peer access.
++
++Both ranks write their partial into a pinned host buffer shared through a
++/dev/shm file (mapped into both processes and registered with
++cudaHostRegister), exchange per-chunk flags in the same shared memory and add
++the peer's partial locally (fp32 add, round to bf16: the same math as NCCL).
++The kernel is CUDA-graph capturable: the flag value (an epoch) lives in device
++memory and is advanced by the kernel itself.
++"""
++
++import os
++import uuid
++
++import torch
++import torch.distributed as dist
++from torch.distributed import ProcessGroup
++
++import vllm.envs as envs
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++_SLOT_BYTES = 24 << 20  # max message size handled; larger falls back to NCCL
++_MIN_BYTES = 1024
++_mod = None
++
++
++def _load_ext():
++    global _mod
++    if _mod is not None:
++        return _mod
++    from torch.utils.cpp_extension import load
++
++    if "TORCH_EXTENSIONS_DIR" not in os.environ:
++        os.environ["TORCH_EXTENSIONS_DIR"] = os.path.join(
++            envs.VLLM_CACHE_ROOT, "torch_extensions"
++        )
++    build_dir = os.path.join(os.environ["TORCH_EXTENSIONS_DIR"], "vllm_host_staged_ar")
++    os.makedirs(build_dir, exist_ok=True)
++    major, minor = torch.cuda.get_device_capability()
++    os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{major}.{minor}")
++    src = os.path.join(os.path.dirname(__file__), "host_staged_ar.cu")
++    _mod = load("vllm_host_staged_ar", [src], build_directory=build_dir, verbose=False)
++    return _mod
++
++
++def _config(nbytes: int) -> tuple[int, int]:
++    """(grid, chunks per writer block) as a function of message size."""
++    if nbytes <= 600 * 1024:
++        return 8, 1
++    if nbytes <= 8 << 20:
++        return 16, 4
++    return 32, 8
++
++
++class HostStagedAllReduce:
++    _instance_made = False
++
++    def __init__(self, group: ProcessGroup, device: torch.device):
++        self.disabled = True
++        if HostStagedAllReduce._instance_made:
++            return
++        self.world_size = dist.get_world_size(group=group)
++        self.rank = dist.get_rank(group=group)
++        if self.world_size != 2:
++            return
++        HostStagedAllReduce._instance_made = True
++        self.device = device
++        torch.cuda.set_device(device)
++        mod = _load_ext()
++        # rank 0 creates the file; both map it; unlink once both have mapped.
++        name = [f"/dev/shm/vllm_hostar_{os.getpid()}_{uuid.uuid4().hex}"]
++        dist.broadcast_object_list(name, src=dist.get_process_group_ranks(group)[0],
++                                   group=group)
++        path = name[0]
++        if self.rank == 0:
++            mod.init(path, _SLOT_BYTES, 0, True)
++        dist.barrier(group=group)
++        if self.rank == 1:
++            mod.init(path, _SLOT_BYTES, 1, False)
++        dist.barrier(group=group)
++        if self.rank == 0:
++            os.unlink(path)
++        self.mod = mod
++        self.disabled = False
++        logger.info("Host-staged all-reduce (no-P2P, 2 ranks) enabled")
++
++    def should_use(self, inp: torch.Tensor) -> bool:
++        if self.disabled or inp.dtype != torch.bfloat16 or not inp.is_cuda:
++            return False
++        nbytes = inp.numel() * inp.element_size()
++        return (
++            _MIN_BYTES <= nbytes <= _SLOT_BYTES
++            and nbytes % 16 == 0
++            and inp.is_contiguous()
++        )
++
++    def all_reduce(self, inp: torch.Tensor) -> torch.Tensor:
++        out = torch.empty_like(inp)
++        grid, k = _config(inp.numel() * 2)
++        self.mod.allreduce(inp, out, grid, k, 512, 4)
++        return out
++
++    def should_use_all_gather(self, inp: torch.Tensor, dim: int) -> bool:
++        if self.disabled or not inp.is_cuda or not inp.is_contiguous():
++            return False
++        nbytes = inp.numel() * inp.element_size()
++        inner = 1
++        for s in inp.shape[dim:]:
++            inner *= s
++        return (
++            _MIN_BYTES <= nbytes <= _SLOT_BYTES
++            and nbytes % 16 == 0
++            and (inner * inp.element_size()) % 16 == 0
++        )
++
++    def all_gather(self, inp: torch.Tensor, dim: int) -> torch.Tensor:
++        """Exact copy-based all-gather of two shards along `dim` (dim >= 0)."""
++        shape = list(inp.shape)
++        inner = 1
++        for s in shape[dim:]:
++            inner *= s
++        shape[dim] *= 2
++        out = torch.empty(shape, dtype=inp.dtype, device=inp.device)
++        grid, k = _config(inp.numel() * inp.element_size())
++        self.mod.allgather(inp, out, grid, k, 512, inner * inp.element_size())
++        return out
+diff --git a/vllm/model_executor/layers/logits_processor.py b/vllm/model_executor/layers/logits_processor.py
+index 1ca1d71381..6ff93977da 100644
+--- a/vllm/model_executor/layers/logits_processor.py
++++ b/vllm/model_executor/layers/logits_processor.py
+@@ -262,6 +262,60 @@ class LogitsProcessor(PluggableLayer):
+         top_tokens = gathered[:, :, 1].gather(dim=-1, index=max_rank_idx)
+         return top_tokens.squeeze(-1).to(torch.int64)
+ 
++    def get_greedy_tokens(
++        self,
++        lm_head: VocabParallelEmbedding,
++        hidden_states: torch.Tensor,
++        embedding_bias: torch.Tensor | None = None,
++    ) -> torch.Tensor | None:
++        """Exact greedy token ids without all-gathering full logits.
++
++        Returns the same ids as ``greedy_argmax`` over the gathered, vocab-cut
++        logits (first index on ties; padded / out-of-vocab columns excluded).
++        Each rank reduces its shard to (max, argmax); only these pairs are
++        gathered. Returns None if this head cannot be handled exactly.
++        """
++        from vllm.v1.worker.gpu.sample.greedy_argmax import (
++            greedy_argmax_with_value,
++        )
++
++        if (
++            self.scale != 1.0
++            or self.soft_cap is not None
++            or self.org_vocab_size >= 2**24
++            or self.logits_as_input
++            or not self.use_all_gather
++        ):
++            return None
++        logits = self._apply_head(lm_head, hidden_states, embedding_bias)
++        if logits.dtype not in (torch.bfloat16, torch.float32) or logits.ndim != 2:
++            return None
++        tp_size = lm_head.tp_size
++        si = lm_head.shard_indices
++        width = logits.shape[-1]
++        # The full path concatenates the shards and cuts at org_vocab_size, so
++        # shard r owns ids [r * width, (r + 1) * width). Anything else: fall back.
++        if si.num_org_vocab_padding != 0 or si.org_vocab_start_index != (
++            lm_head.tp_rank * width
++        ):
++            return None
++        num_valid = max(0, min(width, self.org_vocab_size - si.org_vocab_start_index))
++        vals, idx = greedy_argmax_with_value(logits, num_valid)
++        gidx = idx + si.org_vocab_start_index
++        if tp_size == 1:
++            return gidx.to(torch.int64)
++        pair = torch.stack([vals, gidx.float()], dim=-1)  # [rows, 2]
++        gathered = tensor_model_parallel_all_gather(pair, dim=-1)
++        gathered = gathered.view(hidden_states.shape[0], tp_size, 2)
++        # Strict '>' so the lowest rank (lowest ids) wins ties.
++        best_v = gathered[:, 0, 0]
++        best_i = gathered[:, 0, 1]
++        for r in range(1, tp_size):
++            take = gathered[:, r, 0] > best_v
++            best_v = torch.where(take, gathered[:, r, 0], best_v)
++            best_i = torch.where(take, gathered[:, r, 1], best_i)
++        return best_i.to(torch.int64)
++
+     def get_top_k_tokens(
+         self,
+         lm_head: VocabParallelEmbedding,
+diff --git a/vllm/models/qwen3_5/nvidia/model.py b/vllm/models/qwen3_5/nvidia/model.py
+index be483f5a88..f2df35b149 100644
+--- a/vllm/models/qwen3_5/nvidia/model.py
++++ b/vllm/models/qwen3_5/nvidia/model.py
+@@ -766,6 +766,10 @@ class Qwen3_5ForCausalLMBase(
+     ) -> torch.Tensor:
+         return self.logits_processor(self.lm_head, hidden_states, skip_gather=True)
+ 
++    def compute_greedy_tokens(self, hidden_states: torch.Tensor) -> torch.Tensor | None:
++        """Greedy ids of ``compute_logits`` without gathering full logits."""
++        return self.logits_processor.get_greedy_tokens(self.lm_head, hidden_states)
++
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         loader = AutoWeightsLoader(self)
+         return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+@@ -915,6 +919,9 @@ class Qwen3_5ForConditionalGeneration(Qwen3VLForConditionalGeneration, IsHybrid)
+     def compute_logits_local(self, hidden_states: torch.Tensor) -> torch.Tensor:
+         return self.language_model.compute_logits_local(hidden_states)
+ 
++    def compute_greedy_tokens(self, hidden_states: torch.Tensor) -> torch.Tensor | None:
++        return self.language_model.compute_greedy_tokens(hidden_states)
++
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         loader = AutoWeightsLoader(self)
+         return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+index 5286d9008d..b657cd5a4a 100644
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -18,6 +18,7 @@ instead of embedding feature-specific logic directly.
+ 
+ import functools
+ import gc
++import os
+ import time
+ from collections.abc import Iterable
+ from contextlib import AbstractContextManager, nullcontext
+@@ -198,6 +199,15 @@ from vllm.v1.worker.workspace import lock_workspace, use_workspace_lane
+ 
+ logger = init_logger(__name__)
+ 
++# TEST ONLY, off by default and not used in serving: with
++# VLLM_TEST_GREEDY_IDS_CHECK=1 the greedy local-argmax verification also runs the
++# full-logits path every step and counts mismatches.
++_GREEDY_IDS_CHECK = os.environ.get("VLLM_TEST_GREEDY_IDS_CHECK", "0") == "1"
++_GREEDY_IDS_STATS = [0, 0, 0, 0]  # steps, rows, mismatches, tied rows
++from vllm.v1.worker.gpu.model_states.interface import ModelState as _ModelState  # noqa: E402
++
++_DEFAULT_COMPUTE_SAMPLE_LOGITS = _ModelState.compute_sample_logits
++
+ 
+ class GPUModelRunner(LoRAModelRunnerMixin):
+     def __init__(self, vllm_config: VllmConfig, device: torch.device):
+@@ -345,6 +355,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         # Samplers and decode_query_len created in load_model() after
+         # model_state exists (num_new_sampled_tokens_per_step from ModelState).
+         self.sampler: Sampler | None = None
++        self._greedy_ids_disabled = False
+         self.rejection_sampler: RejectionSampler | None = None
+         self.batch_sharder: BatchSharder | None = None
+         self.prompt_logprobs_worker: PromptLogprobsWorker | None = None
+@@ -1698,6 +1709,106 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         )
+         return block_tables, slot_mappings
+ 
++    def _greedy_ids_eligible(
++        self, input_batch: InputBatch, grammar_output: GrammarOutput | None
++    ) -> bool:
++        """All-greedy spec-decode batch where nothing reads the full logits."""
++        if _GREEDY_IDS_CHECK and not getattr(self, "_gv_dbg", False):
++            self._gv_dbg = True
++            logger.info(
++                "GREEDY_IDS_CHECK conds: disabled=%s grammar=%s ndraft=%s rs=%s "
++                "sampler=%s sharder=%s hasattr=%s default_csl=%s rs_ok=%s",
++                self._greedy_ids_disabled,
++                grammar_output is not None,
++                input_batch.num_draft_tokens,
++                self.rejection_sampler is not None,
++                self.sampler is not None,
++                self.batch_sharder is not None,
++                hasattr(self.model, "compute_greedy_tokens"),
++                type(self.model_state).compute_sample_logits
++                is _DEFAULT_COMPUTE_SAMPLE_LOGITS,
++                self.rejection_sampler is not None
++                and self.rejection_sampler.supports_greedy_ids(),
++            )
++        if (
++            self._greedy_ids_disabled
++            or grammar_output is not None
++            or input_batch.num_draft_tokens == 0
++            or self.rejection_sampler is None
++            or self.sampler is None
++            or self.batch_sharder is not None
++            or not hasattr(self.model, "compute_greedy_tokens")
++            or type(self.model_state).compute_sample_logits
++            is not _DEFAULT_COMPUTE_SAMPLE_LOGITS
++            or not self.rejection_sampler.supports_greedy_ids()
++        ):
++            return False
++        return self.sampler.all_pure_greedy(input_batch.idx_mapping_np)
++
++    def _try_greedy_ids_sample(
++        self,
++        sample_hidden_states: torch.Tensor,
++        input_batch: InputBatch,
++        grammar_output: GrammarOutput | None,
++    ) -> SamplerOutput | None:
++        """Greedy verification from vocab-parallel local argmax (no full logits).
++
++        Picks the same ids as the full-logits greedy path (first index on ties,
++        vocab padding excluded). Returns None to fall back to the full path.
++        """
++        if not self._greedy_ids_eligible(input_batch, grammar_output):
++            return None
++        target_ids = self.model.compute_greedy_tokens(sample_hidden_states)
++        if target_ids is None:
++            self._greedy_ids_disabled = True
++            return None
++        assert self.rejection_sampler is not None
++        out = self.rejection_sampler.verify_greedy_ids(target_ids, input_batch)
++        if _GREEDY_IDS_CHECK:
++            # TEST ONLY (VLLM_TEST_GREEDY_IDS_CHECK=1): also run the full-logits
++            # path and compare. Costs the full gather; never enabled in serving.
++            logits = self.model_state.compute_sample_logits(sample_hidden_states)
++            ref = self.rejection_sampler(
++                logits, input_batch, self.speculator.draft_logits
++            )
++            n = out.num_sampled.shape[0]
++            bad_ns = int((out.num_sampled != ref.num_sampled).sum().item())
++            cols = torch.arange(
++                out.sampled_token_ids.shape[1], device=out.sampled_token_ids.device
++            )
++            valid = cols[None, :] < ref.num_sampled.view(-1, 1)
++            # num_sampled from get_num_sampled_and_rejected may differ in
++            # meaning from the raw count; compare tokens on the reference span.
++            bad_tok = int(
++                (
++                    (out.sampled_token_ids != ref.sampled_token_ids) & valid
++                )
++                .any(dim=1)
++                .sum()
++                .item()
++            )
++            bad_rej = int((out.num_rejected != ref.num_rejected).sum().item())
++            _GREEDY_IDS_STATS[0] += 1
++            _GREEDY_IDS_STATS[1] += logits.shape[0]
++            _GREEDY_IDS_STATS[2] += bad_ns + bad_tok + bad_rej
++            _mx = logits.max(dim=-1, keepdim=True).values
++            _GREEDY_IDS_STATS[3] += int(((logits == _mx).sum(dim=-1) > 1).sum().item())
++            if bad_ns + bad_tok + bad_rej:
++                logger.error(
++                    "GREEDY_IDS_CHECK MISMATCH: num_sampled=%d tokens=%d "
++                    "num_rejected=%d (of %d reqs)",
++                    bad_ns,
++                    bad_tok,
++                    bad_rej,
++                    n,
++                )
++            if _GREEDY_IDS_STATS[0] % 200 == 0:
++                logger.info(
++                    "GREEDY_IDS_CHECK steps=%d rows=%d mismatches=%d tied_rows=%d",
++                    *_GREEDY_IDS_STATS,
++                )
++        return out
++
+     def sample(
+         self,
+         hidden_states: torch.Tensor,
+@@ -1725,6 +1836,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+             logits = logits[:, : self.vocab_size]
+         else:
+             sample_hidden_states = hidden_states[input_batch.logits_indices]
++            greedy_out = self._try_greedy_ids_sample(
++                sample_hidden_states, input_batch, grammar_output
++            )
++            if greedy_out is not None:
++                return greedy_out, greedy_out.num_sampled, greedy_out.num_rejected
+             logits = self.model_state.compute_sample_logits(sample_hidden_states)
+ 
+         # A diffusion prefill has no logit rows even when a bitmask row
+diff --git a/vllm/v1/worker/gpu/sample/greedy_argmax.py b/vllm/v1/worker/gpu/sample/greedy_argmax.py
+index 8809e0b322..0629427c79 100644
+--- a/vllm/v1/worker/gpu/sample/greedy_argmax.py
++++ b/vllm/v1/worker/gpu/sample/greedy_argmax.py
+@@ -64,3 +64,43 @@ def greedy_argmax(logits: torch.Tensor) -> torch.Tensor:
+         values, indices, out, splits, triton.next_power_of_2(splits), num_warps=1
+     )
+     return out
++
++
++@triton.jit
++def _argmax_finish_value(
++    PV, PI, OUT_V, OUT_I, SPLITS: tl.constexpr, BLOCK: tl.constexpr
++):
++    row = tl.program_id(0)
++    col = tl.arange(0, BLOCK)
++    value = tl.load(PV + row * SPLITS + col, col < SPLITS, float("-inf"))
++    part = tl.argmax(value, axis=0)
++    tl.store(OUT_V + row, tl.max(value, axis=0))
++    tl.store(OUT_I + row, tl.load(PI + row * SPLITS + part))
++
++
++def greedy_argmax_with_value(
++    logits: torch.Tensor, num_valid: int
++) -> tuple[torch.Tensor, torch.Tensor]:
++    """(max, argmax) over the first ``num_valid`` columns of each row.
++
++    Same pick as ``greedy_argmax`` restricted to ``logits[:, :num_valid]``: first
++    index on ties, NaN treated as -inf, all -inf rows give index 0. Returns
++    float32 values and int32 indices (relative to column 0).
++    """
++    rows, vocab = logits.shape
++    assert logits.stride(1) == 1 and 0 <= num_valid <= vocab
++    vals = torch.empty(rows, dtype=torch.float32, device=logits.device)
++    idx = torch.empty(rows, dtype=torch.int32, device=logits.device)
++    if rows == 0:
++        return vals, idx
++    block = 4096
++    splits = max(1, triton.cdiv(num_valid, block))
++    pv = torch.empty((rows, splits), dtype=torch.float32, device=logits.device)
++    pi = torch.empty((rows, splits), dtype=torch.int32, device=logits.device)
++    _argmax_partial[(rows, splits)](
++        logits, pv, pi, num_valid, logits.stride(0), splits, block, num_warps=4
++    )
++    _argmax_finish_value[(rows,)](
++        pv, pi, vals, idx, splits, triton.next_power_of_2(splits), num_warps=1
++    )
++    return vals, idx
+diff --git a/vllm/v1/worker/gpu/sample/sampler.py b/vllm/v1/worker/gpu/sample/sampler.py
+index 7fe9806ddf..d19adbe344 100644
+--- a/vllm/v1/worker/gpu/sample/sampler.py
++++ b/vllm/v1/worker/gpu/sample/sampler.py
+@@ -86,6 +86,10 @@ class Sampler:
+         # Whether processing may leave -inf in a request's logits (filters,
+         # forcing, logits processors) rather than only scale them.
+         self.may_mask_logits = np.zeros(max_num_reqs, dtype=bool)
++        # Greedy requests whose logits nothing reads or modifies besides the
++        # argmax: temperature 0, no logits processing, no logprobs of any kind.
++        # Lets verification take token ids from a vocab-parallel local argmax.
++        self.pure_greedy = np.zeros(max_num_reqs, dtype=bool)
+         self.num_speculative_tokens = num_speculative_tokens
+         self.return_sampling_mask = return_sampling_mask
+         self.use_flashinfer = (
+@@ -104,11 +108,27 @@ class Sampler:
+             may_mask |= processor.add_request(req_idx, sampling_params)
+         self.needs_logits_processing[req_idx] = needs_processing or may_mask
+         self.may_mask_logits[req_idx] = may_mask
++        self.pure_greedy[req_idx] = (
++            sampling_params.temperature == 0.0
++            and not self.needs_logits_processing[req_idx]
++            and sampling_params.logprobs is None
++            and not sampling_params.logprob_token_ids
++            and sampling_params.prompt_logprobs is None
++        )
+ 
+         self.logprob_token_ids_state.add_request(req_idx, sampling_params)
+         if self.trace_replay_state is not None:
+             self.trace_replay_state.add_request(req_idx, sampling_params)
+ 
++    def all_pure_greedy(self, idx_mapping_np: np.ndarray) -> bool:
++        """Every request is greedy with nothing but the argmax reading its logits.
++
++        Custom logits processors may touch any request, so they disable it.
++        """
++        return len(self.logits_processors) == 3 and bool(
++            np.all(self.pure_greedy[idx_mapping_np])
++        )
++
+     def apply_staged_writes(self) -> None:
+         self.sampling_states.apply_staged_writes()
+         for processor in self.logits_processors:
+diff --git a/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py b/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
+index f5f40ea271..b5277fdef0 100644
+--- a/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
++++ b/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
+@@ -22,6 +22,7 @@ from vllm.v1.worker.gpu.sample.output import SamplerOutput, SamplingMaskTensors
+ from vllm.v1.worker.gpu.sample.sampler import Sampler
+ from vllm.v1.worker.gpu.spec_decode.draft_logits import DraftLogitsCache
+ from vllm.v1.worker.gpu.spec_decode.rejection_sampler_utils import (
++    greedy_ids_rejection_sample,
+     rejection_sample,
+ )
+ 
+@@ -421,6 +422,57 @@ class RejectionSampler:
+         )
+         return sampled, num_sampled, logprobs_tensors, sampling_mask_tensors
+ 
++    def supports_greedy_ids(self) -> bool:
++        """Whether verification can run from precomputed greedy target ids."""
++        return (
++            self.watermark_key is None
++            and self.synthetic_conditional_rates is None
++            and not self.use_block_verification
++            and self.fly_window_size == 0
++            and not self.enable_adaptive_verification
++            and not self.sampler.compute_nans
++            and not self.sampler.return_sampling_mask
++            and self.sampler.trace_replay_state is None
++        )
++
++    def verify_greedy_ids(
++        self, target_ids: torch.Tensor, input_batch: InputBatch
++    ) -> SamplerOutput:
++        """Verify drafts of an all-greedy batch given the target argmax ids.
++
++        Same result as ``__call__`` on the logits those ids were taken from,
++        when every request is greedy with no logits processing and no logprobs.
++        """
++        draft_sampled, _ = gather_draft_sampled(
++            input_batch.input_ids,
++            input_batch.positions,
++            input_batch.logits_indices,
++            input_batch.expanded_idx_mapping,
++            input_batch.expanded_local_pos,
++            self.sampler.req_states.prefill_len.gpu,
++        )
++        sampled, num_sampled = greedy_ids_rejection_sample(
++            target_ids,
++            draft_sampled,
++            input_batch.cu_num_logits,
++            self.num_speculative_steps,
++        )
++        num_sampled, num_rejected = get_num_sampled_and_rejected(
++            num_sampled,
++            input_batch.seq_lens,
++            input_batch.cu_num_logits,
++            input_batch.idx_mapping,
++            self.sampler.req_states.prefill_len.gpu,
++        )
++        return SamplerOutput(
++            sampled_token_ids=sampled,
++            logprobs_tensors=None,
++            num_nans=None,
++            num_sampled=num_sampled,
++            num_rejected=num_rejected,
++            sampling_mask_tensors=None,
++        )
++
+     def __call__(
+         self,
+         logits: torch.Tensor,
+diff --git a/vllm/v1/worker/gpu/spec_decode/rejection_sampler_utils.py b/vllm/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
+index 9377927856..8254cd0b5f 100644
+--- a/vllm/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
++++ b/vllm/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
+@@ -1460,3 +1460,66 @@ def rejection_sample(
+         PADDED_RESAMPLE_NUM_BLOCKS=padded_resample_num_blocks,
+     )
+     return sampled, num_sampled
++
++
++@triton.jit
++def _greedy_ids_rejection_kernel(
++    # [num_reqs, num_speculative_steps + 1]
++    sampled_ptr,
++    sampled_stride,
++    # [num_reqs]
++    num_sampled_ptr,
++    # [num_logits] target argmax of every logits row
++    target_ids_ptr,
++    # [num_logits]
++    draft_sampled_ptr,
++    # [num_reqs + 1]
++    cu_num_logits_ptr,
++):
++    req_idx = tl.program_id(0)
++    start_idx = tl.load(cu_num_logits_ptr + req_idx).to(tl.int64)
++    end_idx = tl.load(cu_num_logits_ptr + req_idx + 1).to(tl.int64)
++    num_draft_tokens = end_idx - start_idx - 1
++    accepted_length = tl.zeros((), tl.int64)
++    verifying = True
++    for i in range(num_draft_tokens):
++        if verifying:
++            draft = tl.load(draft_sampled_ptr + start_idx + i + 1).to(tl.int64)
++            target = tl.load(target_ids_ptr + start_idx + i).to(tl.int64)
++            # -1 placeholder drafts are rejected.
++            accepted = (target == tl.maximum(0, draft)) & (draft >= 0)
++            # Accepted: sampled == draft == target; rejected: the target.
++            tl.store(sampled_ptr + req_idx * sampled_stride + i, target)
++            verifying = accepted
++            accepted_length += accepted
++    # Rejected position (correction) or bonus: the target argmax there.
++    final = tl.load(target_ids_ptr + start_idx + accepted_length).to(tl.int64)
++    tl.store(sampled_ptr + req_idx * sampled_stride + accepted_length, final)
++    tl.store(num_sampled_ptr + req_idx, (accepted_length + 1).to(tl.int32))
++
++
++def greedy_ids_rejection_sample(
++    target_ids: torch.Tensor,  # [num_logits]
++    draft_sampled: torch.Tensor,  # [num_logits]
++    cu_num_logits: torch.Tensor,  # [num_reqs + 1]
++    num_speculative_steps: int,
++) -> tuple[torch.Tensor, torch.Tensor]:
++    """Greedy verification from precomputed target argmax ids.
++
++    Equivalent to ``rejection_sample`` when every request is greedy.
++    """
++    num_reqs = cu_num_logits.shape[0] - 1
++    sampled = draft_sampled.new_empty(
++        num_reqs, num_speculative_steps + 1, dtype=torch.int64
++    )
++    num_sampled = sampled.new_empty(num_reqs, dtype=torch.int32)
++    _greedy_ids_rejection_kernel[(num_reqs,)](
++        sampled,
++        sampled.stride(0),
++        num_sampled,
++        target_ids,
++        draft_sampled,
++        cu_num_logits,
++        num_warps=1,
++    )
++    return sampled, num_sampled

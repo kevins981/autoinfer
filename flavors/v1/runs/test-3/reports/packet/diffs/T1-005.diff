@@ -1,0 +1,372 @@
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..4664cd4ca3 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -2,7 +2,10 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ 
++import os
++
+ import torch
++import torch.distributed as dist
+ from torch.distributed import ProcessGroup
+ 
+ import vllm.envs as envs
+@@ -112,6 +115,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             if is_symmetric_memory_enabled():
+                 register_nccl_symmetric_ops(self.pynccl_comm)
+ 
++        self.host_ar_comm = None
+         self.ca_comm: CustomAllreduce | None = None
+         self.qr_comm: QuickAllReduce | None = None
+         self.symm_mem_comm: SymmMemCommunicator | None = None
+@@ -165,6 +169,26 @@ class CudaCommunicator(DeviceCommunicatorBase):
+                 register_graph_buffers=register,
+             )
+ 
++        # 2-rank TP without GPU peer-to-peer: all-reduce through shared pinned
++        # host memory (NCCL goes through host memory too, but slower).
++        if (
++            unique_name.split(":")[0] == "tp"
++            and self.world_size == 2
++            and current_platform.is_cuda()
++            and not envs.VLLM_BATCH_INVARIANT
++            and os.environ.get("VLLM_DISABLE_HOST_STAGED_AR", "0") != "1"
++        ):
++            from vllm.distributed.device_communicators.custom_all_reduce import (
++                _can_p2p,
++            )
++
++            if not _can_p2p(dist.get_rank(self.cpu_group), self.world_size):
++                from vllm.distributed.device_communicators.host_staged_ar import (
++                    HostStagedAllReduce,
++                )
++
++                self.host_ar_comm = HostStagedAllReduce(self.cpu_group, self.device)
++
+         # AITER custom all-gather/reduce-scatter DP-attention dispatch/combine.
+         # AITER requires a torch.distributed-registered group and exchanges IPC
+         # handles via the default store; stateless groups satisfy neither.
+@@ -426,6 +450,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             out = aiter_ar_comm.custom_all_reduce(input_)
+             assert out is not None
+             return out
++        host_ar = self.host_ar_comm
++        if host_ar is not None and host_ar.should_use(input_):
++            return host_ar.all_reduce(input_)
+         ca_comm = self.ca_comm
+         if (
+             ca_comm is not None
+@@ -486,6 +513,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         # gather-before-GEMM uses dim=0 with tp-aligned (uniform) shards.
+         if dim < 0:
+             dim += input_.dim()
++        host_ar = self.host_ar_comm
++        if host_ar is not None and host_ar.should_use_all_gather(input_, dim):
++            return host_ar.all_gather(input_, dim)
+         if dim == 0 and should_nccl_symm_mem_ag_rs():
+             return self._all_gather_symm_mem(input_.contiguous())
+ 
+diff --git a/vllm/distributed/device_communicators/host_staged_ar.cu b/vllm/distributed/device_communicators/host_staged_ar.cu
+new file mode 100644
+index 0000000000..4ca5400473
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_staged_ar.cu
+@@ -0,0 +1,162 @@
++#include <torch/extension.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <sys/mman.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <string>
++
++#define MAXB 128
++#define MAXK 8
++#define FSTRIDE 16   // ints between flags (64B)
++
++static __device__ __forceinline__ uint4 ld_cv(const uint4* p) {
++  uint4 r;
++  asm volatile("ld.global.cv.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(r.x),"=r"(r.y),"=r"(r.z),"=r"(r.w) : "l"(p) : "memory");
++  return r;
++}
++static __device__ __forceinline__ void st_cs(uint4* p, uint4 v) {
++  asm volatile("st.global.cs.v4.u32 [%0], {%1,%2,%3,%4};" :: "l"(p),"r"(v.x),"r"(v.y),"r"(v.z),"r"(v.w) : "memory");
++}
++static __device__ __forceinline__ int ld_vol(const int* p) {
++  int r; asm volatile("ld.volatile.global.s32 %0, [%1];" : "=r"(r) : "l"(p) : "memory"); return r;
++}
++static __device__ __forceinline__ uint32_t add_bf16x2(uint32_t a, uint32_t b) {
++  __nv_bfloat162 x = *reinterpret_cast<__nv_bfloat162*>(&a), y = *reinterpret_cast<__nv_bfloat162*>(&b);
++  float2 fx = __bfloat1622float2(x), fy = __bfloat1622float2(y);
++  __nv_bfloat162 r = __floats2bfloat162_rn(fx.x + fy.x, fx.y + fy.y);
++  return *reinterpret_cast<uint32_t*>(&r);
++}
++static __device__ __forceinline__ uint4 add4(uint4 a, uint4 b) {
++  return make_uint4(add_bf16x2(a.x,b.x), add_bf16x2(a.y,b.y), add_bf16x2(a.z,b.z), add_bf16x2(a.w,b.w));
++}
++
++struct Params {
++  const uint4* x; uint4* out;
++  uint4* slot[2][2];      // [rank][parity] device ptr to host-mapped data slots
++  int* flags[2];          // [rank] flag base (host-mapped)
++  int* state;             // device: [0]=epoch, [1]=done counter
++  int rank; long n_vec; int K; int mode; int gather; long inner_vec;
++};
++
++__global__ void hostar_kernel(Params p) {
++  __shared__ int s_epoch;
++  const int G = gridDim.x / 2, tid = threadIdx.x, nt = blockDim.x;
++  const bool writer = blockIdx.x < G;
++  const int g = writer ? blockIdx.x : blockIdx.x - G;
++  if (tid == 0) s_epoch = *(volatile int*)&p.state[0];
++  __syncthreads();
++  const int epoch = s_epoch, par = epoch & 1;
++  uint4* mine = p.slot[p.rank][par];
++  const uint4* peer = p.slot[1 - p.rank][par];
++  int* myf = p.flags[p.rank] + (size_t)g * MAXK * FSTRIDE;
++  const int* pf = p.flags[1 - p.rank] + (size_t)g * MAXK * FSTRIDE;
++  const int K = p.K;
++  long total_chunks = (long)G * K;
++  long cs = (p.n_vec + total_chunks - 1) / total_chunks;
++  for (int c = 0; c < K; c++) {
++    long lo = ((long)c * G + g) * cs, hi = lo + cs;
++    if (lo > p.n_vec) lo = p.n_vec; if (hi > p.n_vec) hi = p.n_vec;
++    if (writer && p.gather) {
++      // all-gather: publish my shard and place it in my slot of the output
++      for (long i = lo + tid; i < hi; i += nt) {
++        uint4 v = p.x[i];
++        st_cs(mine + i, v);
++        p.out[(i / p.inner_vec * 2 + p.rank) * p.inner_vec + i % p.inner_vec] = v;
++      }
++      __threadfence_system();
++      __syncthreads();
++      if (tid == 0) asm volatile("st.volatile.global.s32 [%0], %1;" :: "l"(myf + c * FSTRIDE), "r"(epoch) : "memory");
++    } else if (writer) {
++      long i = lo + tid;
++      for (; i + 3 * nt < hi; i += 4 * nt) {
++        uint4 v0 = p.x[i], v1 = p.x[i+nt], v2 = p.x[i+2*nt], v3 = p.x[i+3*nt];
++        st_cs(mine+i, v0); st_cs(mine+i+nt, v1); st_cs(mine+i+2*nt, v2); st_cs(mine+i+3*nt, v3);
++      }
++      for (; i < hi; i += nt) st_cs(mine + i, p.x[i]);
++      if (!(p.mode & 4)) __threadfence_system();
++      __syncthreads();
++      if (tid == 0 && (p.mode & 4)) __threadfence_system();
++      if (tid == 0) asm volatile("st.volatile.global.s32 [%0], %1;" :: "l"(myf + c * FSTRIDE), "r"(epoch) : "memory");
++    } else {
++      if (tid == 0) {
++        if (p.mode & 8) { while (ld_vol(pf + c * FSTRIDE) != epoch) { } }  // test-only: old racy check
++        else { while ((int)(ld_vol(pf + c * FSTRIDE) - epoch) < 0) { } }   // monotonic: peer may be ahead
++        __threadfence_system();
++      }
++      __syncthreads();
++      if (p.gather) {
++        const int pr = 1 - p.rank;
++        long j = lo + tid;
++        for (; j + 3 * nt < hi; j += 4 * nt) {
++          uint4 v0 = ld_cv(peer + j), v1 = ld_cv(peer + j + nt), v2 = ld_cv(peer + j + 2*nt), v3 = ld_cv(peer + j + 3*nt);
++          #define PUT(jj, vv) p.out[((jj) / p.inner_vec * 2 + pr) * p.inner_vec + (jj) % p.inner_vec] = vv
++          PUT(j, v0); PUT(j + nt, v1); PUT(j + 2*nt, v2); PUT(j + 3*nt, v3);
++        }
++        for (; j < hi; j += nt) { uint4 v = ld_cv(peer + j); PUT(j, v); }
++        continue;
++      }
++      long i = lo + tid;
++      for (; i + 3 * nt < hi; i += 4 * nt) {
++        uint4 v0 = ld_cv(peer + i), v1 = ld_cv(peer + i + nt), v2 = ld_cv(peer + i + 2*nt), v3 = ld_cv(peer + i + 3*nt);
++        p.out[i] = add4(p.x[i], v0); p.out[i+nt] = add4(p.x[i+nt], v1);
++        p.out[i+2*nt] = add4(p.x[i+2*nt], v2); p.out[i+3*nt] = add4(p.x[i+3*nt], v3);
++      }
++      for (; i < hi; i += nt) p.out[i] = add4(p.x[i], ld_cv(peer + i));
++    }
++  }
++  __syncthreads();
++  if (tid == 0) {
++    __threadfence();
++    int d = atomicAdd(&p.state[1], 1);
++    if (d == (int)gridDim.x - 1) { p.state[1] = 0; __threadfence(); *(volatile int*)&p.state[0] = epoch + 1; }
++  }
++}
++
++struct Ctx {
++  void* base[1]; size_t slot_bytes; Params p; int* state; bool init=false;
++};
++static Ctx C;
++
++// Layout of shm file: [rank 0..1][parity 0..1] data slots, then flags [rank][MAXB*MAXK*FSTRIDE ints]
++size_t total_bytes(size_t slot_bytes) { return 4 * slot_bytes + 2 * (size_t)MAXB * MAXK * FSTRIDE * 4; }
++
++void hostar_init(std::string path, int64_t slot_bytes, int64_t rank, bool create) {
++  size_t tot = total_bytes(slot_bytes);
++  int fd = open(path.c_str(), O_RDWR | (create ? (O_CREAT) : 0), 0600);
++  TORCH_CHECK(fd >= 0, "open failed");
++  if (create) TORCH_CHECK(ftruncate(fd, tot) == 0, "ftruncate");
++  void* m = mmap(nullptr, tot, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++  TORCH_CHECK(m != MAP_FAILED, "mmap");
++  close(fd);
++  TORCH_CHECK(cudaHostRegister(m, tot, cudaHostRegisterMapped) == cudaSuccess, "hostregister");
++  void* d; TORCH_CHECK(cudaHostGetDevicePointer(&d, m, 0) == cudaSuccess, "getdevptr");
++  char* b = (char*)d;
++  for (int r = 0; r < 2; r++) for (int q = 0; q < 2; q++) C.p.slot[r][q] = (uint4*)(b + ((size_t)(r * 2 + q)) * slot_bytes);
++  for (int r = 0; r < 2; r++) C.p.flags[r] = (int*)(b + 4 * slot_bytes + (size_t)r * MAXB * MAXK * FSTRIDE * 4);
++  void* st; cudaMalloc(&st, 64); cudaMemset(st, 0, 64);
++  int one = 1; cudaMemcpy(st, &one, 4, cudaMemcpyHostToDevice);
++  C.p.state = (int*)st; C.p.rank = rank; C.slot_bytes = slot_bytes; C.init = true;
++}
++void hostar_zero(std::string path) {}  // flags are zero from ftruncate
++
++void hostar_allreduce(torch::Tensor x, torch::Tensor out, int64_t grid, int64_t K, int64_t threads, int64_t mode) {
++  TORCH_CHECK(C.init);
++  size_t bytes = x.numel() * 2;
++  TORCH_CHECK(bytes % 16 == 0 && bytes <= C.slot_bytes && K <= MAXK && grid <= 2*MAXB && grid%2==0);
++  Params p = C.p; p.x = (const uint4*)x.data_ptr(); p.out = (uint4*)out.data_ptr();
++  p.n_vec = bytes / 16; p.K = K; p.mode = mode; p.gather = 0; p.inner_vec = 1;
++  hostar_kernel<<<grid, threads, 0, at::cuda::getCurrentCUDAStream()>>>(p);
++}
++void hostar_allgather(torch::Tensor x, torch::Tensor out, int64_t grid, int64_t K, int64_t threads, int64_t inner_bytes) {
++  TORCH_CHECK(C.init);
++  size_t bytes = x.numel() * x.element_size();
++  TORCH_CHECK(bytes % 16 == 0 && inner_bytes % 16 == 0 && bytes <= C.slot_bytes && K <= MAXK && grid <= 2*MAXB && grid%2==0);
++  Params p = C.p; p.x = (const uint4*)x.data_ptr(); p.out = (uint4*)out.data_ptr();
++  p.n_vec = bytes / 16; p.K = K; p.mode = 4; p.gather = 1; p.inner_vec = inner_bytes / 16;
++  hostar_kernel<<<grid, threads, 0, at::cuda::getCurrentCUDAStream()>>>(p);
++}
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("init", &hostar_init); m.def("allreduce", &hostar_allreduce); m.def("allgather", &hostar_allgather);
++}
+diff --git a/vllm/distributed/device_communicators/host_staged_ar.py b/vllm/distributed/device_communicators/host_staged_ar.py
+new file mode 100644
+index 0000000000..b40eaf4e0d
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_staged_ar.py
+@@ -0,0 +1,128 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Host-staged 2-rank all-reduce for GPUs without peer-to-peer access.
++
++Both ranks write their partial into a pinned host buffer shared through a
++/dev/shm file (mapped into both processes and registered with
++cudaHostRegister), exchange per-chunk flags in the same shared memory and add
++the peer's partial locally (fp32 add, round to bf16: the same math as NCCL).
++The kernel is CUDA-graph capturable: the flag value (an epoch) lives in device
++memory and is advanced by the kernel itself.
++"""
++
++import os
++import uuid
++
++import torch
++import torch.distributed as dist
++from torch.distributed import ProcessGroup
++
++import vllm.envs as envs
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++_SLOT_BYTES = 24 << 20  # max message size handled; larger falls back to NCCL
++_MIN_BYTES = 1024
++_mod = None
++
++
++def _load_ext():
++    global _mod
++    if _mod is not None:
++        return _mod
++    from torch.utils.cpp_extension import load
++
++    if "TORCH_EXTENSIONS_DIR" not in os.environ:
++        os.environ["TORCH_EXTENSIONS_DIR"] = os.path.join(
++            envs.VLLM_CACHE_ROOT, "torch_extensions"
++        )
++    build_dir = os.path.join(os.environ["TORCH_EXTENSIONS_DIR"], "vllm_host_staged_ar")
++    os.makedirs(build_dir, exist_ok=True)
++    major, minor = torch.cuda.get_device_capability()
++    os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{major}.{minor}")
++    src = os.path.join(os.path.dirname(__file__), "host_staged_ar.cu")
++    _mod = load("vllm_host_staged_ar", [src], build_directory=build_dir, verbose=False)
++    return _mod
++
++
++def _config(nbytes: int) -> tuple[int, int]:
++    """(grid, chunks per writer block) as a function of message size."""
++    if nbytes <= 600 * 1024:
++        return 8, 1
++    if nbytes <= 8 << 20:
++        return 16, 4
++    return 32, 8
++
++
++class HostStagedAllReduce:
++    _instance_made = False
++
++    def __init__(self, group: ProcessGroup, device: torch.device):
++        self.disabled = True
++        if HostStagedAllReduce._instance_made:
++            return
++        self.world_size = dist.get_world_size(group=group)
++        self.rank = dist.get_rank(group=group)
++        if self.world_size != 2:
++            return
++        HostStagedAllReduce._instance_made = True
++        self.device = device
++        torch.cuda.set_device(device)
++        mod = _load_ext()
++        # rank 0 creates the file; both map it; unlink once both have mapped.
++        name = [f"/dev/shm/vllm_hostar_{os.getpid()}_{uuid.uuid4().hex}"]
++        dist.broadcast_object_list(name, src=dist.get_process_group_ranks(group)[0],
++                                   group=group)
++        path = name[0]
++        if self.rank == 0:
++            mod.init(path, _SLOT_BYTES, 0, True)
++        dist.barrier(group=group)
++        if self.rank == 1:
++            mod.init(path, _SLOT_BYTES, 1, False)
++        dist.barrier(group=group)
++        if self.rank == 0:
++            os.unlink(path)
++        self.mod = mod
++        self.disabled = False
++        logger.info("Host-staged all-reduce (no-P2P, 2 ranks) enabled")
++
++    def should_use(self, inp: torch.Tensor) -> bool:
++        if self.disabled or inp.dtype != torch.bfloat16 or not inp.is_cuda:
++            return False
++        nbytes = inp.numel() * inp.element_size()
++        return (
++            _MIN_BYTES <= nbytes <= _SLOT_BYTES
++            and nbytes % 16 == 0
++            and inp.is_contiguous()
++        )
++
++    def all_reduce(self, inp: torch.Tensor) -> torch.Tensor:
++        out = torch.empty_like(inp)
++        grid, k = _config(inp.numel() * 2)
++        self.mod.allreduce(inp, out, grid, k, 512, 4)
++        return out
++
++    def should_use_all_gather(self, inp: torch.Tensor, dim: int) -> bool:
++        if self.disabled or not inp.is_cuda or not inp.is_contiguous():
++            return False
++        nbytes = inp.numel() * inp.element_size()
++        inner = 1
++        for s in inp.shape[dim:]:
++            inner *= s
++        return (
++            _MIN_BYTES <= nbytes <= _SLOT_BYTES
++            and nbytes % 16 == 0
++            and (inner * inp.element_size()) % 16 == 0
++        )
++
++    def all_gather(self, inp: torch.Tensor, dim: int) -> torch.Tensor:
++        """Exact copy-based all-gather of two shards along `dim` (dim >= 0)."""
++        shape = list(inp.shape)
++        inner = 1
++        for s in shape[dim:]:
++            inner *= s
++        shape[dim] *= 2
++        out = torch.empty(shape, dtype=inp.dtype, device=inp.device)
++        grid, k = _config(inp.numel() * inp.element_size())
++        self.mod.allgather(inp, out, grid, k, 512, inner * inp.element_size())
++        return out

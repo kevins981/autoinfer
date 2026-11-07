@@ -1,0 +1,20 @@
+{
+  "id": 36,
+  "pid": 3237754,
+  "team": "T1",
+  "agent": "leader-1.w6",
+  "label": "T1-gdn-unit",
+  "timeout_min": 5.0,
+  "command": [
+    "bash",
+    "-c",
+    "source /scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.gdnreplay/env.sh; cd /scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.gdnreplay/out; NEG=1 python unit_test.py 6 40 0 | tail -4; python unit_test.py 16 300 5 | tail -3"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.gdnreplay",
+  "submitted": "2026-11-07T02:22:46+00:00",
+  "state": "done",
+  "started": "2026-11-07T02:22:47+00:00",
+  "ended": "2026-11-07T02:22:53+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.102
+}

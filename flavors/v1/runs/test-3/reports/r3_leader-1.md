@@ -1,0 +1,8 @@
+# Round 3 report from leader-1 (T1), as received (condensed)
+Best: bank/T1-012 (T1-009 + GDN state checkpoint/replay), official 749.7 tok/s (+2.6% vs T1-009 730.9, +18.7% vs BASE; 2 trials 746.0/753.5, CV 0.7%), GSM8K 93.6%, TTFT p99 1426 ms, TPOT p99 43.3 ms, acceptance 2.353, all gates + 128K pass. Leader recommends promotion despite +2.6% < 3% bar: same-job A/B +2.2%, ceiling microbench ~2 ms/step, exact.
+Experiments:
+- T1-010 (R3-A): k=3 + KV 6.0/5.625/5.5 GiB: all OOM in CUDA graph capture.
+- T1-011 (R3-A): k=3 + KV 5.6 GiB + prefill graph cap 1024 (graphs 1.34->1.08 GiB): starts, runtime OOM in the bench (peak 24,080/24,564 MiB). R3-A stopped: KV ~5.0 GiB is the practical ceiling.
+- T1-012 (R3-B v1): fused next-step replay kernel (load committed state, replay accepted tokens from a per-token input log in the request's own spec slot, store once, run new tokens without state stores) + flush kernel that rebuilds the stock layout bitwise before any outside reader (align pre/post copy, non-fused mixed-step GDN path). Default on; VLLM_GDN_REPLAY=0 opts out. Evidence: ceiling microbench 267->218 us/layer; unit test bitwise equal over 6 seeds (negative control without flush: 106 mismatches); in-server flush counters fired; same-job A/B 712.4 vs 697.3.
+Left open: R3-B v2 (shrink GDN spec blocks to 1 so k=3 fits 16 requests in 5 GiB; 1-2 days + ~15 GPU-min; risk: an unknown reader of the per-token layout); T1-012 preemption/resume untested, flush mode 3 only unit-tested; redundant conv-state work in replay.
+Notes: w6 ~4 GPU-min over allowance; leader missed T1-008's capacity cause in r2 and now checks Running/Waiting. Budget 35.9/80 used.

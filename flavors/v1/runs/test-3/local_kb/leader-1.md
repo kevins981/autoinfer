@@ -20,3 +20,11 @@
 - RULING (human, r2): correctness = math + numeric op checks on same inputs + GSM8K/acceptance; text equality only for bitwise-exact changes at c=1. Relayed to w4; w4 base now T1-007.
 - T1-009 = T1-007 + greedy verify fast path: 732.6 vs 715.3 same-job (+2.4%); 25511 real rows 0 mismatches (467 ties). Official eval launched. w3,w4 stopped. Budget 54.8/80 before eval.
 - T1-009 OFFICIAL 730.9 (+4.5% vs T1-005). Round 2 done, 64.9/80.
+## Round 3 (on T1-009 730.9). R3-A k=3 + bigger KV (w5, 25 min); R3-B GDN replay (w6, 35 min); evals ~15.
+- Lesson: I missed "Running: 14, Waiting: 2" in T1-008's log -> always check scheduler Running/Waiting for capacity-changing configs.
+- R3-B ceiling (w6): stock GDN 122.8 us/layer alone, 267 with 2 GEMMs; last-store-only 61.8/213.7; replay R=2 65.6/217.7 -> ~45-50 us/layer, ~2.1-2.4 ms/step. GO. Kernel = csrc gdn_decode_post_conv_mtp_kernel (needs ws build). Gave design options (a) next-step fused vs (b) end-of-step replay kernel.
+- T1-010: k=3 + KV 5.5-6 GiB OOMs in graph capture; KV ceiling 5.0-5.5 GiB with 2048 prefill graphs. Trying cap 1024 @5.6 GiB (then 512).
+- T1-011: cap1024 + KV 5.6 GiB starts but runtime OOM. R3-A stopped; k=3 needs R3-B v2 (smaller spec pages). w5 stopped (7.2 GPU-min).
+- R3-B v1 (w6): design (a) fused next-step replay + flush kernels before align copies/non-fused paths. Unit bitwise 0 mismatches (negative control 106). 200-prompt same-job A/B 712.4 vs 697.3 (+2.2%), accept 2.359. Asked: Q1 unconditional per-layer flush?, Q2 flags capacity decided once, flush counters, v2 feasibility (fewer spec blocks for k=3).
+- T1-012 filed (replay v1, Q2 fix + counters). Official eval launched. v2 = 1-2 days, not this round.
+- T1-012 OFFICIAL 749.7 (+2.6% vs T1-009; below 3% bar but consistent with +2.2% same-job). Round 3 used 35.9/80. w6 stopped.

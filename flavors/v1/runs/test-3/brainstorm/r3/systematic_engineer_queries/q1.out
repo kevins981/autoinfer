@@ -1,0 +1,9 @@
+steps 192
+grid=128,1 blk=256 prev=flash                  calls/step  67.0 avg  134.4 us med  141.1
+grid=128,1 blk=128 prev=act_and_mul            calls/step  65.0 avg   60.1 us med   60.8
+grid=128,1 blk=128 prev=void cutlass::Kernel2<cutlass_80_wmma_te calls/step  48.0 avg   59.1 us med   59.0
+grid=128,1 blk=128 prev=gdn                    calls/step  48.0 avg   32.5 us med   32.4
+grid=128,1 blk=128 prev=flash                  calls/step  17.0 avg   52.6 us med   52.0
+grid=128,1 blk=128 prev=_fused_sigmoid_gate_mul_kernel calls/step  17.0 avg   26.2 us med   26.1
+grid=128,1 blk=256 prev=act_and_mul            calls/step   1.0 avg   53.2 us med   53.2
+grid=128,1 blk=256 prev=_fused_sigmoid_gate_mul_kernel calls/step   1.0 avg   22.7 us med   22.7

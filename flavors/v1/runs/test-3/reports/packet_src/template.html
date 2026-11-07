@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoInfer test-3 handoff</title>
+<style>
+:root{
+  --bg:#f7f7f5; --panel:#ffffff; --ink:#1d1f23; --muted:#5f6670; --line:#dfe1e5; --soft:#eef0f3;
+  --accent:#2f5bd3; --accent-soft:#e6ecfb; --good:#1f7a4d; --good-soft:#e3f3ea; --bad:#b4372f; --bad-soft:#f8e5e3;
+  --null:#8a6d1d; --null-soft:#f6efd9; --star:#c98a00; --code:#f3f4f6; --add:#e6f4ea; --del:#fbe9e7; --hunk:#eef2fb;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#15171a; --panel:#1d2024; --ink:#e7e9ec; --muted:#9aa2ad; --line:#30343a; --soft:#252930;
+  --accent:#7c9cf5; --accent-soft:#232c45; --good:#5cc08b; --good-soft:#1d3329; --bad:#ef7d74; --bad-soft:#3a2321;
+  --null:#d9b95a; --null-soft:#352f1d; --star:#f0b93a; --code:#23272d; --add:#1d3326; --del:#3a2322; --hunk:#232c45;
+}}
+:root[data-theme="dark"]{
+  --bg:#15171a; --panel:#1d2024; --ink:#e7e9ec; --muted:#9aa2ad; --line:#30343a; --soft:#252930;
+  --accent:#7c9cf5; --accent-soft:#232c45; --good:#5cc08b; --good-soft:#1d3329; --bad:#ef7d74; --bad-soft:#3a2321;
+  --null:#d9b95a; --null-soft:#352f1d; --star:#f0b93a; --code:#23272d; --add:#1d3326; --del:#3a2322; --hunk:#232c45;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans)}
+header{padding:20px 24px 0;max-width:1400px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px}
+.sub{color:var(--muted);font-size:14px}
+.kpis{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:150px}
+.kpi .v{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums}
+.kpi .l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+nav{display:flex;gap:4px;border-bottom:1px solid var(--line);max-width:1400px;margin:0 auto;padding:0 24px;overflow-x:auto}
+nav button{background:none;border:0;border-bottom:2px solid transparent;padding:10px 12px;font:inherit;color:var(--muted);cursor:pointer;white-space:nowrap}
+nav button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+main{max-width:1400px;margin:0 auto;padding:20px 24px 60px}
+.page{display:none}.page.on{display:block}
+.prose{max-width:900px}
+.prose h2{font-size:18px;margin:24px 0 8px}.prose h3{font-size:16px;margin:20px 0 6px}
+.prose code,.detail code{font-family:var(--mono);font-size:.88em;background:var(--code);padding:1px 4px;border-radius:4px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;margin:8px 0;font-size:14px}
+th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+th{background:var(--soft)}
+td{font-variant-numeric:tabular-nums}
+.split{display:grid;grid-template-columns:minmax(320px,440px) 1fr;gap:20px;align-items:start}
+@media (max-width:900px){.split{grid-template-columns:1fr}}
+.treecol{position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto;padding-right:4px}
+@media (max-width:900px){.treecol{position:static;max-height:none}}
+.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--muted);margin-bottom:10px}
+.dir{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+.dir h3{margin:0;font-size:14px}
+.dir .meta{font-size:12px;color:var(--muted);margin:2px 0 8px}
+.node{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font:inherit;color:inherit;background:none;border:1px solid transparent;border-radius:7px;padding:5px 6px;cursor:pointer;position:relative}
+.node:hover{background:var(--soft)}
+.node[aria-current="true"]{background:var(--accent-soft);border-color:var(--accent)}
+.node .id{font-family:var(--mono);font-size:13px;font-weight:600;min-width:52px}
+.node .t{flex:1;font-size:13px;min-width:0}
+.node .r{font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--muted)}
+.node.path .id{color:var(--star)}
+.indent{display:inline-block;border-left:1px solid var(--line);height:22px;margin-left:8px;width:10px;flex:none}
+.badge{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:1px 7px;white-space:nowrap}
+.b-champ{background:var(--star);color:#1b1400}
+.b-win{background:var(--good-soft);color:var(--good)}
+.b-null{background:var(--null-soft);color:var(--null)}
+.b-fail{background:var(--bad-soft);color:var(--bad)}
+.b-diag{background:var(--soft);color:var(--muted)}
+.b-off{background:var(--accent-soft);color:var(--accent)}
+.detail{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;min-width:0}
+.detail h2{margin:0 0 4px;font-size:19px}
+.detail h4{margin:18px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.detail .txt{white-space:pre-wrap;font-size:14px}
+.nums{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.num{background:var(--soft);border-radius:8px;padding:8px 10px}
+.num .v{font-weight:650;font-variant-numeric:tabular-nums}
+.num .l{font-size:12px;color:var(--muted)}
+.pass{color:var(--good);font-weight:600}.fail{color:var(--bad);font-weight:600}
+pre.diff{font-family:var(--mono);font-size:12px;line-height:1.45;background:var(--code);border-radius:8px;padding:10px 0;overflow:auto;max-height:70vh;margin:0}
+pre.diff span{display:block;padding:0 12px;white-space:pre}
+pre.diff .a{background:var(--add)}pre.diff .d{background:var(--del)}pre.diff .h{background:var(--hunk);color:var(--muted)}pre.diff .f{font-weight:700;background:var(--soft)}
+pre.args{font-family:var(--mono);font-size:12px;background:var(--code);border-radius:8px;padding:10px 12px;white-space:pre-wrap;word-break:break-all;margin:0}
+details summary{cursor:pointer;color:var(--accent);font-size:14px}
+.files{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.chart{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;max-width:900px;margin:12px 0 20px}
+.chart svg{width:100%;height:auto;display:block}
+.chart text{fill:var(--muted);font:12px var(--sans)}
+.chart .lbl{fill:var(--ink);font-weight:600}
+.themebtn{float:right;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:4px 10px;font:inherit;font-size:13px;cursor:pointer}
+hr{border:0;border-top:1px solid var(--line);margin:28px 0}
+</style>
+</head>
+<body>
+<header>
+  <button class="themebtn" id="theme" type="button">Theme</button>
+  <h1 id="title">AutoInfer run</h1>
+  <div class="sub" id="subtitle"></div>
+  <div class="kpis" id="kpis"></div>
+</header>
+<nav role="tablist" id="tabs"></nav>
+<main>
+  <section class="page" id="p-overview"><div id="chart" class="chart"></div><div class="prose" id="overview"></div></section>
+  <section class="page" id="p-tree">
+    <div class="split">
+      <div class="treecol">
+        <div class="legend"><span><span class="badge b-champ">★ champion</span></span><span style="color:var(--star)">★ id</span>= on the champion's path<span><span class="badge b-win">win</span></span><span><span class="badge b-null">null</span></span><span><span class="badge b-fail">failed</span></span><span><span class="badge b-diag">diagnosis</span></span></div>
+        <div id="tree"></div>
+      </div>
+      <div class="detail" id="detail"></div>
+    </div>
+  </section>
+  <section class="page" id="p-kb"><div class="prose" id="kb"></div></section>
+  <section class="page" id="p-ideas"><div class="prose" id="ideas"></div></section>
+  <section class="page" id="p-rules"><div class="prose" id="rules"></div></section>
+</main>
+<script>
+const DATA = /*__DATA__*/null;
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const S = DATA.spec, R = DATA.records, BASE = (DATA.base[0]||{});
+
+// theme
+(function(){
+  let t=null; try{t=localStorage.getItem("ai-theme")}catch(e){}
+  if(t) document.documentElement.dataset.theme=t;
+  $("#theme").onclick=()=>{const cur=document.documentElement.dataset.theme||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");
+    const nx=cur==="dark"?"light":"dark"; document.documentElement.dataset.theme=nx; try{localStorage.setItem("ai-theme",nx)}catch(e){}};
+})();
+
+// header
+$("#title").textContent = S.title; $("#subtitle").textContent = S.subtitle;
+$("#kpis").innerHTML = S.kpis.map(k=>`<div class="kpi"><div class="v">${esc(k.v)}</div><div class="l">${esc(k.l)}</div></div>`).join("");
+
+// tabs
+const TABS=[["overview","Overview"],["tree","Experiment tree"],["kb","Insights (KB)"],["ideas","Untried ideas"],["rules","Rules & assumptions"]];
+$("#tabs").innerHTML = TABS.map(([id,l])=>`<button role="tab" data-t="${id}">${l}</button>`).join("");
+function show(id){ document.querySelectorAll(".page").forEach(p=>p.classList.toggle("on",p.id==="p-"+id));
+  document.querySelectorAll("nav button").forEach(b=>b.setAttribute("aria-selected",b.dataset.t===id));
+  try{history.replaceState(null,"","#"+id+(id==="tree"&&cur?":"+cur:""))}catch(e){} }
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>show(b.dataset.t));
+
+// pages
+$("#overview").innerHTML = DATA.pages.overview; $("#kb").innerHTML = DATA.pages.kb;
+$("#ideas").innerHTML = DATA.pages.ideas; $("#rules").innerHTML = DATA.pages.rules;
+
+// progression chart
+(function(){
+  const pts=S.progress; if(!pts||!pts.length) return;
+  const W=860,H=230,L=60,Rr=20,T=24,B=40, max=Math.max(...pts.map(p=>p.v))*1.08, min=Math.min(...pts.map(p=>p.v))*0.9;
+  const x=i=>L+(W-L-Rr)*(pts.length===1?0.5:i/(pts.length-1)), y=v=>T+(H-T-B)*(1-(v-min)/(max-min));
+  let g=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Champion output tokens per second by round">`;
+  for(let k=0;k<4;k++){const v=min+(max-min)*k/3;g+=`<line x1="${L}" x2="${W-Rr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L-8}" y="${y(v)+4}" text-anchor="end">${v.toFixed(0)}</text>`;}
+  g+=`<polyline fill="none" stroke="var(--accent)" stroke-width="2.5" points="${pts.map((p,i)=>x(i)+","+y(p.v)).join(" ")}"/>`;
+  pts.forEach((p,i)=>{g+=`<circle cx="${x(i)}" cy="${y(p.v)}" r="5" fill="var(--panel)" stroke="var(--accent)" stroke-width="2.5"/>`+
+    `<text class="lbl" x="${x(i)}" y="${y(p.v)-12}" text-anchor="middle">${p.v.toFixed(1)}</text>`+
+    `<text x="${x(i)}" y="${H-B+18}" text-anchor="middle">${esc(p.label)}</text>`+
+    (p.note?`<text x="${x(i)}" y="${H-B+33}" text-anchor="middle">${esc(p.note)}</text>`:"");});
+  g+=`</svg>`;
+  $("#chart").innerHTML=`<div style="font-weight:600;margin-bottom:4px">Champion output tok/s at concurrency 16 (official)</div>`+g;
+})();
+
+// tree
+const BADGE={champ:["b-champ","★ champion"],win:["b-win","win"],null:["b-null","null"],fail:["b-fail","failed"],diag:["b-diag","diagnosis"],nooff:["b-diag","no official"],pend:["b-off","best measured · below bar"]};
+let cur=null;
+function renderTree(){
+  $("#tree").innerHTML = S.directions.map(d=>{
+    const nodes=d.nodes.map(n=>{
+      const ind="<span class='indent'></span>".repeat(n.depth||0);
+      const b=BADGE[n.status]||null;
+      return `<button class="node${n.path?" path":""}" data-id="${n.id}" type="button">${ind}<span class="id">${n.path?"★ ":""}${esc(n.id)}</span><span class="t">${esc(n.title)}</span><span class="r">${esc(n.result||"")}</span>${b?`<span class="badge ${b[0]}">${b[1]}</span>`:""}</button>`;}).join("");
+    return `<div class="dir"><h3>${esc(d.title)}</h3><div class="meta">${esc(d.meta)}</div>${nodes}</div>`;}).join("");
+  document.querySelectorAll(".node").forEach(b=>b.onclick=()=>select(b.dataset.id));
+}
+function nodeSpec(id){for(const d of S.directions)for(const n of d.nodes)if(n.id===id)return [d,n];return [null,null];}
+function fmt(v,d=1){return v==null?"–":Number(v).toFixed(d)}
+function diffHtml(t){return t.split("\n").map(l=>{let c="";if(l.startsWith("+++")||l.startsWith("---")||l.startsWith("diff "))c="f";else if(l.startsWith("@@"))c="h";else if(l.startsWith("+"))c="a";else if(l.startsWith("-"))c="d";return `<span class="${c}">${esc(l)||" "}</span>`}).join("");}
+function select(id){
+  cur=id; document.querySelectorAll(".node").forEach(b=>b.setAttribute("aria-current",b.dataset.id===id));
+  const [d,n]=nodeSpec(id), r=R[id]||{}, rec=r.rec||{};
+  let h=`<h2>${esc(id)} — ${esc(n.title)}</h2><div class="sub">${esc(d.title)} · builds on ${esc(n.parent||"BASE")}${n.status&&BADGE[n.status]?` · <span class="badge ${BADGE[n.status][0]}">${BADGE[n.status][1]}</span>`:""}</div>`;
+  if(n.takeaway) h+=`<h4>In one line</h4><div class="txt">${esc(n.takeaway)}</div>`;
+  const off=(r.official||[]).filter(o=>o.output_throughput!=null);
+  if(off.length){const o=off[off.length-1], bt=BASE.output_throughput;
+    const gate=(k,v)=>v==null?"–":`<span class="${v==="pass"?"pass":"fail"}">${esc(v)}</span>`;
+    h+=`<h4>Official result (#${esc(o.n)})</h4><div class="nums">
+      <div class="num"><div class="v">${fmt(o.output_throughput)} tok/s</div><div class="l">output tok/s at c=16${bt?` · ${o.output_throughput>=bt?"+":""}${(100*(o.output_throughput/bt-1)).toFixed(1)}% vs BASE`:""}</div></div>
+      <div class="num"><div class="v">${fmt(o.p99_ttft_ms,0)} ms</div><div class="l">TTFT p99 (gate ≤ ${S.gates.ttft} ms)</div></div>
+      <div class="num"><div class="v">${fmt(o.p99_tpot_ms)} ms</div><div class="l">TPOT p99 (gate ≤ ${S.gates.tpot} ms)</div></div>
+      <div class="num"><div class="v">${o.gsm8k_accuracy!=null?(100*o.gsm8k_accuracy).toFixed(1)+"%":"–"}</div><div class="l">GSM8K (gate ≥ ${S.gates.gsm8k}%)</div></div>
+      <div class="num"><div class="v">${fmt(o.mtp_acceptance_length,3)}</div><div class="l">MTP acceptance length</div></div>
+      <div class="num"><div class="v">${o.output_throughput_trials?o.output_throughput_trials.map(x=>fmt(x)).join(" / "):"1 trial"}</div><div class="l">trials${o.output_throughput_cv_pct!=null?` · CV ${fmt(o.output_throughput_cv_pct,2)}%`:""}</div></div>
+    </div><div style="margin-top:6px;font-size:14px">Gates: GSM8K ${gate("g",o.gate_gsm8k)} · latency ${gate("l",o.gate_latency)} · 128K request ${gate("k",o.gate_long_request)}</div>`;}
+  if(rec.performance) h+=`<h4>${off.length?"Record summary":"Result (unofficial)"}</h4><div class="txt">${esc(rec.performance)}</div>`;
+  for(const [k,l] of [["hypothesis","Why (hypothesis)"],["change","What changed"],["results","Observed"],["conclusion","Conclusion"],["validity","Validity review"]])
+    if(rec[k]) h+=`<h4>${l}</h4><div class="txt">${esc(rec[k])}</div>`;
+  if(r.serve_args) h+=`<h4>Extra serve flags (serve_args.txt)</h4><pre class="args">${esc(r.serve_args)}</pre>`;
+  h+=`<h4>Code diff (vs the task's baseline vLLM)</h4>`;
+  if(!r.diff) h+=`<div class="txt">No code change${r.serve_args?" (flags only)":""}.</div>`;
+  else{
+    const par=n.parent||"BASE", delta=r.delta_vs_parent||"", fc=r.files_changed_vs_parent||[];
+    h+=`<div class="files">${r.diff_files.map(f=>esc(f)+(par!=="BASE"&&fc.includes(f)?(" <span class='badge b-off'>changed vs "+esc(par)+"</span>"):"")).join("<br>")}</div>`;
+    if(par!=="BASE"){
+      if(!delta) h+=`<div class="txt" style="margin:6px 0">Code identical to ${esc(par)}'s: this record differs only in serve flags, or is a measurement.</div>`;
+      else h+=`<details style="margin-top:8px" open><summary>Files changed relative to ${esc(par)} (${fc.length})</summary><pre class="diff">${diffHtml(delta)}</pre></details>`;
+    }
+    h+=`<details style="margin-top:8px"${par==="BASE"?" open":""}><summary>Full diff vs baseline (${r.diff.split("\n").length} lines; also in diffs/${esc(id)}.diff)</summary><pre class="diff">${diffHtml(r.diff)}</pre></details>`;
+  }
+  $("#detail").innerHTML=h;
+  try{history.replaceState(null,"","#tree:"+id)}catch(e){}
+}
+renderTree();
+const hs=(location.hash||"").slice(1).split(":");
+const first=S.champion||S.directions[0].nodes[0].id;
+select(hs[0]==="tree"&&hs[1]&&R[hs[1]]?hs[1]:first);
+show(TABS.some(t=>t[0]===hs[0])?hs[0]:"overview");
+</script>
+</body>
+</html>

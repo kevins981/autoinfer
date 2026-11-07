@@ -1,0 +1,19 @@
+{
+  "id": 45,
+  "pid": 3261113,
+  "team": "T1",
+  "agent": "leader-1.w6",
+  "label": "T1-gdn-cross4",
+  "timeout_min": 15.0,
+  "command": [
+    "bash",
+    "out/job_cross.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.gdnreplay",
+  "submitted": "2026-11-07T02:48:11+00:00",
+  "state": "done",
+  "started": "2026-11-07T02:48:11+00:00",
+  "ended": "2026-11-07T02:50:40+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.478
+}

@@ -66,7 +66,14 @@ eval gives up after 15 min per server start).
 - The served model computes the same function as the baseline: changes may reorder
   floating-point operations or change kernels, but not approximate (no lossy quantization,
   skipped layers, truncated vocabularies, early exits). Speculative decoding must remain exact
-  (verification against the target model; at temperature 0 the output equals the target's).
+  (verification against the target model, so the output is what the target model would produce).
+- **Identical output text is not the test.** Even at temperature 0, floating-point results depend
+  on batch composition and kernel choice, so the same code at concurrency 16 can produce different
+  text run to run, and a valid change that reorders floating-point math will sometimes flip a
+  near-tie and diverge from there. Judge correctness by the math (exact by construction, or a
+  bounded-error reordering), by numeric checks of the changed op (e.g. bitwise or max-abs-diff vs
+  the old op on the same inputs), and by accuracy (GSM8K) and MTP acceptance. Token-for-token
+  comparison is meaningful only for changes that are bitwise-exact, run one request at a time.
 - Nothing specific to the benchmark: no caching or precomputing outputs for its prompts, no
   tuning to seed 0 or to these 400 prompts, no detection of the benchmark.
 - Every request is answered in full; the server stays a general OpenAI-compatible server (tool

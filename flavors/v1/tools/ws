@@ -8,7 +8,7 @@ Spec: design/infra/workspaces_and_builds.md.
 
 Usage:
   ws setup-task                   # once per task: our own clone + prebuilt files (in .cache/tasks/)
-  ws create <name> [--from <record id>]
+  ws create <name> [--from <record id> | --from-ws <workspace>]
   ws build <name> [--target T]... # cmake + ninja in <ws>/build, shared ccache
   ws diff <name>                  # the change vs the baseline (becomes a record's change.diff)
   ws list
@@ -187,10 +187,21 @@ def cmd_create(a):
         die(f"workspace {a.name} already exists ({w})")
     base = baseline_commit()
     diff = None
+    if a.from_record and a.from_ws:
+        die("give --from or --from-ws, not both")
     if a.from_record:
         diff = run_dir() / "bank" / a.from_record / "change.diff"
         if not diff.exists():
             die(f"{diff} not found")
+    if a.from_ws:
+        sw, smeta = need_ws(a.from_ws)
+        if smeta["baseline_commit"] != base:
+            die(f"{a.from_ws} is on another baseline commit")
+        stree = sw / task_cfg()["repo_name"]
+        git(stree, "add", "--intent-to-add", "--all", capture_output=True)
+        d = git(stree, "diff", "--binary", base, capture_output=True).stdout
+        diff = sw / f".copy-{a.name}.diff"
+        diff.write_bytes(d)
     cfg = task_cfg()
     src_tree = w / cfg["repo_name"]
     w.mkdir(parents=True)
@@ -208,11 +219,17 @@ def cmd_create(a):
     except BaseException:
         remove_ws(w, src_tree)
         raise
-    meta = {"name": a.name, "from": a.from_record or "BASE", "baseline_commit": base,
+    if a.from_ws:
+        diff.unlink(missing_ok=True)
+    meta = {"name": a.name, "from": a.from_record or (f"workspace {a.from_ws}" if a.from_ws else "BASE"),
+            "baseline_commit": base,
             "created": now(), "created_by": os.environ.get("AUTOINFER_AGENT", "human")}
     (w / "ws.json").write_text(json.dumps(meta, indent=2) + "\n")
     print(f"created workspace {a.name} from {meta['from']}: {w}\n"
           f"  code: {src_tree}\n  use:  source {w / 'env.sh'}")
+    if a.from_ws and (ws_dir(a.from_ws) / "build" / "build.ninja").exists():
+        print(f"  note: {a.from_ws} has its own C++/CUDA build; if its change touches compiled code, "
+              f"run `ws build {a.name}` (background) before using this copy")
 
 
 def need_ws(name):
@@ -358,10 +375,14 @@ Layout:  <ws>/vllm/      the code (a git worktree; edit here)
 Keep notes, logs and results in <ws>/ (outside vllm/), or they end up in the diff.""",
                        epilog="""examples:
   ws create leader-1.fused-ar                  # from the baseline
-  ws create leader-1.fused-ar-v2 --from T1-003 # baseline + record T1-003's change.diff""")
+  ws create leader-1.fused-ar-v2 --from T1-003 # baseline + record T1-003's change.diff
+  ws create leader-1.fused-ar.b --from-ws leader-1.fused-ar   # a copy of a workspace's current code
+                                               # (e.g. to keep editing while a GPU job uses the original)""")
     s.add_argument("name", help="workspace name, e.g. <leader>.<experiment>")
     s.add_argument("--from", dest="from_record", metavar="RECORD",
                    help="bank record id to start from (default: the baseline)")
+    s.add_argument("--from-ws", dest="from_ws", metavar="WORKSPACE",
+                   help="copy another workspace's current change (uncommitted edits and new files included)")
     s.set_defaults(fn=cmd_create)
     s = sub.add_parser("build", formatter_class=R, help="build C++/CUDA changes",
                        description="""Build the workspace's compiled code (cmake + ninja in <ws>/build, shared ccache)

@@ -20,6 +20,9 @@ Agents get the essentials in `agents/common.md`; every tool's `--help` (and `<to
 - `ws create <name> [--from <record id>]` (leaders): a full, independent copy at the baseline +
   that record's diff, in seconds. `source $AUTOINFER_RUN/workspaces/<name>/env.sh` before running
   anything: it sets the environment and makes Python load this workspace's code.
+- `ws create <name> --from-ws <workspace>` (anyone, e.g. workers): a copy of a workspace's
+  current change, uncommitted edits included. Use it to keep editing while a GPU job uses the
+  original: inference servers load a workspace's code when they start, so don't edit one mid-job.
 - Python-only changes: nothing to build; restart the server.
 - C++/CUDA changes: `ws build <name>`. **Run it as a background command**: the first build in a
   workspace takes ~2 min with a warm cache and ~11 min cold (over the 10-minute Bash limit); later

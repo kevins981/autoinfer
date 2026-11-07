@@ -23,7 +23,9 @@ leader.run(task) -> report:
                 # how: ws create <your name>.<short exp name> [--from <record id>]
                 # then copy in what the worker needs, as files in the workspace (outside vllm/):
                 # a brief (goal, metric, how to run and measure things, relevant excerpts of
-                # the task definition, records and profiles). Workers only see their workspace.
+                # the task definition, records and profiles), or point to files by path.
+                # Workers may make more workspaces (`ws create --from-ws`); their report names
+                # the one that holds the final change.
             wreport = worker.run(exp.task)
                 # how (new worker): agent start <your name>.w<k> --role worker --team <your team> \
                 #        --cwd <ws> --task-file <ws>/task.md

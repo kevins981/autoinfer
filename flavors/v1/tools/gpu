@@ -321,6 +321,9 @@ def cmd_run(a):
         write_json(jdir / "job.json", info)
         write_json(g / "running.json", info)
         print(f"[gpu] job {jid} started (timeout {a.timeout:g} min); output: {log_path}", flush=True)
+        print("[gpu] reminder: each inference server loads the workspace's code when it starts, not when "
+              "you submitted. Don't edit a workspace this job uses; to keep working meanwhile, copy it: "
+              "ws create <new name> --from-ws <workspace>", flush=True)
         env = dict(os.environ, AUTOINFER_GPU_JOB=str(jid))
         with open(log_path, "w") as log:
             proc = subprocess.Popen(a.command, stdout=log, stderr=subprocess.STDOUT,

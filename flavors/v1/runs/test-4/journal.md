@@ -14,3 +14,4 @@
 - 2026-11-07T06:59:15Z T2-006 ABAB (job 26): CHAMP 657.8/661.4 vs T2-006 661.2/661.1, +0.2%, within noise. Decision: T2-006 does NOT replace T1-003: no consistent gain, and T1-003 is the simpler change. Lesson: same-job A/Bs with one server per arm can drift ~2%; use ABAB.
 - 2026-11-07T07:04:14Z ROUND 2 collected. No new champion: T1-003 stays. T2-006 tie under ABAB; T1-004 null (0.0% same-job 400-prompt A/B). KB5 corrected; KB11-15 added. Max rounds (2) reached -> finalize.
 - 2026-11-07T07:04:15Z run finalized: all agents stopped; reports/final.md written. Champion T1-003 691.3 (+8.7%).
+- 2026-11-07T14:46:28Z handoff packet built (reports/packet/, reports/packet.zip; generator agents/manager/packet_build/build.py), from this run's files only.

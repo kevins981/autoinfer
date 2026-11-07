@@ -1,0 +1,459 @@
+diff --git a/csrc/quantization/marlin/marlin.cu b/csrc/quantization/marlin/marlin.cu
+index 9d031dcd28..bc1305c59d 100644
+--- a/csrc/quantization/marlin/marlin.cu
++++ b/csrc/quantization/marlin/marlin.cu
+@@ -1,3 +1,4 @@
++#include <cstdlib>
+ /*
+  * Modified by Neural Magic
+  * Copyright (C) Marlin.2024 Elias Frantar
+@@ -505,6 +506,14 @@ torch::stable::Tensor marlin_gemm(
+   int sms = -1;
+   const int32_t device_index = a.get_device_index();
+   cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device_index);
++  {
++    // Experiment: leave SMs free for a concurrent kernel (e.g. NCCL CTAs).
++    const char* rs = std::getenv("VLLM_MARLIN_SM_RESERVE");
++    if (rs != nullptr) {
++      int r = std::atoi(rs);
++      if (r > 0 && r < sms) sms -= r;
++    }
++  }
+ 
+   // Alloc buffers
+   torch::stable::accelerator::DeviceGuard device_guard(device_index);
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..7183cf474c 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
++import os
+ 
+ import torch
+ from torch.distributed import ProcessGroup
+@@ -112,6 +113,24 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             if is_symmetric_memory_enabled():
+                 register_nccl_symmetric_ops(self.pynccl_comm)
+ 
++        self.host_ar_comm = None
++        if (
++            self.world_size == 2
++            and unique_name.split(":")[0] == "tp"
++            and current_platform.is_cuda()
++            and os.environ.get("VLLM_USE_HOST_AR", "1") == "1"
++        ):
++            try:
++                from vllm.distributed.device_communicators.host_ar import (
++                    HostAllReduce,
++                )
++
++                self.host_ar_comm = HostAllReduce(self.cpu_group, self.device)
++                logger.info("Host-staged 2-rank all-reduce is active (tp group)")
++            except Exception as e:  # pragma: no cover
++                logger.warning("Host all-reduce disabled: %s", e)
++                self.host_ar_comm = None
++
+         self.ca_comm: CustomAllreduce | None = None
+         self.qr_comm: QuickAllReduce | None = None
+         self.symm_mem_comm: SymmMemCommunicator | None = None
+@@ -382,6 +401,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         )
+ 
+     def all_reduce(self, input_):
++        host_ar = self.host_ar_comm
++        if host_ar is not None and host_ar.should_use(input_):
++            return host_ar.all_reduce(input_)
+         fi_ar_comm = self.fi_ar_comm
+         use_fi_ar = (
+             fi_ar_comm is not None
+diff --git a/vllm/distributed/device_communicators/host_ar/__init__.py b/vllm/distributed/device_communicators/host_ar/__init__.py
+new file mode 100644
+index 0000000000..03504b4b80
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_ar/__init__.py
+@@ -0,0 +1,71 @@
++# SPDX-License-Identifier: Apache-2.0
++import os
++import uuid
++
++import torch
++import torch.distributed as dist
++
++_ext = None
++
++
++def _load():
++    global _ext
++    if _ext is None:
++        from torch.utils.cpp_extension import load
++        d = os.path.dirname(os.path.abspath(__file__))
++        _ext = load(name="host_ar_ext", sources=[os.path.join(d, "host_ar.cu")],
++                    extra_cuda_cflags=["-O3", "-gencode=arch=compute_89,code=sm_89"],
++                    extra_cflags=["-O3"], verbose=False)
++    return _ext
++
++
++class HostAllReduce:
++    """2-rank bf16 all-reduce staged through pinned shared host memory."""
++
++    def __init__(self, cpu_group, device, max_tokens_bytes=2 << 20, nblocks=64, nthreads=256, nsub=1):
++        self.disabled = True
++        torch.cuda.set_device(device)
++        self.ext = _load()
++        self.device = device
++        self.nb, self.nt, self.S = nblocks, nthreads, nsub
++        self.maxvec = max_tokens_bytes // 16
++        self.max_bytes = max_tokens_bytes
++        g_rank = dist.get_rank(cpu_group)
++        ranks = dist.get_process_group_ranks(cpu_group)
++        assert len(ranks) == 2
++        self.rank = g_rank
++        path = [None]
++        if g_rank == 0:
++            path[0] = f"/dev/shm/vllm_host_ar_{os.getpid()}_{uuid.uuid4().hex}"
++        dist.broadcast_object_list(path, src=ranks[0], group=cpu_group)
++        path = path[0]
++        nbytes = self.ext.seg_bytes(self.maxvec)
++        if g_rank == 0:
++            self.seg, self.dev = self.ext.seg_open(path, nbytes, True)
++        dist.barrier(group=cpu_group)
++        if g_rank == 1:
++            self.seg, self.dev = self.ext.seg_open(path, nbytes, False)
++        dist.barrier(group=cpu_group)
++        if g_rank == 0:
++            self.ext.unlink_path(path)
++        self._cfg = (self.nb, self.nt, self.S)  # must stay fixed: epochs/slots/flag values depend on it
++        self.counters = torch.zeros(256, dtype=torch.int32, device=device)
++        self.disabled = False
++        dist.barrier(group=cpu_group)
++
++    def should_use(self, inp):
++        return (not self.disabled and inp.dtype == torch.bfloat16 and inp.is_cuda
++                and inp.is_contiguous() and inp.numel() * 2 % 16 == 0
++                and 0 < inp.numel() * 2 <= self.max_bytes)
++
++    def all_reduce(self, inp, out=None):
++        assert (self.nb, self.nt, self.S) == self._cfg, "host_ar nb/nt/S must be fixed"
++        if out is None:
++            out = torch.empty_like(inp)
++        self.ext.all_reduce(inp, out, self.dev, self.counters.data_ptr(), self.nb, self.nt, self.rank, self.maxvec, self.S)
++        return out
++
++    def close(self):
++        if not self.disabled:
++            self.disabled = True
++            self.ext.seg_close(self.seg)
+diff --git a/vllm/distributed/device_communicators/host_ar/host_ar.cu b/vllm/distributed/device_communicators/host_ar/host_ar.cu
+new file mode 100644
+index 0000000000..ec14746028
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_ar/host_ar.cu
+@@ -0,0 +1,137 @@
++// Host-staged 2-rank all-reduce (bf16) through pinned shared host memory (no GPU P2P).
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAGuard.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <unistd.h>
++#include <stdint.h>
++
++#define MAXNB 128
++#define FLAG_STRIDE 32  // uint32 per flag => 128 B lines
++
++static __device__ __forceinline__ uint32_t ld_acq(const uint32_t* p) {
++  uint32_t v; asm volatile("ld.acquire.sys.global.u32 %0, [%1];" : "=r"(v) : "l"(p) : "memory"); return v;
++}
++static __device__ __forceinline__ void st_rel(uint32_t* p, uint32_t v) {
++  asm volatile("st.relaxed.sys.global.u32 [%0], %1;" :: "l"(p), "r"(v) : "memory");
++}
++static __device__ __forceinline__ unsigned long long globaltimer() {
++  unsigned long long t; asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t)); return t;
++}
++static __device__ __forceinline__ int4 ld_vol(const int4* p) {
++  int4 v;
++  asm volatile("ld.volatile.global.v4.s32 {%0,%1,%2,%3}, [%4];" : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w) : "l"(p) : "memory");
++  return v;
++}
++static __device__ __forceinline__ int4 add_bf16x8(int4 a, int4 b) {
++  int4 r;
++  const __nv_bfloat162* pa = reinterpret_cast<const __nv_bfloat162*>(&a);
++  const __nv_bfloat162* pb = reinterpret_cast<const __nv_bfloat162*>(&b);
++  __nv_bfloat162* pr = reinterpret_cast<__nv_bfloat162*>(&r);
++#pragma unroll
++  for (int i = 0; i < 4; i++) {
++    float2 x = __bfloat1622float2(pa[i]), y = __bfloat1622float2(pb[i]);
++    pr[i] = __float22bfloat162_rn(make_float2(x.x + y.x, x.y + y.y));
++  }
++  return r;
++}
++
++// data layout: [slot 2][rank 2][maxvec] int4 ; flags: [slot 2][rank 2][MAXNB][FLAG_STRIDE] u32
++// Grid = 2*nb blocks: first nb are writers (stage local chunk to host in S sub-chunks, flag after each),
++// last nb are readers (wait for the peer's sub-chunk flag, read it, add local, write out).
++// flag value = e*S + j + 1 after sub-chunk j of epoch e (monotonic, compared with signed diff).
++// Slot reuse safety: a writer at epoch e+2 runs only after this rank's kernel e+1 finished, whose reader saw the
++// peer's epoch e+1 flags, written by a peer kernel that started after the peer's kernel e (incl. readers) ended.
++template <int NT>
++__global__ void __launch_bounds__(NT) ar_kernel(const int4* __restrict__ inp, int4* __restrict__ out,
++                                         int4* hdata, uint32_t* hflags, uint32_t* counters,
++                                         int rank, long nvec, long maxvec, int S) {
++  const int nb = gridDim.x >> 1;
++  const bool writer = blockIdx.x < nb;
++  const int b = writer ? blockIdx.x : blockIdx.x - nb, tid = threadIdx.x;
++  uint32_t* cp = counters + (writer ? 0 : 128) + b;
++  const uint32_t e = *cp + 1;
++  __syncthreads();
++  if (tid == 0) *cp = e;
++  const int slot = e & 1, peer = rank ^ 1;
++  const long start = (nvec * b) / nb, end = (nvec * (b + 1)) / nb, cnt = end - start;
++  int4* mine = hdata + ((long)(slot * 2 + rank)) * maxvec + start;
++  const int4* theirs = hdata + ((long)(slot * 2 + peer)) * maxvec + start;
++  const int4* in = inp + start;
++  int4* o = out + start;
++  uint32_t* myflag = hflags + (((slot * 2 + rank) * MAXNB) + b) * FLAG_STRIDE;
++  const uint32_t* pf = hflags + (((slot * 2 + peer) * MAXNB) + b) * FLAG_STRIDE;
++  for (int j = 0; j < S; j++) {
++    const long s0 = (cnt * j) / S, s1 = (cnt * (j + 1)) / S;
++    const uint32_t target = e * (uint32_t)S + j + 1;
++    if (writer) {
++      for (long i = s0 + tid; i < s1; i += NT) mine[i] = in[i];
++      __syncthreads();
++      if (tid == 0) { __threadfence_system(); st_rel(myflag, target); }
++    } else {
++      if (tid == 0) {
++        unsigned long long t0 = globaltimer();
++        while ((int)(ld_acq(pf) - target) < 0) {
++          // hang detector only (~5 min); NCCL never times out and ranks can be skewed during startup
++          if (globaltimer() - t0 > 300000000000ULL) { printf("host_ar timeout rank %d block %d epoch %u sub %d\n", rank, b, e, j); __trap(); }
++        }
++        __threadfence_system();
++      }
++      __syncthreads();
++      for (long i = s0 + tid; i < s1; i += NT) o[i] = add_bf16x8(in[i], ld_vol(theirs + i));
++    }
++  }
++}
++
++struct Seg { void* host; void* dev; size_t bytes; int fd; };
++static std::vector<Seg> segs;
++
++// returns (id, devptr)
++std::vector<int64_t> seg_open(const std::string& path, int64_t bytes, bool create) {
++  int fd = open(path.c_str(), create ? (O_CREAT | O_EXCL | O_RDWR) : O_RDWR, 0600);
++  TORCH_CHECK(fd >= 0, "open failed ", path);
++  if (create) TORCH_CHECK(ftruncate(fd, bytes) == 0, "ftruncate");
++  void* p = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++  TORCH_CHECK(p != MAP_FAILED, "mmap");
++  if (create) memset(p, 0, bytes);
++  TORCH_CHECK(cudaHostRegister(p, bytes, cudaHostRegisterMapped | cudaHostRegisterPortable) == cudaSuccess, "cudaHostRegister");
++  void* d;
++  TORCH_CHECK(cudaHostGetDevicePointer(&d, p, 0) == cudaSuccess, "cudaHostGetDevicePointer");
++  segs.push_back({p, d, (size_t)bytes, fd});
++  return {(int64_t)segs.size() - 1, (int64_t)d};
++}
++void seg_close(int64_t id) {
++  Seg& s = segs[id];
++  if (!s.host) return;
++  cudaHostUnregister(s.host); munmap(s.host, s.bytes); close(s.fd); s.host = nullptr;
++}
++void unlink_path(const std::string& path) { unlink(path.c_str()); }
++
++template <int NT>
++static void launch(const at::Tensor& inp, at::Tensor& out, int64_t dev, int64_t counters, int64_t nb, int64_t rank,
++                   int64_t maxvec, int64_t S, cudaStream_t st) {
++  long nvec = inp.nbytes() / 16;
++  int4* hdata = (int4*)dev;
++  uint32_t* hflags = (uint32_t*)((char*)dev + (size_t)4 * maxvec * 16);
++  ar_kernel<NT><<<2 * nb, NT, 0, st>>>((const int4*)inp.data_ptr(), (int4*)out.data_ptr(), hdata, hflags,
++                                      (uint32_t*)counters, rank, nvec, maxvec, (int)S);
++}
++
++void all_reduce(at::Tensor inp, at::Tensor out, int64_t dev, int64_t counters, int64_t nb, int64_t nt,
++                int64_t rank, int64_t maxvec, int64_t S) {
++  TORCH_CHECK(inp.is_contiguous() && inp.nbytes() % 16 == 0 && nb <= MAXNB);
++  const at::cuda::OptionalCUDAGuard g(inp.device());
++  cudaStream_t st = at::cuda::getCurrentCUDAStream();
++  if (nt == 128) launch<128>(inp, out, dev, counters, nb, rank, maxvec, S, st);
++  else if (nt == 256) launch<256>(inp, out, dev, counters, nb, rank, maxvec, S, st);
++  else launch<512>(inp, out, dev, counters, nb, rank, maxvec, S, st);
++}
++int64_t seg_bytes(int64_t maxvec) { return (int64_t)4 * maxvec * 16 + 4 * MAXNB * FLAG_STRIDE * 4; }
++
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("seg_open", &seg_open); m.def("seg_close", &seg_close); m.def("unlink_path", &unlink_path);
++  m.def("all_reduce", &all_reduce); m.def("seg_bytes", &seg_bytes);
++}
+diff --git a/vllm/model_executor/layers/fused_allreduce_gemma_rms_norm.py b/vllm/model_executor/layers/fused_allreduce_gemma_rms_norm.py
+index 7046bfc991..081ecb6667 100644
+--- a/vllm/model_executor/layers/fused_allreduce_gemma_rms_norm.py
++++ b/vllm/model_executor/layers/fused_allreduce_gemma_rms_norm.py
+@@ -22,6 +22,7 @@ from vllm.distributed.parallel_state import (
+     get_tensor_model_parallel_world_size,
+     get_tp_group,
+ )
++from vllm.model_executor.layers import overlap_ar as _ov
+ from vllm.model_executor.layers.layernorm import GemmaRMSNorm
+ from vllm.platforms import current_platform
+ 
+@@ -152,6 +153,9 @@ def fused_allreduce_gemma_rms_norm(
+     if tp_size == 1:
+         # No all-reduce needed; identical to the unfused path.
+         return norm(hidden_states, residual)
++    if _ov.consume(hidden_states):
++        # Already all-reduced by the chunked GEMM+AR pipeline.
++        return norm(hidden_states, residual)
+ 
+     ok, max_token_num = _can_use_flashinfer(hidden_states, tp_size)
+     if ok:
+diff --git a/vllm/model_executor/layers/linear.py b/vllm/model_executor/layers/linear.py
+index a4a8304768..6ca13502cb 100644
+--- a/vllm/model_executor/layers/linear.py
++++ b/vllm/model_executor/layers/linear.py
+@@ -9,9 +9,11 @@ import torch
+ from torch.nn.parameter import Parameter
+ 
+ import vllm.envs as envs
++from vllm.model_executor.layers import overlap_ar as _ov
+ from vllm.config import get_current_vllm_config, get_current_vllm_config_or_none
+ from vllm.distributed import (
+     divide,
++    get_tp_group,
+     get_tensor_model_parallel_rank,
+     get_tensor_model_parallel_world_size,
+     split_tensor_along_last_dim,
+@@ -1845,6 +1847,28 @@ class RowParallelLinear(LinearBase):
+         # Only fuse bias add into GEMM for rank 0 (this ensures that
+         # bias will not get added more than once in TP>1 case)
+         bias_ = None if (self.tp_rank > 0 or self.skip_bias_add) else self.bias
++        _ov.mark_done(None)
++        if (
++            not self.reduce_results
++            and self.tp_size == 2
++            and bias_ is None
++            and isinstance(input_parallel, torch.Tensor)
++            and input_parallel.dim() == 2
++            and not torch.cuda.is_current_stream_capturing()
++            and (_n := _ov.num_chunks(input_parallel.shape[0])) > 0
++            and (_pn := get_tp_group().device_communicator.pynccl_comm) is not None
++            and not _pn.disabled
++        ):
++            output = _ov.run(
++                lambda c: self.quant_method.apply(self, c, None),
++                input_parallel,
++                _n,
++                _pn,
++            )
++            _ov.mark_done(output)
++            if not self.return_bias:
++                return output
++            return output, (self.bias if self.skip_bias_add else None)
+         output_parallel = self.quant_method.apply(self, input_parallel, bias_)
+ 
+         if self.reduce_results and self.tp_size > 1:
+diff --git a/vllm/model_executor/layers/overlap_ar.py b/vllm/model_executor/layers/overlap_ar.py
+new file mode 100644
+index 0000000000..de01c7b34d
+--- /dev/null
++++ b/vllm/model_executor/layers/overlap_ar.py
+@@ -0,0 +1,74 @@
++# Chunked row-parallel GEMM + all-reduce pipeline for large eager steps (prefill chunks).
++# GEMM chunk i runs on the main stream; the NCCL all-reduce of chunk i runs on a side
++# stream while GEMM chunk i+1 runs. Marlin is told (VLLM_MARLIN_SM_RESERVE) to leave a
++# few SMs free so NCCL's CTAs can run concurrently. Never active during CUDA graph capture.
++import os
++
++import torch
++
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++_calls = 0
++
++_CHUNKS = int(os.environ.get("VLLM_OVERLAP_AR_CHUNKS", "4"))
++_MIN_TOKENS = int(os.environ.get("VLLM_OVERLAP_AR_MIN_TOKENS", "512"))
++_MIN_CHUNK = 256  # keep chunks > host-AR size limit (2 MiB) and big enough for Marlin
++_RESERVE = os.environ.get("VLLM_OVERLAP_AR_SM_RESERVE", "2")
++
++_side: dict = {}
++_done_ptr = None  # data_ptr of the last output that was already all-reduced
++
++
++def mark_done(t: torch.Tensor | None) -> None:
++    global _done_ptr
++    _done_ptr = None if t is None else t.data_ptr()
++
++
++def consume(x: torch.Tensor) -> bool:
++    """True if x is the output of a pipeline call that is already all-reduced."""
++    global _done_ptr
++    p, _done_ptr = _done_ptr, None
++    return p is not None and p == x.data_ptr()
++
++
++def num_chunks(num_tokens: int) -> int:
++    if _CHUNKS < 2 or num_tokens < _MIN_TOKENS:
++        return 0
++    n = min(_CHUNKS, num_tokens // _MIN_CHUNK)
++    return n if n >= 2 else 0
++
++
++def run(quant_apply, x: torch.Tensor, n: int, pynccl) -> torch.Tensor:
++    """quant_apply(chunk)->partial output (T_i, N). Returns the all-reduced (T, N)."""
++    global _calls
++    if _calls == 0:
++        logger.info("chunked GEMM+AR overlap engaged (T=%d, n=%d)", x.shape[0], n)
++    _calls += 1
++    if _calls % 1000 == 0:
++        logger.info("chunked GEMM+AR overlap: %d calls so far", _calls)
++    dev = x.device
++    side = _side.get(dev)
++    if side is None:
++        side = _side[dev] = torch.cuda.Stream(device=dev)
++    cur = torch.cuda.current_stream(dev)
++    T = x.shape[0]
++    bounds = [T * i // n for i in range(n + 1)]
++    outs = []
++    old = os.environ.get("VLLM_MARLIN_SM_RESERVE")
++    os.environ["VLLM_MARLIN_SM_RESERVE"] = _RESERVE
++    try:
++        for i in range(n):
++            o = quant_apply(x[bounds[i] : bounds[i + 1]])
++            outs.append(o)
++            ev = torch.cuda.Event()
++            ev.record(cur)
++            side.wait_event(ev)
++            pynccl.all_reduce(o, o, stream=side)  # in place, on the side stream
++    finally:
++        if old is None:
++            del os.environ["VLLM_MARLIN_SM_RESERVE"]
++        else:
++            os.environ["VLLM_MARLIN_SM_RESERVE"] = old
++    cur.wait_stream(side)
++    return torch.cat(outs)
+diff --git a/vllm/models/qwen3_5/nvidia/model.py b/vllm/models/qwen3_5/nvidia/model.py
+index be483f5a88..4262c80f0b 100644
+--- a/vllm/models/qwen3_5/nvidia/model.py
++++ b/vllm/models/qwen3_5/nvidia/model.py
+@@ -45,6 +45,7 @@ from vllm.distributed import (
+     tensor_model_parallel_all_reduce,
+ )
+ from vllm.logger import init_logger
++from vllm.model_executor.layers import overlap_ar as _overlap_ar
+ from vllm.model_executor.layers.fused_allreduce_gemma_rms_norm import (
+     flashinfer_trtllm_fused_allreduce_norm,
+     fused_allreduce_gemma_rms_norm,
+@@ -229,6 +230,8 @@ class Qwen3_5RMSNorm(nn.Module):
+         ``write_y``; else None) and the residual (x when ``residual`` is None).
+         """
+         allreduce = self.reduce_inputs and residual is not None
++        if allreduce and _overlap_ar.consume(x):
++            allreduce = False  # already reduced by the chunked GEMM+AR pipeline
+         key = None if linear is None else _norm_quant_key(linear)
+         if key is None:
+             if allreduce:

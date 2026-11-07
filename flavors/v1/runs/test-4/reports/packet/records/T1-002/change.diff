@@ -1,0 +1,344 @@
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..7183cf474c 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
++import os
+ 
+ import torch
+ from torch.distributed import ProcessGroup
+@@ -112,6 +113,24 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             if is_symmetric_memory_enabled():
+                 register_nccl_symmetric_ops(self.pynccl_comm)
+ 
++        self.host_ar_comm = None
++        if (
++            self.world_size == 2
++            and unique_name.split(":")[0] == "tp"
++            and current_platform.is_cuda()
++            and os.environ.get("VLLM_USE_HOST_AR", "1") == "1"
++        ):
++            try:
++                from vllm.distributed.device_communicators.host_ar import (
++                    HostAllReduce,
++                )
++
++                self.host_ar_comm = HostAllReduce(self.cpu_group, self.device)
++                logger.info("Host-staged 2-rank all-reduce is active (tp group)")
++            except Exception as e:  # pragma: no cover
++                logger.warning("Host all-reduce disabled: %s", e)
++                self.host_ar_comm = None
++
+         self.ca_comm: CustomAllreduce | None = None
+         self.qr_comm: QuickAllReduce | None = None
+         self.symm_mem_comm: SymmMemCommunicator | None = None
+@@ -382,6 +401,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         )
+ 
+     def all_reduce(self, input_):
++        host_ar = self.host_ar_comm
++        if host_ar is not None and host_ar.should_use(input_):
++            return host_ar.all_reduce(input_)
+         fi_ar_comm = self.fi_ar_comm
+         use_fi_ar = (
+             fi_ar_comm is not None
+diff --git a/vllm/distributed/device_communicators/host_ar/__init__.py b/vllm/distributed/device_communicators/host_ar/__init__.py
+new file mode 100644
+index 0000000000..03504b4b80
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_ar/__init__.py
+@@ -0,0 +1,71 @@
++# SPDX-License-Identifier: Apache-2.0
++import os
++import uuid
++
++import torch
++import torch.distributed as dist
++
++_ext = None
++
++
++def _load():
++    global _ext
++    if _ext is None:
++        from torch.utils.cpp_extension import load
++        d = os.path.dirname(os.path.abspath(__file__))
++        _ext = load(name="host_ar_ext", sources=[os.path.join(d, "host_ar.cu")],
++                    extra_cuda_cflags=["-O3", "-gencode=arch=compute_89,code=sm_89"],
++                    extra_cflags=["-O3"], verbose=False)
++    return _ext
++
++
++class HostAllReduce:
++    """2-rank bf16 all-reduce staged through pinned shared host memory."""
++
++    def __init__(self, cpu_group, device, max_tokens_bytes=2 << 20, nblocks=64, nthreads=256, nsub=1):
++        self.disabled = True
++        torch.cuda.set_device(device)
++        self.ext = _load()
++        self.device = device
++        self.nb, self.nt, self.S = nblocks, nthreads, nsub
++        self.maxvec = max_tokens_bytes // 16
++        self.max_bytes = max_tokens_bytes
++        g_rank = dist.get_rank(cpu_group)
++        ranks = dist.get_process_group_ranks(cpu_group)
++        assert len(ranks) == 2
++        self.rank = g_rank
++        path = [None]
++        if g_rank == 0:
++            path[0] = f"/dev/shm/vllm_host_ar_{os.getpid()}_{uuid.uuid4().hex}"
++        dist.broadcast_object_list(path, src=ranks[0], group=cpu_group)
++        path = path[0]
++        nbytes = self.ext.seg_bytes(self.maxvec)
++        if g_rank == 0:
++            self.seg, self.dev = self.ext.seg_open(path, nbytes, True)
++        dist.barrier(group=cpu_group)
++        if g_rank == 1:
++            self.seg, self.dev = self.ext.seg_open(path, nbytes, False)
++        dist.barrier(group=cpu_group)
++        if g_rank == 0:
++            self.ext.unlink_path(path)
++        self._cfg = (self.nb, self.nt, self.S)  # must stay fixed: epochs/slots/flag values depend on it
++        self.counters = torch.zeros(256, dtype=torch.int32, device=device)
++        self.disabled = False
++        dist.barrier(group=cpu_group)
++
++    def should_use(self, inp):
++        return (not self.disabled and inp.dtype == torch.bfloat16 and inp.is_cuda
++                and inp.is_contiguous() and inp.numel() * 2 % 16 == 0
++                and 0 < inp.numel() * 2 <= self.max_bytes)
++
++    def all_reduce(self, inp, out=None):
++        assert (self.nb, self.nt, self.S) == self._cfg, "host_ar nb/nt/S must be fixed"
++        if out is None:
++            out = torch.empty_like(inp)
++        self.ext.all_reduce(inp, out, self.dev, self.counters.data_ptr(), self.nb, self.nt, self.rank, self.maxvec, self.S)
++        return out
++
++    def close(self):
++        if not self.disabled:
++            self.disabled = True
++            self.ext.seg_close(self.seg)
+diff --git a/vllm/distributed/device_communicators/host_ar/host_ar.cu b/vllm/distributed/device_communicators/host_ar/host_ar.cu
+new file mode 100644
+index 0000000000..d0dc7042e6
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_ar/host_ar.cu
+@@ -0,0 +1,214 @@
++// Host-staged 2-rank all-reduce (bf16) through pinned shared host memory (no GPU P2P).
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAGuard.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <unistd.h>
++#include <stdint.h>
++
++#define MAXNB 128
++#define FLAG_STRIDE 32  // uint32 per flag => 128 B lines
++#define MAXU 2048
++#define FSTR 8          // per-warp flags: 32 B apart
++
++static __device__ __forceinline__ uint32_t ld_acq(const uint32_t* p) {
++  uint32_t v; asm volatile("ld.acquire.sys.global.u32 %0, [%1];" : "=r"(v) : "l"(p) : "memory"); return v;
++}
++static __device__ __forceinline__ void st_rel(uint32_t* p, uint32_t v) {
++  asm volatile("st.relaxed.sys.global.u32 [%0], %1;" :: "l"(p), "r"(v) : "memory");
++}
++static __device__ __forceinline__ unsigned long long globaltimer() {
++  unsigned long long t; asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t)); return t;
++}
++static __device__ __forceinline__ int4 ld_vol(const int4* p) {
++  int4 v;
++  asm volatile("ld.volatile.global.v4.s32 {%0,%1,%2,%3}, [%4];" : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w) : "l"(p) : "memory");
++  return v;
++}
++static __device__ __forceinline__ int4 add_bf16x8(int4 a, int4 b) {
++  int4 r;
++  const __nv_bfloat162* pa = reinterpret_cast<const __nv_bfloat162*>(&a);
++  const __nv_bfloat162* pb = reinterpret_cast<const __nv_bfloat162*>(&b);
++  __nv_bfloat162* pr = reinterpret_cast<__nv_bfloat162*>(&r);
++#pragma unroll
++  for (int i = 0; i < 4; i++) {
++    float2 x = __bfloat1622float2(pa[i]), y = __bfloat1622float2(pb[i]);
++    pr[i] = __float22bfloat162_rn(make_float2(x.x + y.x, x.y + y.y));
++  }
++  return r;
++}
++
++// data layout: [slot 2][rank 2][maxvec] int4 ; flags: [slot 2][rank 2][MAXNB][FLAG_STRIDE] u32
++// Grid = 2*nb blocks: first nb are writers (stage local chunk to host in S sub-chunks, flag after each),
++// last nb are readers (wait for the peer's sub-chunk flag, read it, add local, write out).
++// flag value = e*S + j + 1 after sub-chunk j of epoch e (monotonic, compared with signed diff).
++// Slot reuse safety: a writer at epoch e+2 runs only after this rank's kernel e+1 finished, whose reader saw the
++// peer's epoch e+1 flags, written by a peer kernel that started after the peer's kernel e (incl. readers) ended.
++template <int NT>
++__global__ void __launch_bounds__(NT) ar_kernel(const int4* __restrict__ inp, int4* __restrict__ out,
++                                         int4* hdata, uint32_t* hflags, uint32_t* counters,
++                                         int rank, long nvec, long maxvec, int S) {
++  const int nb = gridDim.x >> 1;
++  const bool writer = blockIdx.x < nb;
++  const int b = writer ? blockIdx.x : blockIdx.x - nb, tid = threadIdx.x;
++  uint32_t* cp = counters + (writer ? 0 : 128) + b;
++  const uint32_t e = *cp + 1;
++  __syncthreads();
++  if (tid == 0) *cp = e;
++  const int slot = e & 1, peer = rank ^ 1;
++  const long start = (nvec * b) / nb, end = (nvec * (b + 1)) / nb, cnt = end - start;
++  int4* mine = hdata + ((long)(slot * 2 + rank)) * maxvec + start;
++  const int4* theirs = hdata + ((long)(slot * 2 + peer)) * maxvec + start;
++  const int4* in = inp + start;
++  int4* o = out + start;
++  uint32_t* myflag = hflags + (((slot * 2 + rank) * MAXNB) + b) * FLAG_STRIDE;
++  const uint32_t* pf = hflags + (((slot * 2 + peer) * MAXNB) + b) * FLAG_STRIDE;
++  for (int j = 0; j < S; j++) {
++    const long s0 = (cnt * j) / S, s1 = (cnt * (j + 1)) / S;
++    const uint32_t target = e * (uint32_t)S + j + 1;
++    if (writer) {
++      for (long i = s0 + tid; i < s1; i += NT) mine[i] = in[i];
++      __syncthreads();
++      if (tid == 0) { __threadfence_system(); st_rel(myflag, target); }
++    } else {
++      if (tid == 0) {
++        unsigned long long t0 = globaltimer();
++        while ((int)(ld_acq(pf) - target) < 0) {
++          // hang detector only (~5 min); NCCL never times out and ranks can be skewed during startup
++          if (globaltimer() - t0 > 300000000000ULL) { printf("host_ar timeout rank %d block %d epoch %u sub %d\n", rank, b, e, j); __trap(); }
++        }
++        __threadfence_system();
++      }
++      __syncthreads();
++      for (long i = s0 + tid; i < s1; i += NT) o[i] = add_bf16x8(in[i], ld_vol(theirs + i));
++    }
++  }
++}
++
++// Variant 2: per-warp units. Each warp owns a contiguous sub-chunk: it writes it, fences and flags it (no block barrier),
++// then waits for the peer's flag of the SAME unit and reads+adds it. Units finish at different times so the
++// write (up) and read (down) PCIe directions overlap at fine grain.
++template <int NT, int UNR>
++__global__ void __launch_bounds__(NT) ar_kernel_w(const int4* __restrict__ inp, int4* __restrict__ out,
++                                         int4* hdata, uint32_t* hflags, uint32_t* counters,
++                                         int rank, long nvec, long maxvec, int nap) {
++  constexpr int W = NT / 32;
++  const int b = blockIdx.x, nb = gridDim.x, tid = threadIdx.x, w = tid >> 5, lane = tid & 31;
++  const uint32_t e = counters[b] + 1;
++  __syncthreads();
++  if (tid == 0) counters[b] = e;
++  const int slot = e & 1, peer = rank ^ 1;
++  const int u = b * W + w, U = nb * W;
++  const long start = (nvec * u) / U, end = (nvec * (u + 1)) / U, cnt = end - start;
++  int4* mine = hdata + ((long)(slot * 2 + rank)) * maxvec + start;
++  const int4* theirs = hdata + ((long)(slot * 2 + peer)) * maxvec + start;
++  const int4* in = inp + start;
++  int4* o = out + start;
++  uint32_t* fbase = hflags + 4 * MAXNB * FLAG_STRIDE;  // per-warp flag area after the per-block area
++  uint32_t* myflag = fbase + (((slot * 2 + rank) * MAXU) + u) * FSTR;
++  const uint32_t* pf = fbase + (((slot * 2 + peer) * MAXU) + u) * FSTR;
++  int4 reg[UNR];
++#pragma unroll
++  for (int k = 0; k < UNR; k++) {
++    long i = lane + (long)k * 32;
++    if (i < cnt) { reg[k] = in[i]; mine[i] = reg[k]; }
++  }
++  for (long i = lane + (long)UNR * 32; i < cnt; i += 32) mine[i] = in[i];
++  __syncwarp();
++  if (lane == 0) {
++    __threadfence_system();
++    st_rel(myflag, e);
++    unsigned long long t0 = globaltimer();
++    while ((int)(ld_acq(pf) - e) < 0) {
++      if (nap) __nanosleep(nap);
++      if (globaltimer() - t0 > 300000000000ULL) { printf("host_ar(w) timeout rank %d unit %d epoch %u\n", rank, u, e); __trap(); }
++    }
++    __threadfence_system();
++  }
++  __syncwarp();
++  int4 pr[UNR];
++#pragma unroll
++  for (int k = 0; k < UNR; k++) {
++    long i = lane + (long)k * 32;
++    if (i < cnt) pr[k] = ld_vol(theirs + i);
++  }
++#pragma unroll
++  for (int k = 0; k < UNR; k++) {
++    long i = lane + (long)k * 32;
++    if (i < cnt) o[i] = add_bf16x8(reg[k], pr[k]);
++  }
++  for (long i = lane + (long)UNR * 32; i < cnt; i += 32) o[i] = add_bf16x8(in[i], ld_vol(theirs + i));
++}
++
++struct Seg { void* host; void* dev; size_t bytes; int fd; };
++static std::vector<Seg> segs;
++
++// returns (id, devptr)
++std::vector<int64_t> seg_open(const std::string& path, int64_t bytes, bool create) {
++  int fd = open(path.c_str(), create ? (O_CREAT | O_EXCL | O_RDWR) : O_RDWR, 0600);
++  TORCH_CHECK(fd >= 0, "open failed ", path);
++  if (create) TORCH_CHECK(ftruncate(fd, bytes) == 0, "ftruncate");
++  void* p = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++  TORCH_CHECK(p != MAP_FAILED, "mmap");
++  if (create) memset(p, 0, bytes);
++  TORCH_CHECK(cudaHostRegister(p, bytes, cudaHostRegisterMapped | cudaHostRegisterPortable) == cudaSuccess, "cudaHostRegister");
++  void* d;
++  TORCH_CHECK(cudaHostGetDevicePointer(&d, p, 0) == cudaSuccess, "cudaHostGetDevicePointer");
++  segs.push_back({p, d, (size_t)bytes, fd});
++  return {(int64_t)segs.size() - 1, (int64_t)d};
++}
++void seg_close(int64_t id) {
++  Seg& s = segs[id];
++  if (!s.host) return;
++  cudaHostUnregister(s.host); munmap(s.host, s.bytes); close(s.fd); s.host = nullptr;
++}
++void unlink_path(const std::string& path) { unlink(path.c_str()); }
++
++template <int NT>
++static void launch(const at::Tensor& inp, at::Tensor& out, int64_t dev, int64_t counters, int64_t nb, int64_t rank,
++                   int64_t maxvec, int64_t S, cudaStream_t st) {
++  long nvec = inp.nbytes() / 16;
++  int4* hdata = (int4*)dev;
++  uint32_t* hflags = (uint32_t*)((char*)dev + (size_t)4 * maxvec * 16);
++  ar_kernel<NT><<<2 * nb, NT, 0, st>>>((const int4*)inp.data_ptr(), (int4*)out.data_ptr(), hdata, hflags,
++                                      (uint32_t*)counters, rank, nvec, maxvec, (int)S);
++}
++
++template <int NT>
++static void launch_w(const at::Tensor& inp, at::Tensor& out, int64_t dev, int64_t counters, int64_t nb, int64_t rank,
++                     int64_t maxvec, int64_t nap, cudaStream_t st) {
++  long nvec = inp.nbytes() / 16;
++  int4* hdata = (int4*)dev;
++  uint32_t* hflags = (uint32_t*)((char*)dev + (size_t)4 * maxvec * 16);
++  ar_kernel_w<NT, 2><<<nb, NT, 0, st>>>((const int4*)inp.data_ptr(), (int4*)out.data_ptr(), hdata, hflags,
++                                        (uint32_t*)counters, rank, nvec, maxvec, (int)nap);
++}
++
++void all_reduce(at::Tensor inp, at::Tensor out, int64_t dev, int64_t counters, int64_t nb, int64_t nt,
++                int64_t rank, int64_t maxvec, int64_t S) {
++  if (S < 0) {  // variant 2 (per-warp units); nap = -S - 1 ns backoff
++    TORCH_CHECK(inp.is_contiguous() && inp.nbytes() % 16 == 0 && nb * (nt / 32) <= MAXU);
++    const at::cuda::OptionalCUDAGuard g(inp.device());
++    cudaStream_t st = at::cuda::getCurrentCUDAStream();
++    int64_t nap = -S - 1;
++    if (nt == 128) launch_w<128>(inp, out, dev, counters, nb, rank, maxvec, nap, st);
++    else if (nt == 256) launch_w<256>(inp, out, dev, counters, nb, rank, maxvec, nap, st);
++    else launch_w<512>(inp, out, dev, counters, nb, rank, maxvec, nap, st);
++    return;
++  }
++  TORCH_CHECK(inp.is_contiguous() && inp.nbytes() % 16 == 0 && nb <= MAXNB);
++  const at::cuda::OptionalCUDAGuard g(inp.device());
++  cudaStream_t st = at::cuda::getCurrentCUDAStream();
++  if (nt == 128) launch<128>(inp, out, dev, counters, nb, rank, maxvec, S, st);
++  else if (nt == 256) launch<256>(inp, out, dev, counters, nb, rank, maxvec, S, st);
++  else launch<512>(inp, out, dev, counters, nb, rank, maxvec, S, st);
++}
++int64_t seg_bytes(int64_t maxvec) { return (int64_t)4 * maxvec * 16 + 4 * MAXU * FSTR * 4 + 4 * MAXNB * FLAG_STRIDE * 4; }
++
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("seg_open", &seg_open); m.def("seg_close", &seg_close); m.def("unlink_path", &unlink_path);
++  m.def("all_reduce", &all_reduce); m.def("seg_bytes", &seg_bytes);
++}

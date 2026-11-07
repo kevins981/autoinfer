@@ -160,8 +160,10 @@ collect_and_update(reports, round):
     best = the BANK record from this round with the best official numbers
     if valid(best) and beats(best, CHAMPION) and gates_pass(best):
         # valid: per TASK.definition (check its validity review; skim its diff)
-        # beats: clearly, per the task's noise notes (a small gain needs a same-job comparison,
-        #   repeated, before it counts as real)
+        # beats: consistently, not by a fixed margin. No minimum %: a small gain counts if the
+        #   evidence shows it reliably (per-trial official numbers of both, the leader's same-job
+        #   A/Bs, repeated; see the task's noise notes). If the evidence is unclear, get a
+        #   repeated same-job A/B against CHAMPION before deciding; don't reject on a cutoff.
         # gates_pass: the task's gates (qwen: GSM8K, p99 latency, 128K request; in its official results)
         CHAMPION = best                             # write champion.md; starting point doesn't matter
         # No re-profiling here: next round's brainstormers profile the new champion themselves.

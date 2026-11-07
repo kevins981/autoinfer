@@ -16,7 +16,9 @@ the model computes.
   larger: BASE scored 641.4 and 631.4 tok/s in two runs (1.6% apart). So a 1-3% gain may well be
   real, but one run against another job's number can't tell. To show a small gain, run the
   reference (BASE or the champion) and the change back to back in the same job, and repeat (e.g.
-  3 trials each) when it's close. Above ~3%, one run against a recorded number is usually enough.
+  3 trials each) when it's close. There is no minimum gain: a change counts if its gain shows up
+  consistently (e.g. every trial above the reference's), however small. The larger the gain,
+  the less repetition it needs to be convincing.
 - **Score**: output tok/s. **Baseline (record BASE): 631.4 tok/s** (its official result ships with
   the task: `baseline/official/`, `results.json`; runs don't re-measure it).
 - **Latency guard**: a result is invalid if TTFT p99 or TPOT p99 is more than 20% worse than

@@ -75,6 +75,8 @@ set_budgets(round):
 brainstorm(round) -> directions:
     # out: one direction per leader (k = CONFIG leaders), each = (tree node, rationale,
     #      bottleneck addressed)
+    # If search_policy.md's continuing leaders already take every slot, skip the brainstorm
+    # (no briefing, no brainstormers) and note it in the journal.
 
     # 1. The briefing: what you'd tell a smart colleague from an adjacent field. Also a status
     #    report for the human.

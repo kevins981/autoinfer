@@ -8,7 +8,7 @@ mid-run. The run keeps a copy of the text used in each round.
    with (officially, consistently, gates passing) continues next round with the single next step
    it proposed in its report (keep pushing what works; it knows the line best). This holds for
    each such leader, not only the one with the best result. These slots are taken before the
-   brainstorm ideas are selected; if they take every slot, the brainstorm ideas go to ideas.md.
+   brainstorm ideas are selected. If they take every slot, skip the brainstorm this round.
 2. Fill the remaining slots from the brainstorm ideas by upside and novelty: most by upside, at
    least one slot for a high-novelty idea (protected exploration; don't reject it on napkin math
    alone).

@@ -155,6 +155,7 @@ skill (a checklist of what to ask about) once we have run it a few times.
 brainstorm() -> directions:
     # out: one direction per leader (k = number of leaders), each = (tree node, rationale,
     #      bottleneck addressed)
+    # Skipped when the search policy's continuing leaders already take every slot.
 
     # 1. Manager writes the round briefing: what you'd tell a colleague in an adjacent field.
     briefing = manager.write_briefing()     # problem, facts (profile/bound numbers, not just

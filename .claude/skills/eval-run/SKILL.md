@@ -53,6 +53,26 @@ key already carries what other runs found). Output: `evals/<flavor>/<run>/judge-
 7. **Key updates (proposals only; don't edit the key).** New nodes (with `builds_on`),
    results on new bases, overturned or confirmed dead ends, measured open nodes, new facts,
    corrections. Each with evidence.
+8. **Picture.** Write `evals/<flavor>/<run>/overlay.json` from your overlay, then render it:
+   ```
+   MPLCONFIGDIR=.cache/mpl .cache/venv/bin/python .claude/skills/eval-run/overlay_plot.py map \
+     answer_keys/<task>/answer_key.md evals/<flavor>/<run>/overlay.json evals/<flavor>/<run>/overlay.png
+   ```
+   Look at the PNG (it is the key as a tree, each node colored by contact, missed wins / wrong
+   causes in red, novel nodes in purple under their parent) and fix the JSON if it misreads.
+   Schema (all key node ids must appear in `nodes`):
+   ```
+   {"run": "<flavor>/<run>", "source": "judge-<id>.md", "base": <BASE tok/s>,
+    "champion": {"record": "T1-003", "tok_s": 691.3, "pct": 8.7, "stack": ["host-ar", ...]},
+    "best_measured": {"record": ..., "tok_s": ..., "pct": ..., "adds": [key ids]},   # optional: a
+                                                       # better measured stack never promoted
+    "resources": {"wall_h": 3.26, "gpu_min": 164.5, "output_tokens": "411K"},
+    "nodes": {"<key id>": {"contact": "reached|tried|idea-only|not-considered",
+                           "verdict": "as expected|missed win|wrong cause|new info|-",
+                           "records": "T2-002, T2-005"}},
+    "novel": [{"id": "<short-id>", "title": "...", "builds_on": ["<key id>"],
+               "contact": "reached|tried|idea-only", "result": "+1.0% ab"}]}
+   ```
 
 **Grade the agents against the run's own rules and conditions.**
 - Separate the human's decisions (stopping the run, rulings, budget changes; see `journal.md`,
@@ -74,7 +94,7 @@ Report layout:
 # Judge <id>: <flavor>/<run>
 ## Resources        (resources.py output)
 ## Config and outcome
-## Overlay graph    (the key's outline, each line annotated with contact / verdict)
+## Overlay graph    (![overlay](overlay.png), then the key's outline annotated with contact / verdict)
 ## Overlay          (table: node | contact | base | run's result and cause | verdict | evidence)
 ## Novel nodes
 ## Why missed

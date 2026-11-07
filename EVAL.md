@@ -171,16 +171,19 @@ judge. Rules:
       (from v1 test-3, test-4 and qwen38_opt).
 - [x] Judge and reconcile procedure: the `eval-run` skill (`.claude/skills/eval-run-qwen38/`), with
       `resources.py` (tokens per agent/role, wall clock, GPU-minutes from transcripts + ledger).
-- [ ] The flavor should record the manager's session id (v1's agents/manager/meta.json has none;
-      resources.py finds the transcript by start time).
+- [x] The flavor should record the manager's session id: v1 `new_run` writes
+      `manager_session.json`, read by `resources.py` and `activity.py` (test-3/4 predate it).
 - [x] Keep run agents away from `answer_keys/` and `evals/`: deny rules + a classifier rule, from
-      `new_run` (design/open_questions.md, "Keeping run agents in their run").
-- [ ] **Cheat audit** (human, 2026-11-07; built as the `audit-run` skill + `audit_scan.py`, scan
-      tested on all runs, judge steps not yet tested): a skill in the judging process that checks a
+      `new_run` (design/open_questions.md, "Keeping run agents in their run"). Extended 2026-11-07:
+      other sessions' Claude folders, GitHub, a SendMessage guard hook, per-run runtime caches.
+- [x] **Cheat audit** (human, 2026-11-07; built as the `audit-run` skill + `audit_scan.py`; scan
+      tested on all runs, full audit incl. judging run on v1/test-4: `evals/v1/test-4/audit/audit.md`): a skill in the judging process that checks a
       run's transcripts for any access to answer keys, evals, design notes, other runs or
       qwen38_opt's findings (including attempts that were blocked), as a second check on top of the
       permissions.
-- [ ] Evaluate test-3 and test-4 with the skill, as the first trial of the framework.
+- [x] Evaluate test-3 and test-4 with the skill, as the first trial of the framework
+      (`evals/v1/test-3/`, `evals/v1/test-4/`: three judges + reconcile each). Also baseline/run-1
+      (one judge, `evals/baseline/run-1/`); the key was updated from all three.
 - [ ] **Check in the next real run that the confinement and today's tooling fixes work** (human,
       2026-11-07). Tested only with Haiku probe agents so far (design/open_questions.md, "Keeping run
       agents in their run"), so fairly confident, not proven. After the run, check transcripts and files:

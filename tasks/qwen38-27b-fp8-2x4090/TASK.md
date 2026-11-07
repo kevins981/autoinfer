@@ -13,18 +13,18 @@ the model computes.
   concurrent requests. 2 trials, each on a freshly started server; score = their mean (per-trial
   values and CV in results.json).
 - **Noise**: repeat runs on the same server vary ~0.5% (CV). Across server restarts and jobs it is
-  larger: BASE scored 641.4 and 631.4 tok/s in two runs (1.6% apart). So a 1-3% gain may well be
+  larger: BASE scored 641.4, 631.4 and 635.9 tok/s in three jobs (up to 1.6% apart). So a 1-3% gain may well be
   real, but one run against another job's number can't tell. To show a small gain, run the
   reference (BASE or the champion) and the change back to back in the same job, and repeat (e.g.
   3 trials each) when it's close. There is no minimum gain: a change counts if its gain shows up
   consistently (e.g. every trial above the reference's), however small. The larger the gain,
   the less repetition it needs to be convincing.
-- **Score**: output tok/s. **Baseline (record BASE): 631.4 tok/s** (its official result ships with
+- **Score**: output tok/s. **Baseline (record BASE): 635.9 tok/s** (its official result ships with
   the task: `baseline/official/`, `results.json`; runs don't re-measure it).
 - **Latency guard**: a result is invalid if TTFT p99 or TPOT p99 is more than 20% worse than
-  BASE's (BASE: TTFT p99 1487 ms, TPOT p99 48.4 ms; p99s vary ~±15% between runs of BASE). Other latencies are reported, not constrained.
+  BASE's (BASE: TTFT p99 1341 ms, TPOT p99 46.1 ms; p99s vary ~±15% between runs of BASE). Other latencies are reported, not constrained.
 - **Accuracy gate**: GSM8K-250 (fixed questions, temperature 0, thinking off) must be
-  **>= 89.6%** (BASE 92.8%, standard error ±1.6; the gate is 2 SE below). A safety net: lossy
+  **>= 89.6%** (BASE 94.4%, standard error ±1.5; the gate is 2 SE below). A safety net: lossy
   changes are forbidden anyway (below).
   Quick unofficial check: `gsm8k 50` (`scripts/lib.sh`) = the first 50 of the same 250
   questions; BASE scores **88.0%** (44/50) on it, SE ±4.6. A smoke test, not the gate.

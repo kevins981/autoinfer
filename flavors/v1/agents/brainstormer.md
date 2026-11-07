@@ -31,7 +31,10 @@ brainstormer(persona, briefing).propose() -> ideas:
         #   CHAMPION): `ws create <your name>.<record> --from <record id>`, then a `gpu run` job
         #   with task/scripts/profile_nsys.sh or profile_ncu.sh. You have your own GPU budget:
         #   15 GPU-min per round (gpu/budget.json "brainstormer"), and the GPU queue is shared with
-        #   the teams, so spend it where it settles a question. Save what you produce in bank/<record id>/profiles/ so others
+        #   the teams, so spend it where it settles a question. Your job is exploration: quick
+        #   measurements, microbenchmarks or a throwaway prototype that tests an idea's premise
+        #   (is the gap real? can it work here?). Don't build an idea end to end: a selected idea
+        #   goes to a leader's team, which implements it. Save what you produce in bank/<record id>/profiles/ so others
         #   reuse it, and mention it in your ideas.
         # Probably worth it, given how you are judged: checking an idea's premise against the raw
         # data (how much time does the part it speeds up really take?) and against the code (how

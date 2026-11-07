@@ -12,3 +12,11 @@
 - T1-004 (AG): ~0. T1-005 (T1-004 + prefill graph flag): 699.0 unoff (+10.7%); flag removes skew (316->214 us prefill, 30->10 us decode). Official eval launched.
 - T1-005 OFFICIAL 699.2 (+10.7%), TTFT p99 1309, TPOT p99 50.6, GSM8K 93.2%. 128K re-test running.
 - T1-005 128K re-test passed (graph mem 1.33 GiB vs 2.07 with NCCL). Round done ~46.6/80 GPU-min.
+## Round 2 (R2-A logits diet on T1-005). Budget 80: w3 flags+3drafts 35, w4 greedy verify 25, evals ~15.
+- KB8: GPU0 clock locked 2235 MHz -> prefill skew; don't chase.
+- Note: a 2nd --speculative-config must carry full JSON (method, num tokens).
+- T1-006 local_argmax +1.1%; T1-007 +fp8 draft head 718.0 vs 696.9 same-job (+3.0%), accept 2.343, 128K pass, +0.59 GiB/rank.
+- T1-008 k=3: -6.9%, TTFT p50 210->792 ms (cause unknown), accept 2.715. Dropped. w3 stopped. T1-007 rerun 719.7.
+- RULING (human, r2): correctness = math + numeric op checks on same inputs + GSM8K/acceptance; text equality only for bitwise-exact changes at c=1. Relayed to w4; w4 base now T1-007.
+- T1-009 = T1-007 + greedy verify fast path: 732.6 vs 715.3 same-job (+2.4%); 25511 real rows 0 mismatches (467 ties). Official eval launched. w3,w4 stopped. Budget 54.8/80 before eval.
+- T1-009 OFFICIAL 730.9 (+4.5% vs T1-005). Round 2 done, 64.9/80.

@@ -1,0 +1,19 @@
+{
+  "id": 22,
+  "pid": 3174492,
+  "team": "T1",
+  "agent": "leader-1.w3",
+  "label": "T1-flags-a2",
+  "timeout_min": 22.0,
+  "command": [
+    "bash",
+    "out/job1.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.logitsflags",
+  "submitted": "2026-11-07T00:57:05+00:00",
+  "state": "done",
+  "started": "2026-11-07T00:57:06+00:00",
+  "ended": "2026-11-07T01:10:25+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 13.321
+}

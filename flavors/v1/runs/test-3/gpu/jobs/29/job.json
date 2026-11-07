@@ -1,0 +1,19 @@
+{
+  "id": 29,
+  "pid": 3205474,
+  "team": "T1",
+  "agent": "leader-1.w4",
+  "label": "T1-gv-j3",
+  "timeout_min": 16.0,
+  "command": [
+    "bash",
+    "out/job3.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.greedyverify",
+  "submitted": "2026-11-07T01:41:27+00:00",
+  "state": "done",
+  "started": "2026-11-07T01:41:27+00:00",
+  "ended": "2026-11-07T01:50:48+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 9.355
+}

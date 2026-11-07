@@ -181,3 +181,19 @@ judge. Rules:
       qwen38_opt's findings (including attempts that were blocked), as a second check on top of the
       permissions.
 - [ ] Evaluate test-3 and test-4 with the skill, as the first trial of the framework.
+- [ ] **Check in the next real run that the confinement and today's tooling fixes work** (human,
+      2026-11-07). Tested only with Haiku probe agents so far (design/open_questions.md, "Keeping run
+      agents in their run"), so fairly confident, not proven. After the run, check transcripts and files:
+      - nothing read or listed outside the run: answer keys, evals, design, other runs, other sessions'
+        `~/.claude/projects/` and `/tmp/claude-<uid>/` folders, the shared runtime caches, the repo via GitHub
+        (run the cheat audit; note blocked attempts too);
+      - no SendMessage outside the run got through, and in-run messaging still worked: run-scoped names
+        (`<run>-<agent>`), replies after the guard hook's "use the run-scoped name" block;
+      - the v1 manager started in its run folder and could read its own background-job output;
+      - per-run caches: `$AUTOINFER_RUN/.cache/` filled, first inference server start compiled cold (how
+        much slower), later starts warm;
+      - `import vllm` under `task/env.sh` loaded the task's baseline tree;
+      - legitimate work was not blocked (look for denials of normal commands);
+      - the other fixes from test-4's feedback: `gpu wait` / background `gpu run` used instead of polling,
+        `ws create --from-ws` (workers copying workspaces), `TRACE=graph` and `step_anatomy.py`;
+      - the noise wording: agents kept measuring small gains instead of stopping early.

@@ -1,6 +1,8 @@
 #!/bin/bash
 # nsys profile of a server under load (ShareGPT at c=16), then a kernel-time breakdown.
 #   gpu run --timeout 20 --label prof -- bash profile_nsys.sh <workspace dir> <out dir> [num_prompts=64] [extra serve args]
+#   (extra serve args go after num_prompts, so give num_prompts to pass them; a repeated flag
+#   replaces the task's, as in lib.sh's start_server)
 # Output in <out dir>: profile.nsys-rep (open in Nsight Systems, or `nsys stats`), profile.sqlite
 # (all the data; query it with Python, see the task's PROFILING.md), kern_sum.csv
 # (per-kernel totals), breakdown.txt (time by category: GEMM, communication, attention, ...),

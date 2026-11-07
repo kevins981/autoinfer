@@ -43,5 +43,10 @@ export CC=$ENV_PREFIX/bin/x86_64-conda-linux-gnu-gcc CXX=$ENV_PREFIX/bin/x86_64-
 export CUDAHOSTCXX=$CXX
 export CUDA_TARGET_DIR=$ENV_PREFIX/targets/x86_64-linux CUDA_INC_PATH=$ENV_PREFIX/targets/x86_64-linux/include
 export LIBRARY_PATH=$ENV_PREFIX/lib/stubs:$ENV_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
+# Python code: the task's clean baseline tree (made by `ws setup-task`), not the conda env's editable
+# install (qwen38_opt's own vLLM). A workspace's env.sh sources this, then puts its own tree first.
+_baseline=$CACHE_ROOT/tasks/qwen38-27b-fp8-2x4090/baseline/vllm
+[ -d "$_baseline" ] && export PYTHONPATH=$_baseline${PYTHONPATH:+:$PYTHONPATH}
+unset _baseline
 # Nsight Compute's Python API (`import ncu_report`) for reading .ncu-rep files
 export NCU_PYTHON=$(ls -d "$ENV_PREFIX"/nsight-compute-*/extras/python 2>/dev/null | head -1)

@@ -1,6 +1,9 @@
 # Helpers for GPU jobs on the qwen task (read-only; source it inside a `gpu run` script).
 #   source $AUTOINFER_RUN/task/scripts/lib.sh            # after `source <workspace>/env.sh`
-#   start_server [extra vllm serve args...]   # task flags + yours; waits until ready (or fails)
+#   start_server [extra vllm serve args...]   # task flags + yours; waits until ready (or fails).
+#                                              Yours come last, so a flag you repeat REPLACES the
+#                                              task's (e.g. your --speculative-config replaces the
+#                                              whole JSON: include method and num_speculative_tokens)
 #   bench <num_prompts> <concurrency> <out_dir>   # ShareGPT, T=0, seed 0, like the official bench
 #   gsm8k <n> <out.json>                       # accuracy check (official gate: n=250); for changes
 #                                              that may alter the math. Skip it for exact changes.

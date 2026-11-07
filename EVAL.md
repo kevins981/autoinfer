@@ -113,7 +113,7 @@ judge. Rules:
 - Judges read the run's artifacts, not summaries of them.
 
 ## TODO
-- [ ] Single-agent control harness: a very basic auto-research loop (one agent, the task's
+- [x] Single-agent control harness (`flavors/baseline/`): a very basic auto-research loop (one agent, the task's
       harness and GPU queue, same budget), and its run layout.
 - [x] Answer key for `qwen38-27b-fp8-2x4090`: `answer_keys/qwen38-27b-fp8-2x4090/answer_key.md`
       (from v1 test-3, test-4 and qwen38_opt).

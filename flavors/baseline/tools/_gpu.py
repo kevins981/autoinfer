@@ -46,31 +46,42 @@ def foreign_usage():
 
 
 def limits(run):
-    """The run's stopping rules from config.md: 'max experiments: N' and/or 'max hours: H' (either
-    may be 'none'). Returns (max_experiments, max_hours, experiments done, hours elapsed)."""
+    """The run's stopping rules from config.md: 'max experiments: N', 'max hours: H' (wall clock) and
+    'max gpu hours: G' (GPU time of all jobs, experiments and gpujobs); any may be 'none'.
+    Returns a dict with the limits and the amounts used so far."""
     cfg = (run / "config.md").read_text()
     def val(name):
         m = re.search(rf"^\s*-?\s*{name}:\s*([0-9.]+)", cfg, re.M | re.I)
         return float(m.group(1)) if m else None
+    done, gpu_min = 0, 0.0
     led = run / "gpu" / "ledger.jsonl"
-    done = 0
     if led.exists():
-        done = sum(1 for l in led.read_text().splitlines()
-                   if l.strip() and json.loads(l).get("label", "").startswith("experiment:"))
+        for l in led.read_text().splitlines():
+            if l.strip():
+                e = json.loads(l)
+                gpu_min += e.get("gpu_minutes", 0)
+                done += e.get("label", "").startswith("experiment:")
     started = json.loads((run / "run.json").read_text()).get("started")
     hours = (time.time() - datetime.fromisoformat(started).timestamp()) / 3600 if started else 0.0
-    return val("max experiments"), val("max hours"), done, hours
+    return {"max_experiments": val("max experiments"), "max_hours": val("max hours"),
+            "max_gpu_hours": val("max gpu hours"), "experiments": done, "hours": hours,
+            "gpu_hours": gpu_min / 60}
 
 
 def limits_line(run):
-    mx, mh, done, hours = limits(run)
-    return (f"{done} experiments done" + (f" of max {mx:g}" if mx is not None else "") +
-            f"; {hours:.2f} h elapsed" + (f" of max {mh:g} h" if mh is not None else ""))
+    L = limits(run)
+    of = lambda k: f" of max {L[k]:g}" if L[k] is not None else ""
+    return (f"{L['experiments']} experiments done{of('max_experiments')}; "
+            f"{L['gpu_hours']:.2f} GPU-hours used{of('max_gpu_hours')}; "
+            f"{L['hours']:.2f} h elapsed{of('max_hours')}")
 
 
 def check_start(tool, run, experiment=False):
-    mx, mh, done, hours = limits(run)
-    if (mh is not None and hours >= mh) or (experiment and mx is not None and done >= mx):
+    L = limits(run)
+    over = ((L["max_hours"] is not None and L["hours"] >= L["max_hours"]) or
+            (L["max_gpu_hours"] is not None and L["gpu_hours"] >= L["max_gpu_hours"]) or
+            (experiment and L["max_experiments"] is not None and L["experiments"] >= L["max_experiments"]))
+    if over:
         die(tool, f"the run's limit is reached ({limits_line(run)}). Stop experimenting: write "
                   f"$AUTOINFER_RUN/final.md (program.md, 'When the run ends') and stop.", EXIT_BUDGET)
     foreign = foreign_usage()

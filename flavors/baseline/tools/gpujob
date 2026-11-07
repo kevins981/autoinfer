@@ -5,7 +5,7 @@ Usage: gpujob --timeout MIN [--label L] -- <command...>
   e.g. gpujob --timeout 15 --label nsys -- bash $AUTOINFER_RUN/scratch/prof.sh
   Run as a BACKGROUND command. Output: $AUTOINFER_RUN/gpu/jobs/<n>.log (tail printed at the end).
 
-Refuses if someone else is on the GPUs (exit 75) or the run's time limit is reached (76); kills
+Refuses if someone else is on the GPUs (exit 75) or the run's limit (config.md) is reached (76); kills
 everything the command started when it ends or times out (124). Its time counts toward the run's
 wall clock like everything else; it doesn't count as an experiment.
 Never start servers or GPU work outside gpujob/experiment, and never run two at once.

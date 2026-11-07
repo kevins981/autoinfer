@@ -21,7 +21,7 @@ task, harness and tools are AutoInfer's.)
      never modify.
    - `task/scripts/`: helpers for your own GPU jobs (start a server, bench, gsm8k, profile).
    - The engine source in the code tree: whatever you need, as you need it.
-4. **Confirm the limits** in `config.md` (max experiments and/or max hours), then start.
+4. **Confirm the limits** in `config.md` (GPU hours, experiments and/or wall-clock hours), then start.
 
 ## Experimentation
 
@@ -72,7 +72,7 @@ ttft_p99_ms:       1341
 tpot_p99_ms:       46.1
 mtp_acceptance:    2.33
 results:           .../experiments/001-1a2b3c4/results.json
-limits:            1 experiments done of max 20; 0.25 h elapsed of max 6 h
+limits:            1 experiments done; 0.18 GPU-hours used of max 4; 0.25 h elapsed
 ```
 
 Everything else (server logs, bench JSONs, GSM8K answers, the build log) is in that experiment's

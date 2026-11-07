@@ -64,8 +64,8 @@ initialize():                                       # WITH the human
 
 ```python
 set_budgets(round):
-    # gpu/budget.json = {"round": round, "teams": {"T1": <minutes>, ...}}
-    # from CONFIG's GPU budget per team per round; you may give a promising direction more and
+    # gpu/budget.json = {"round": round, "teams": {"T1": <minutes>, ...}, "brainstormer": <minutes>}
+    # from CONFIG's GPU budgets (per team per round; per brainstormer per round); you may give a promising direction more and
     # a long shot less. The GPU queue enforces it (team totals only). Leaders manage their team's
     # minutes (per-worker allowances are theirs to set). A leader may ask you for more mid-round:
     # grant it (edit budget.json) if the evidence justifies it.
@@ -92,7 +92,7 @@ brainstorm(round) -> directions:
         # how: agent start bs-r<round>-<persona> --role brainstormer --persona <persona> \
         #        --task "Round <round> briefing: <path>. Send your ideas to manager."
         # They can see everything, chat with leaders (usually idle now), and profile records
-        # (GPU queue, unbudgeted). Give them time. Each writes its ideas to
+        # (GPU queue; 15 GPU-min each per round). Give them time. Each writes its ideas to
         # brainstorm/r<round>/<persona>.md and messages you the path: read that file as is (don't
         # rewrite or condense it). Then `agent stop` each brainstormer.
         ideas += brainstormer(persona, briefing).propose()

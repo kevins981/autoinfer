@@ -11,7 +11,9 @@ tasks. The `models` lines are also read by `agent start` and `new_run` (keep the
   - one worker ≈ 3 jobs per round (e.g. measure, iterate, confirm) → ~30 min;
   - plus ~2 official evals x ~11 min = 22 → ~52, rounded up to 55.
   One GPU job runs at a time for the whole run, so a round needs at least
-  leaders x 55 GPU-minutes of wall time (plus brainstormer profiling, unbudgeted).
+  leaders x 55 GPU-minutes of wall time, plus the brainstormers'.
+- GPU budget per brainstormer per round: 15 GPU-minutes (measurements, profiles, prototypes:
+  their choice).
 - brainstormers (persona files in flavors/v1/agents/personas/, one brainstormer each):
   - systematic_engineer
   - adjacent_field

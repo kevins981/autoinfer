@@ -29,8 +29,9 @@ brainstormer(persona, briefing).propose() -> ideas:
         #   didn't try. Ask like a colleague would.
         # new profiles when the existing data doesn't answer your question (e.g. of a new
         #   CHAMPION): `ws create <your name>.<record> --from <record id>`, then a `gpu run` job
-        #   with task/scripts/profile_nsys.sh or profile_ncu.sh (unbudgeted for you, but you still
-        #   queue: keep it short). Save what you produce in bank/<record id>/profiles/ so others
+        #   with task/scripts/profile_nsys.sh or profile_ncu.sh. You have your own GPU budget:
+        #   15 GPU-min per round (gpu/budget.json "brainstormer"), and the GPU queue is shared with
+        #   the teams, so spend it where it settles a question. Save what you produce in bank/<record id>/profiles/ so others
         #   reuse it, and mention it in your ideas.
         # Probably worth it, given how you are judged: checking an idea's premise against the raw
         # data (how much time does the part it speeds up really take?) and against the code (how

@@ -168,7 +168,7 @@ brainstorm() -> directions:
                               access = everything: TASK (incl. the baseline profile), BANK,
                                        SHARED_KB, TREE, JOURNAL, multi-turn chat with any leader,
                                        profile any record, e.g. a new CHAMPION
-                                         (GPU queue, unbudgeted; saved into that
+                                         (GPU queue, 15 GPU-min each per round; saved into that
                                          record's folder so others reuse it)).propose()
 
     # 3. Central scoring: one scorer with full context, on one scale.

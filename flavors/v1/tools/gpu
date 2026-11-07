@@ -12,8 +12,10 @@ Usage:
   gpu cancel <job id>
 
 Team and agent come from AUTOINFER_TEAM / AUTOINFER_AGENT (set by `agent start`). No team =
-unbudgeted (recorded, not charged). Budgets: $AUTOINFER_RUN/gpu/budget.json, written by the
-manager each round: {"round": 3, "teams": {"T1": 40, "T2": 40}}.
+unbudgeted (recorded, not charged), except brainstormers (AUTOINFER_ROLE=brainstormer): each has
+its own cap per round, budget.json's "brainstormer" (default 15 GPU-min). Budgets:
+$AUTOINFER_RUN/gpu/budget.json, written by the manager each round:
+{"round": 3, "teams": {"T1": 40, "T2": 40}, "brainstormer": 15}.
 
 Exit codes of `gpu run`: the job's own exit code; 124 = killed at its timeout; 76 = budget
 exhausted (job not run); 2 = bad arguments (job not run); 75 = GPUs in use by someone outside this run (job not run: report this
@@ -102,7 +104,28 @@ def remaining(team):
     return b["teams"][team] - used(team, b.get("round"))
 
 
-def check_budget(team, timeout):
+BRAINSTORMER_DEFAULT = 15             # GPU-min per brainstormer per round if budget.json has none
+
+
+def is_brainstormer(team):
+    return not team and os.environ.get("AUTOINFER_ROLE") == "brainstormer"
+
+
+def brainstormer_remaining(agent):
+    b = budget()
+    cap = b.get("brainstormer", BRAINSTORMER_DEFAULT)
+    return cap - sum(e["gpu_minutes"] for e in ledger()
+                     if e.get("agent") == agent and e.get("round") == b.get("round"))
+
+
+def check_budget(team, timeout, agent=None):
+    if is_brainstormer(team):
+        rem = brainstormer_remaining(agent)
+        if rem < timeout:
+            die(f"budget exhausted: brainstormer {agent} has {rem:.1f} GPU-min left this round, "
+                f"the job asks for up to {timeout:g} (lower --timeout, or do GPU-free work)",
+                EXIT_BUDGET)
+        return
     rem = remaining(team)
     if rem is not None and rem < timeout:
         die(f"budget exhausted: team {team} has {rem:.1f} GPU-min left this round, the job asks "
@@ -248,7 +271,7 @@ def cmd_run(a):
     g = gdir()
     team = os.environ.get("AUTOINFER_TEAM") or None
     agent = os.environ.get("AUTOINFER_AGENT", "human")
-    check_budget(team, a.timeout)                       # fail fast
+    check_budget(team, a.timeout, agent)                # fail fast
 
     jid = next_job_id(g)
     jdir = g / "jobs" / str(jid)
@@ -282,7 +305,7 @@ def cmd_run(a):
                 announced = True
             time.sleep(POLL)
 
-        check_budget(team, a.timeout)                   # exact now: only one job runs at a time
+        check_budget(team, a.timeout, agent)            # exact now: only one job runs at a time
         foreign = foreign_usage()
         if foreign:
             msg = (f"GPUs in use by someone outside this run: {foreign}. The job was NOT run. "
@@ -349,7 +372,7 @@ def finish(g, info, jdir, start, end, rc, timed_out, team, agent, label, cancell
              "label": label, "start": now_iso(start), "end": now_iso(end),
              "gpu_minutes": round((end - start) / 60, 3), "exit_code": rc,
              "timed_out": timed_out, "cancelled": cancelled,
-             "charged": bool(team and team in b.get("teams", {}))}
+             "charged": bool(team and team in b.get("teams", {})) or is_brainstormer(team)}
     with open(g / "ledger.jsonl", "a") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         f.write(json.dumps(entry) + "\n")
@@ -369,7 +392,7 @@ def cmd_status(a):
     led = [e for e in ledger() if e.get("round") == rnd]
     teams = {}
     for e in led:
-        k = e.get("team") or "(unbudgeted)"
+        k = e.get("team") or ("(brainstormers)" if e["agent"].startswith("bs-") else "(unbudgeted)")
         teams.setdefault(k, {}).setdefault(e["agent"], 0.0)
         teams[k][e["agent"]] += e["gpu_minutes"]
     for t in b.get("teams", {}):

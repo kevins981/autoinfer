@@ -39,7 +39,7 @@ human, so they are tracked. The manager commits them at the end of each round, n
 The bank belongs to the run (no sharing between runs in v1).
 
 ## Kickoff (implemented: `tools/new_run`)
-1. The human runs `flavors/v1/tools/new_run <run> --task <task>`. It creates the run folder (task link,
+1. The human runs `flavors/v1/tools/new_run <run> --task <task>`. It creates the run folder (a copy of the task + `task_source.json`,
    `config.md` from `flavors/v1/config_default.md`, `search_policy.md`, empty records, folders,
    `agent_settings.json` + `manager_settings.json`), runs `ws setup-task`, and starts the manager
    as a background session in `flavors/v1/` (`claude --bg --name manager`, auto mode, the run's

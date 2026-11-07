@@ -39,10 +39,17 @@ def run_dir():
 
 
 def task_dir():
-    t = run_dir() / "task"
-    if not t.exists():
-        die(f"{t} not found: link the run to its task (ln -s <autoinfer>/tasks/<task> {t})")
-    return t.resolve()
+    """The task's original folder, autoinfer/tasks/<task>. Trusted tools read the task from there,
+    never from the run's copy (agents can write in their run). Older runs link task -> tasks/<task>;
+    newer runs hold a copy for agents to read and record its name in task_source.json."""
+    run = run_dir()
+    t = run / "task"
+    if t.is_symlink():
+        return t.resolve()
+    src = run / "task_source.json"
+    if not src.exists():
+        die(f"{src} not found (written by new_run: the run's task name)")
+    return ROOT / "tasks" / json.loads(src.read_text())["task"]
 
 
 def task_cfg():

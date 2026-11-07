@@ -14,6 +14,6 @@ already in its system prompt; this file covers a session started by hand, e.g. t
 - `config_default.md`: run limits (max experiments, max hours) and model; copied to each run.
 - `tools/`: `new_run` (create a run + start the agent), `experiment` (official eval of the
   current commit), `gpujob` (ad-hoc GPU job), `ws` (workspaces: copied from v1), `_gpu.py`.
-- Run folder: `runs/<run>/`: `task` link, `config.md`, `run.json`, `results.tsv`, `final.md`,
+- Run folder: `runs/<run>/`: `task/` (a copy; tools read the original via `task_source.json`), `config.md`, `run.json`, `results.tsv`, `final.md`,
   `workspaces/main/` (code tree on branch `autoresearch/<run>`), `experiments/<n>-<commit>/`,
   `gpu/ledger.jsonl` + `gpu/jobs/`, `agents/researcher/meta.json` (for `resources.py`).

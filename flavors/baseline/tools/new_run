@@ -5,7 +5,7 @@ Usage: new_run <run name> --task <task> [--no-start]
        new_run <run name> --start
   e.g. flavors/baseline/tools/new_run base-1 --task qwen38-27b-fp8-2x4090
 
-Creates runs/<run>/ (task link, config.md, run.json, results.tsv, folders), prepares the task
+Creates runs/<run>/ (a copy of the task, config.md, run.json, results.tsv, folders), prepares the task
 (`ws setup-task`), creates the workspace `main` with the code tree on branch autoresearch/<run>
 (+ a setup commit adding an empty serve_args.txt), then starts the agent in the run folder with
 program.md as its instructions. Edit runs/<run>/config.md (limits) before starting if needed:
@@ -45,8 +45,58 @@ def model_of(run):
     return (m.group(1), m.group(2)) if m else ("claude-opus-5-5", "medium")
 
 
+QWEN38_OPT = ROOT.parent / "qwen38_opt"
+
+
+def copy_task(run, task):
+    """The run's own copy of the task, for agents to read (they stay in their run folder). Trusted
+    tools (ws, the official eval) read the original in tasks/, found by task_source.json."""
+    shutil.copytree(task, run / "task", symlinks=True)
+    g = lambda *c: subprocess.run(["git", "-C", str(ROOT), *c], capture_output=True, text=True).stdout.strip()
+    (run / "task_source.json").write_text(json.dumps(
+        {"task": task.name, "autoinfer_commit": g("rev-parse", "HEAD"),
+         "uncommitted": g("status", "--porcelain", "--", str(task.relative_to(ROOT))) or None}, indent=2) + "\n")
+
+
+def confine(s, run):
+    """Keep the run's agents (the manager or researcher included) away from what would leak
+    answers: answer keys, evaluations, design notes, other runs, and qwen38_opt's findings and
+    optimized code. Two layers: deny rules (hard for the Read/Edit tools and for shell commands
+    that name these paths) and an auto-mode classifier rule (catches python, git show, ...).
+    "$defaults" keeps the classifier's built-in rules (a soft_deny list replaces them otherwise)."""
+    own = run.resolve()
+    dirs = [ROOT / d for d in ("answer_keys", "evals", "design", ".claude", ".git")]
+    # flavor folders: everything but what agents use (design/, notes such as observations.md, ...)
+    keep = {"agents", "tools", "runs", "config_default.md", "program.md", ".claude"}
+    flav = sorted(e for f in (ROOT / "flavors").iterdir() if f.is_dir() for e in f.iterdir() if e.name not in keep)
+    dirs += [e for e in flav if e.is_dir()]
+    dirs += sorted(r for f in (ROOT / "flavors").iterdir() if (f / "runs").is_dir()
+                   for r in (f / "runs").iterdir() if r.is_dir() and r.resolve() != own)
+    dirs += [QWEN38_OPT / d for d in ("results", "logs", "ext", "vllm", "build")]
+    files = [ROOT / "EVAL.md", ROOT / "CLAUDE.md"] + [e for e in flav if not e.is_dir()] + [QWEN38_OPT / f for f in ("FINDINGS.md", "TODO.md", "CLAUDE.md")]
+    pats = [f"/{d}/**" for d in dirs] + [f"/{f}" for f in files]
+    ro = [f"/{ROOT / 'tasks'}/**", f"/{run / 'task'}/**"]   # the task is read-only to agents
+    deny = s["permissions"]["deny"]
+    deny += [f"{tool}({p})" for p in pats for tool in ("Read", "Edit")]   # Edit covers every file-writing tool
+    deny += [f"Edit({p})" for p in ro]
+    off = ", ".join(str(p) for p in dirs + files if p.parent.name != "runs" and QWEN38_OPT not in p.parents)
+    s["includeGitInstructions"] = False   # else the system prompt holds the autoinfer repo's recent commits
+    s["autoMode"] = {"soft_deny": ["$defaults", (
+        f"Leaving the run: this agent belongs to one AutoInfer optimization run, folder {run}. "
+        f"Never read, list, search, copy or print the following, by any method (Read, cat, grep, find, "
+        f"python, symlinks, git log/show/grep/diff on the {ROOT} repository or reading its .git): {off}; any other AutoInfer "
+        f"run's folder (other runs under {ROOT}/flavors/*/runs/, or anywhere else); and {QWEN38_OPT}'s "
+        f"notes, results, logs and code (FINDINGS.md, TODO.md, results/, logs/, ext/, vllm/, build/). They hold "
+        f"the evaluators' answers and grades, design notes, or other runs' results; using them invalidates "
+        f"the experiment. Allowed outside the run: running the run's tools; reading the flavor's agents/ "
+        f"and tools/; the engine code and caches under {ROOT}/.cache; {QWEN38_OPT}/env (the conda env) "
+        f"and {QWEN38_OPT}/.cache (model weights); git inside the agent's own workspaces; installed "
+        f"system software and documentation.")]}
+    return s
+
+
 def write_settings(run):
-    s = json.loads((TOOLS / "agent_settings.json").read_text())
+    s = confine(json.loads((TOOLS / "agent_settings.json").read_text()), run)
     s["claudeMdExcludes"] = [str(ROOT / "CLAUDE.md"), str(FLAVOR / "CLAUDE.md")]
     # `claude --bg` may hand the session to a pre-started process with the daemon's environment,
     # so the run's env must live in the settings.
@@ -64,7 +114,7 @@ def create(run, task_name):
     if run.exists():
         die(f"{run} already exists")
     run.mkdir(parents=True)
-    (run / "task").symlink_to(os.path.relpath(task, run))
+    copy_task(run, task)
     for d in ("experiments", "gpu", "agents/researcher", "scratch", "workspaces"):
         (run / d).mkdir(parents=True)
     shutil.copy(FLAVOR / "config_default.md", run / "config.md")

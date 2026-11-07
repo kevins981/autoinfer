@@ -18,14 +18,9 @@
       "Bash(git push *)",
       "Bash(git push)",
       "Edit(//home/**)",
-      "Write(//home/**)",
-      "NotebookEdit(//home/**)",
       "Edit(//scratch/kevinsong/learning/qwen38_opt/**)",
-      "Write(//scratch/kevinsong/learning/qwen38_opt/**)",
       "Edit(//usr/**)",
-      "Write(//usr/**)",
-      "Edit(//etc/**)",
-      "Write(//etc/**)"
+      "Edit(//etc/**)"
     ]
   },
   "claudeMdExcludes": [

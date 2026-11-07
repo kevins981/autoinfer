@@ -2,7 +2,9 @@
 
 **Implemented 2026-11-06: `tools/ws`** (+ `ws setup-task` and `ws list`), with the task's
 `tasks/<task>/workspace.json` (repo, baseline commit, build targets) and `tasks/<task>/env.sh`.
-The run folder links its task: `$AUTOINFER_RUN/task -> tasks/<task>`. Tested: create in 1.6 s
+The run folder holds a copy of its task (`$AUTOINFER_RUN/task/`, for agents to read) and its name in
+`task_source.json`; `ws` and `official_eval` read the original `tasks/<task>/` (runs before
+2026-11-07 link `task -> tasks/<task>` instead). Tested: create in 1.6 s
 (~200 MB), `import vllm` loads the workspace's code, workspaces are isolated, `diff` includes new
 files, `create --from` applies a record's diff, cleanup when creation fails.
 

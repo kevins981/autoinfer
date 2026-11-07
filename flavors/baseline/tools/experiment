@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _gpu
 
 TOOLS = Path(__file__).resolve().parent
+ROOT = TOOLS.parents[2]                 # autoinfer/ (tools live in flavors/<f>/tools)
 COMPILED = (".cu", ".cuh", ".cpp", ".cc", ".c", ".h", ".hpp", ".cmake")   # + CMakeLists.txt below
 
 
@@ -78,7 +79,8 @@ def main():
         print("note: this commit has no compiled changes but the workspace has a custom build; "
               "rebuild with `ws build main` after reverting csrc/ changes if needed", flush=True)
 
-    task = (run / "task").resolve()
+    t = run / "task"                     # the original task folder, never the run's copy
+    task = t.resolve() if t.is_symlink() else ROOT / "tasks" / json.loads((run / "task_source.json").read_text())["task"]
     cmd = ["bash", str(task / "harness" / "eval.sh"), str(ws), str(out)]
     sa = tree / "serve_args.txt"
     if sa.exists() and sa.read_text().strip():

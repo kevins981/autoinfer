@@ -72,7 +72,8 @@ def main():
     diff = rec / "change.diff"
     if not diff.exists():
         die(f"{diff} not found (a record needs change.diff; empty = the baseline)")
-    task = (run / "task").resolve()
+    t = run / "task"                     # the original task folder, never the run's copy
+    task = t.resolve() if t.is_symlink() else ROOT / "tasks" / json.loads((run / "task_source.json").read_text())["task"]
     harness = task / "harness"
     off = rec / "official"
     off.mkdir(parents=True, exist_ok=True)

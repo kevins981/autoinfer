@@ -17,6 +17,39 @@ Flavor-specific TODOs live in each flavor's `design/TODO.md` (e.g. `flavors/v1/d
   their role prompt explicitly. Untested: the exact launch command, and whether the role prompt
   should repeat the hard rules.
 
+## Keeping run agents in their run (decided and implemented 2026-11-07)
+Run agents (the manager or researcher included) must not see answer keys, evaluations, design
+notes, other runs or qwen38_opt's findings: that would spoil the comparison. Claude Code has no
+"confine to this folder" switch, and an OS sandbox (bubblewrap) is ruled out (GPU jobs; human).
+What `new_run` does now (both flavors, `confine()` + `copy_task()`), tested with Haiku agents:
+- **Task copied into the run** (`task/`, 455 MB) + `task_source.json` (name, autoinfer commit).
+  Trusted tools (`ws`, `official_eval`, `experiment`) read the original `tasks/<task>/`, so an
+  agent editing its copy can't change how it is measured. `task/` and `tasks/` are Edit-denied.
+- **Deny rules** (Read + Edit) on: `answer_keys/`, `evals/`, `design/`, `.claude/`, `.git/`,
+  `EVAL.md`, `CLAUDE.md`; in every flavor everything but `agents/`, `tools/`, `runs/`,
+  `config_default.md`, `program.md` (catches `design/`, `observations.md`, future notes); every
+  other run that exists when the run starts; qwen38_opt's `FINDINGS.md`, `TODO.md`, `CLAUDE.md`,
+  `results/`, `logs/`, `ext/`, `vllm/`, `build/` (its `env/` and `.cache/` weights stay readable).
+  Hard for Read/Grep and for shell commands that name these paths (`cat`, `ls`).
+- **Auto-mode classifier rule** (`autoMode.soft_deny`, plain English, naming these paths and "any
+  other run"): catches python, `find`, `git log/show` on the autoinfer repo. The list must start
+  with `"$defaults"`, otherwise it *replaces* the 72 built-in rules. Soft: an explicit instruction
+  from the user overrides it (fine: nothing in a run asks for this).
+- **`includeGitInstructions: false`**: otherwise every session's system prompt carries the autoinfer
+  repo's recent commits and git status (agents run inside the repo).
+- Only `Edit(...)` deny rules work for file writes; `Write(...)`/`NotebookEdit(...)` are ignored
+  (removed from the templates).
+Residual gaps: a determined agent can still get around the soft rule (e.g. a script reading a path
+built at run time); runs created after a run starts aren't in its deny list (the classifier rule
+covers "any other run"); live runs keep the settings they started with. Backstop: the cheat audit
+(EVAL.md TODO).
+**Pending, needs the human's go-ahead (not while runs are live):** move `flavors/<f>/runs/` out of
+the autoinfer repo (e.g. `/scratch/kevinsong/learning/autoinfer_runs/<f>/`, `runs` a symlink to
+it). Then git in a run folder no longer finds the autoinfer repo. Runs aren't meant to be tracked
+anyway. At that point: set AUTOINFER_RUN to the real path, check tools that resolve paths, add a
+`Bash(git -C <autoinfer> *)` deny (today it would also match workspaces inside runs), and consider
+starting the v1 manager in its run folder instead of `flavors/v1/` (inside the repo).
+
 ## Infrastructure
 - GPU job queue: a wrapper we write; all GPU work goes through it (agents trusted to use it in v1).
   Needs: jobs tagged with team/agent + timeout, exclusive GPUs, per-team budget accounting with a

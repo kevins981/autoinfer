@@ -173,6 +173,10 @@ judge. Rules:
       `resources.py` (tokens per agent/role, wall clock, GPU-minutes from transcripts + ledger).
 - [ ] The flavor should record the manager's session id (v1's agents/manager/meta.json has none;
       resources.py finds the transcript by start time).
-- [ ] Keep run agents away from `answer_keys/` and `evals/` (part of the general "agents stay in
-      their run" TODO).
+- [x] Keep run agents away from `answer_keys/` and `evals/`: deny rules + a classifier rule, from
+      `new_run` (design/open_questions.md, "Keeping run agents in their run").
+- [ ] **Cheat audit** (human, 2026-11-07): a skill or subagent in the judging process that checks a
+      run's transcripts for any access to answer keys, evals, design notes, other runs or
+      qwen38_opt's findings (including attempts that were blocked), as a second check on top of the
+      permissions.
 - [ ] Evaluate test-3 and test-4 with the skill, as the first trial of the framework.

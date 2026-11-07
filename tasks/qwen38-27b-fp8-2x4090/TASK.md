@@ -57,6 +57,10 @@ Code anywhere in the engine (kernels, scheduler, memory, communication, compilat
 parallelization scheme (TP/PP/other splits), serving flags (via a record's `serve_args.txt`):
 batching limits, memory split, backends, CUDA graph settings, **speculative decoding** (method,
 number of draft tokens), max context. The run's task definition may narrow this.
+New kernels may be compiled ahead of time (`csrc/`, rebuilt by the official eval) or just in time
+at server start (e.g. torch `cpp_extension.load`, cached under `$TORCH_EXTENSIONS_DIR`); both are
+fine. **Startup time doesn't count** toward the score, but it must stay reasonable (the official
+eval gives up after 15 min per server start).
 
 ## Correctness (what a validity review checks)
 - The served model computes the same function as the baseline: changes may reorder

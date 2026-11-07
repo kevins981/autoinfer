@@ -7,11 +7,6 @@ norms take) is not a measurement of the change. When a run measures one of these
 `answer_key.md` as a node, with its result. Same format as the key's nodes; `builds_on` may name
 key nodes or other ideas here.
 
-### `ar-norm-fusion`: fuse residual-add + RMSNorm into the host all-reduce kernel
-- builds_on: host-ar
-- status: open
-- results: on host-ar: untested; ~1.6 ms/step of norms etc. (`v1/test-4` reports/final.md).
-
 ### `l2-prefetch`: prefetch the next GEMM's weights into L2 during the all-reduce
 - builds_on: host-ar
 - status: open
@@ -24,12 +19,6 @@ key nodes or other ideas here.
 - builds_on: host-ar
 - status: open
 - results: on host-ar: est. +2-3%, depends on compressibility (`v1/test-3` idea R3-C).
-
-### `reduced-vocab-draft-head`: draft head over a reduced vocabulary
-- builds_on: draft-head-diet
-- status: ruled out by estimate
-- results: on draft-head-diet: est. net ≈ 0 once the draft head is FP8 (`v1/test-3` idea R1-J,
-  ideas.md:43). A measurement overrides this.
 
 ### `small-spec-state`: one GDN spec block per request
 - builds_on: gdn-replay
@@ -55,11 +44,6 @@ key nodes or other ideas here.
 - status: ruled out by estimate
 - results: est. ~0-1.5% (`v1/test-3:KB8`, brainstorm r2).
 
-### `dequant-cublas-prefill`: dequantize + cuBLAS for large-M (prefill) GEMMs
-- builds_on: BASE
-- status: ruled out by estimate
-- results: est. ≤ 2% overall (`v1/test-3:brainstorm/r2/adjacent_field.md:75`).
-
 ### `spec-glue-graph`: capture the spec-decode glue in one CUDA graph
 - builds_on: BASE
 - status: open
@@ -71,21 +55,21 @@ key nodes or other ideas here.
   (`v1/test-4:T2-007`); in-place FlashInfer draft-metadata update, ~1 ms (`v1/test-3` idea R1-H).
 - caution: part of the step-start gap in node-level nsys is an artifact (F8).
 
-### `marlin-tuning`: in-kernel Marlin GEMM efficiency
-- builds_on: BASE
+### `combine-frontiers`: triton-attn (+ draft-vocab-subset) on test-3's frontier
+- builds_on: triton-attn + prefill-graphs + gdn-replay
 - status: open
-- results: no change tried. `component`: near its floor: the M=48 penalty vs M=3 is ~1.6 ms/step
-  (`v1/test-3:KB14`); L2-hot Marlin is close to its own floor
-  (`v1/test-4:brainstorm/r1/adjacent_field.md:90`). Small upside (F7).
+- results: the two tied frontier stacks share only host-ar and draft-head-diet; their other parts
+  attack different costs (attention planning vs prefill graphs / GDN state), est. +5-7% if additive
+  (`evals/baseline/run-1/judge-a.md`).
 
-### `ce-ar-prefill`: copy-engine full-duplex all-reduce for large (prefill) tensors
+### `ba-proj-splitk`: better GEMM choice for GDN `in_proj_ba` at tiny M
 - builds_on: BASE
 - status: open
-- results: est. +1.5-3%, but half the prefill AR time is GPU 0 skew (F2) (`v1/test-3` idea R2-E).
-  Complements `host-ar` (small sizes).
+- results: `component`: the bf16 GEMM takes 26 us vs 5 us at M=2-8 (cuBLAS picks a no-split-K kernel),
+  only on tail steps; ~3.4 ms on those steps (`baseline/run-1:tsv:22`). Small expected gain.
 
-### `flashinfer-pcie-ar`: `VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=1`
-- builds_on: BASE
-- alternative_to: host-ar
+### `decode-ar-overlap`: hide decode all-reduces behind compute
+- builds_on: host-ar
 - status: open
-- results: a 5-minute check, never run (`v1/test-3:brainstorm/r1/systematic_engineer.md:99`).
+- results: untested (GEMM-epilogue streaming of the AR, or two-microbatch decode)
+  (`baseline/run-1:final.md`). Marlin's persistent grid blocks concurrent kernels (F9).

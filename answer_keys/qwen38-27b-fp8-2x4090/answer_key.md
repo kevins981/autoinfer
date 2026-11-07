@@ -14,8 +14,13 @@ Evidence strength, strongest first: `official` (fresh-server trials), `abab` (in
 A/B), `ab` (one same-job A/B), `component` (microbench / nsys of one part), `estimate`.
 
 ## Frontier (best known)
-`host-ar` + `prefill-graphs` + `host-allgather` + `draft-head-diet` + `greedy-fastpath` +
-`gdn-replay` = **749.7 tok/s official, +18.7% vs BASE 631.4** (`v1/test-3:T1-012`).
+Two different stacks tie (within noise of each other):
+- `host-ar` + `prefill-graphs` + `host-allgather` + `draft-head-diet` + `greedy-fastpath` +
+  `gdn-replay` = **749.7 tok/s official, +18.7% vs BASE 631.4** (`v1/test-3:T1-012`).
+- `sharded-sampling` + `host-ar` + `draft-head-diet` + `marlin-tuning` + `triton-attn` +
+  `draft-vocab-subset` = **753.3 and 742.7 official (mean 748.0), +17.6% vs BASE 635.9**
+  (`baseline/run-1:exp008`, exp009).
+They share only host-ar and draft-head-diet; their combination is unmeasured (`ideas.md`).
 
 ## Graph
 Generated from the nodes' `builds_on` (`python3 .claude/skills/eval-run-qwen38/keygraph.py <this file>`):
@@ -27,8 +32,11 @@ BASE
 ├─ host-ar  [win]
 │  ├─ prefill-graphs  [win on host-ar; no gain on BASE]
 │  ├─ host-allgather  [no gain]
-│  └─ ar-kernel-tuning  [no gain]
+│  ├─ ar-kernel-tuning  [no gain]
+│  ├─ ce-ar-prefill  [no gain]
+│  └─ ar-norm-fusion  [no gain (component)]
 ├─ draft-head-diet  [win]
+│  └─ draft-vocab-subset  [win (small; official within noise)]
 ├─ greedy-fastpath  [win]  alt: sharded-sampling
 ├─ sharded-sampling  [win]  alt: greedy-fastpath
 ├─ gdn-replay  [win]
@@ -36,7 +44,11 @@ BASE
 ├─ nccl-env  [no gain]
 ├─ prefill-ar-overlap  [no gain measurable]
 ├─ triton-linear  [harmful]
-└─ stock-flag-tweaks  [no gain]
+├─ stock-flag-tweaks  [no gain]
+├─ triton-attn  [win]
+├─ marlin-tuning  [win (small; +0.6% official, not A/B-confirmed)]
+├─ dequant-cublas-prefill  [no gain]
+└─ flashinfer-pcie-ar  [doesn't run]  alt: host-ar
 ```
 <!-- graph:end -->
 
@@ -69,6 +81,7 @@ BASE
 - results:
   - on BASE: +5.0% official (`v1/test-3:T1-002`); +5.7% official (`v1/test-4:T1-001`). Decode AR
     61 → 45-50 us, ~1.5-2.2 ms/decode step (`v1/test-3:KB2`, `v1/test-4:KB2`).
+  - on sharded-sampling: +4.8% official (671.5 vs 640.8, `baseline/run-1:exp003`; ≤1 MB, NCCL above).
   - on BASE + draft-head-diet + sharded-sampling: +5.7% official vs that stack (691.3 vs 653.9,
     `v1/test-4:T1-003`, KB7): stacks nearly additively.
 - facts: F1, F3.
@@ -99,7 +112,8 @@ BASE
 - builds_on: host-ar
 - status: no gain
 - results: on host-ar: chunk pipelining loses (`v1/test-3:KB5`); unified blocks / per-warp flags
-  null `component` (`v1/test-4:T1-002`).
+  null `component` (`v1/test-4:T1-002`); sub-chunk pipelining, writer/reader block split and
+  copy-engine chunks all slower than one-shot `component` (`baseline/run-1:tsv:10`).
 - cause: host-ar is within ~5-10 us of the PCIe floor (F3).
 
 ### `draft-head-diet`: drafter output-head diet
@@ -113,6 +127,9 @@ BASE
 - results:
   - on BASE: +2.4% `ab` (`v1/test-4:T2-001`).
   - on host-ar + prefill-graphs: +3.0% `ab` (`v1/test-3:T1-007`, KB10); local argmax alone ~+1%.
+  - FP8 head alone on host-ar + sharded-sampling: +1.7% official (683.0 vs 671.5,
+    `baseline/run-1:exp004`); local argmax alone on that + marlin-tuning + triton-attn: +1.2%
+    official, +2.4% `ab` (`baseline/run-1:exp007`).
 
 ### `greedy-fastpath`: exact greedy argmax over vocab shards for verification
 - builds_on: BASE
@@ -129,14 +146,18 @@ BASE
   - on BASE + draft-head-diet + sharded-sampling: no gain over sharded-sampling (`v1/test-4:T2-004`).
   - vs sharded-sampling on host-ar + draft-head-diet: 699.5 vs 691.3 official, but ABAB +0.2%: a tie
     (`v1/test-4:T2-006`, journal.md:14, KB5).
+  - vs sharded-sampling on host-ar: 670.0 vs 670.4 `ab`, exact (0 mismatches / 1200 steps): a tie
+    (`baseline/run-1:tsv:13`).
 
 ### `sharded-sampling`: `--enable-batch-sharded-sampling`
 - builds_on: BASE
 - alternative_to: greedy-fastpath
 - status: win
 - what: serve flag; exact, works with MTP on the V2 runner.
-- results: on BASE: draft-head-diet + sharded-sampling = +2.8% official (`v1/test-4:T2-003`). Costs
-  an NCCL SendRecv of ~0.41 ms/decode step (F11).
+- results:
+  - on BASE: draft-head-diet + sharded-sampling = +2.8% official (`v1/test-4:T2-003`).
+  - on BASE alone: +1.4% official (640.8 vs 631.7, `baseline/run-1:exp002`).
+  - Costs an NCCL SendRecv of ~0.41 ms/decode step (F11).
 
 ### `gdn-replay`: GDN speculative-state replay
 - builds_on: BASE
@@ -165,7 +186,11 @@ BASE
     (`v1/test-4:T2-005`, KB13).
   - on qwen38_opt's BASE: 2 tokens beat 3 by 12% at c=16 (`qwen38_opt`).
   - with more KV (5.5-6.0 GiB): OOM in graph capture or at runtime (`v1/test-3:T1-010`, T1-011; F6).
-  - 4 tokens: the server doesn't start; Marlin cliff at M=80 (`v1/test-3:KB14`).
+  - on BASE: 3 drafts -6% `ab`, 4 drafts -18% `ab` (`baseline/run-1:tsv:3`, scratch/ab1).
+  - on sharded-sampling + host-ar + draft-head-diet + marlin-tuning + triton-attn: 3 drafts -5.7% `ab`
+    (670.4 vs 710.6, acceptance 2.72 vs 2.35; `baseline/run-1:tsv:16`, scratch/ab7).
+  - 4 tokens: with more KV the server doesn't start; Marlin cliff at M=80 (`v1/test-3:KB14`). With
+    BASE's KV it starts and runs, -18% (`baseline/run-1:scratch/ab1`).
 - cause: acceptance rises (2.35 → 2.72-2.76), but each request holds more GDN spec-state blocks
   (10 → 13), so only 14 of 16 requests fit in the KV pool: admission stalls (F5; `v1/test-3:KB13`,
   KB17). Symptom: TPOT -16% with total duration unchanged, TTFT p50 334 → 938 ms
@@ -177,8 +202,11 @@ BASE
 ### `nccl-env`: NCCL env knobs (protocol, channels, buffer size)
 - builds_on: BASE
 - status: no gain
-- results: on BASE: no gain at decode or prefill sizes `component` (`v1/test-4:KB1`; `v1/test-3`
-  idea R1-C).
+- results:
+  - on BASE: no gain at decode or prefill sizes `component` (`v1/test-4:KB1`; `v1/test-3` idea R1-C);
+    PROTO/NCHANNELS at 450 KB no gain `component` (`baseline/run-1:tsv:9`).
+  - on the run-1 stack (host-ar for ≤1 MB): `NCCL_PROTO=Simple` +0.3% `ab`, noise, TPOT p99 worse
+    (`baseline/run-1:tsv:21`).
 
 ### `prefill-ar-overlap`: overlap prefill-step all-reduces with compute
 - builds_on: BASE
@@ -198,9 +226,77 @@ BASE
 ### `stock-flag-tweaks`: common serve-flag tweaks
 - builds_on: BASE
 - status: no gain
-- results: on qwen38_opt's BASE, all within noise: prefix caching off, Triton attention backend, GDN
-  backend flags (flashinfer falls back on sm_89), `--max-num-batched-tokens 4096` (TTFT worse).
-  `--no-async-scheduling` is -10% (async is the default) (`qwen38_opt`).
+- results:
+  - on qwen38_opt's BASE (no FP8 KV), all within noise: prefix caching off, Triton attention backend,
+    GDN backend flags (flashinfer falls back on sm_89), `--max-num-batched-tokens 4096` (TTFT worse).
+    `--no-async-scheduling` is -10% (async is the default) (`qwen38_opt`).
+  - on the run-1 stack: `--max-num-batched-tokens` 4096 / 8192 within noise `ab`
+    (`baseline/run-1:tsv:24`, scratch/ab12).
+- note: the Triton attention backend is **not** in this node on the task's BASE: with FP8 KV the
+  default is FlashInfer, and switching is a win there (`triton-attn`). Its no-gain result above
+  was on a base without FP8 KV.
+
+### `triton-attn`: `--attention-backend TRITON_ATTN`
+- builds_on: BASE
+- status: win
+- what: serve flag replacing FlashInfer attention (the default with FP8 KV) by vLLM's Triton
+  attention; exact up to fp reordering, gates pass.
+- recognize: the flag, or any change that removes FlashInfer's per-step host-side planning from the
+  critical path. Not this: `stock-flag-tweaks` (Triton attention on a base without FP8 KV).
+- results: on sharded-sampling + host-ar + draft-head-diet (FP8 head) + marlin-tuning: +6.8% official
+  (733.8 vs 686.9, `baseline/run-1:exp006`), +4.9% `ab` (scratch/ab5). Unmeasured on BASE alone and
+  on test-3's stack.
+- cause: FlashInfer's per-step CPU planning, ~0.9-1.4 ms before the target graph each decode step,
+  seen in a graph-level nsys trace; with Triton the GPU is busy 99.6% of each decode step (F12).
+
+### `draft-vocab-subset`: drafter lm_head over a vocabulary subset
+- builds_on: draft-head-diet
+- status: win (small; official within noise)
+- what: the MTP drafter's lm_head covers only the first N token ids (low BPE ids are the frequent
+  merges), re-sharded over TP and FP8; drafts are always in the subset. The target verifies over
+  the full vocab, so outputs are exact (TASK's "no truncated vocabularies" is about the served
+  model, not the drafter). New spec-config key `draft_lm_head_vocab_size` (`baseline/run-1`).
+- results: on sharded-sampling + host-ar + draft-head-diet + marlin-tuning + triton-attn: N=98304
+  +2.1% `ab` (724.1 vs 709.1, acceptance 2.328 vs 2.34); official 753.3 and 742.7 vs 742.8 (mean
+  +0.7%, within noise) (`baseline/run-1:exp008`, exp009, tsv:17). N=64K loses acceptance (2.30,
+  708.8); 80K ≈ 98K (`tsv:18`).
+- old id: `reduced-vocab-draft-head` (ideas.md, "ruled out by estimate"; this measurement overrides it).
+
+### `marlin-tuning`: Marlin thread-config tuning for decode batches
+- builds_on: BASE
+- status: win (small; +0.6% official, not A/B-confirmed)
+- what: Marlin thread config {64,128,128} instead of {64,256,256} for 2-3 m-block (decode)
+  batches; gate_up 114 → 107 us `component`.
+- results: on sharded-sampling + host-ar + draft-head-diet (FP8 head): +0.6% official, both trials
+  up (686.9 vs 683.0, `baseline/run-1:exp005`).
+- note: Marlin is DRAM-bound near its floor (F7, `v1/test-3:KB14`), so in-kernel gains are small.
+
+### `dequant-cublas-prefill`: dequantize + cuBLAS for large-M (prefill) GEMMs
+- builds_on: BASE
+- status: no gain
+- results: on BASE: large-M Marlin = cuBLAS bf16 (135 vs 142 TFLOPS) `component`; prefill GEMMs are
+  compute-bound at the hardware limit (`baseline/run-1:tsv:12`). Earlier est. ≤ 2% overall
+  (`v1/test-3:brainstorm/r2/adjacent_field.md:75`).
+
+### `ce-ar-prefill`: copy-engine all-reduce for large (prefill) tensors
+- builds_on: host-ar
+- status: no gain
+- results: on the run-1 stack: copy-engine chunked host AR for > 4 MB, exact, +0.6% `ab` (721.1 vs
+  716.5), noise; most prefill ARs are < 4 MB (`baseline/run-1:tsv:20`). Host AR at 2.5-40 MB = NCCL,
+  both PCIe-bound ~13 GB/s each way `component` (`tsv:19`).
+- revisit: a more prefill-heavy workload.
+
+### `ar-norm-fusion`: fuse residual-add + RMSNorm into the host all-reduce kernel
+- builds_on: host-ar
+- status: no gain (component)
+- results: on host-ar: fused kernel saves ~1.5-3 us/call, ~0.3 ms/step `component`; not measured
+  end to end (`baseline/run-1:tsv:11`).
+
+### `flashinfer-pcie-ar`: `VLLM_ALLREDUCE_USE_FLASHINFER_PCIE_IPC=1`
+- builds_on: BASE
+- alternative_to: host-ar
+- status: doesn't run
+- results: on BASE: fails, needs P2P ("peer access not supported", F1) (`baseline/run-1:tsv:4`).
 
 ## Facts (cited by nodes; also used to judge whether a run's reasons were right)
 - **F1.** No GPU P2P: vLLM's custom all-reduce is disabled; TP all-reduce is NCCL over PCIe/host.
@@ -229,6 +325,9 @@ BASE
   ties like the stock path (`v1/test-3:KB12`).
 - **F11.** `--enable-batch-sharded-sampling` adds an NCCL SendRecv of ~0.41 ms per decode step
   (`v1/test-4:agents/leader-2.w2/REPORT_job1.md:13`).
+- **F12.** With FP8 KV the default attention backend is FlashInfer, whose per-step host-side
+  planning puts ~0.9-1.4 ms of GPU idle before the target graph each decode step (graph-level nsys,
+  `baseline/run-1:exp006`, tsv:14). Node-level traces can't show this (F8).
 
 ## History
 - 2026-11-07: created from v1 test-3, v1 test-4 and qwen38_opt (test-1/test-2 had no KB).
@@ -244,3 +343,9 @@ BASE
 - 2026-11-07: only measured changes stay in the key (human's rule: untested ideas have no numbers,
   so grading against them confuses). Moved the 9 open and 4 ruled-out-by-estimate nodes to
   `ideas.md`: ar-norm-fusion, l2-prefetch, ar-compression, reduced-vocab-draft-head, small-spec-state, draft-depth-3-small-state, pp2, uneven-tp, dequant-cublas-prefill, spec-glue-graph, marlin-tuning, ce-ar-prefill, flashinfer-pcie-ar.
+- 2026-11-07: added `baseline/run-1` (judge-a, evals/baseline/run-1). New nodes: `triton-attn`.
+  Moved from ideas.md (now measured): `draft-vocab-subset` (was `reduced-vocab-draft-head`),
+  `marlin-tuning`, `dequant-cublas-prefill`, `ce-ar-prefill`, `ar-norm-fusion`, `flashinfer-pcie-ar`.
+  Results added to host-ar, ar-kernel-tuning, draft-head-diet, greedy-fastpath, sharded-sampling,
+  draft-depth-3 (4 drafts do start on BASE's KV), nccl-env, stock-flag-tweaks (its Triton result was
+  on a base without FP8 KV; see triton-attn). Frontier: a second, tied stack. Fact F12.

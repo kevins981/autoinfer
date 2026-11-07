@@ -69,8 +69,10 @@ for t, v, rec, status in spec["official"]:
     filled = status == "promoted"
     ax1.plot(t, pct(v), "o", ms=8, mfc=INK if filled else "white", mec=INK, mew=1.6, zorder=4)
     note = f"{rec} {pct(v):+.1f}%" + ("" if filled else f"\n({status})")
-    ax1.annotate(note, (t, pct(v)), xytext=(6, 6) if filled else (-6, 6), textcoords="offset points",
-                 fontsize=8.5, color=INK, ha="left" if filled else "right")
+    # below-right of the point: the step line runs right at the point's height and rises later,
+    # so this corner stays free even when results come close together
+    ax1.annotate(note, (t, pct(v)), xytext=((6 if filled else -6), -8), textcoords="offset points",
+                 fontsize=8.5, color=INK, ha="left" if filled else "right", va="top")
 ax1.set_ylabel("speedup vs BASE (%)", fontsize=9.5, color=INK)
 ax1.set_ylim(-1, max(ys + [pct(o[1]) for o in spec["official"]]) + 4)
 ax1.grid(axis="y", color=GRID, lw=0.8)
@@ -177,7 +179,7 @@ ax4.legend(handles=[Line2D([], [], marker="D", ls="", mfc="white", mec=WIN, mew=
                     Line2D([], [], marker="*", ls="", color=WIN, ms=12, label="result reached"),
                     Line2D([], [], color=DEAD, lw=2, alpha=0.6, label="dead end: tested"),
                     Line2D([], [], marker="s", ls="", mfc="white", mec=DEAD, mew=1.6, label="dead end: settled")],
-           loc="upper left", bbox_to_anchor=(1.005, 1.0), fontsize=8, frameon=False)
+           loc="lower left", bbox_to_anchor=(1.005, 0.0), fontsize=8, frameon=False)
 ax4.text(-0.005, 1.01, "answer-key nodes (win nodes above the line, dead ends below)", transform=ax4.transAxes,
          fontsize=8.5, color=MUTED)
 ax4.set_xlabel("wall clock since run start (minutes)", fontsize=9.5, color=INK)

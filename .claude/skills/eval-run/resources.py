@@ -70,7 +70,7 @@ def main():
         # an agent restarted with new sessions (baseline flavor: new_run --resume) lists them all
         sids = [s["session_id"] for s in m.get("sessions", [])] or [m.get("session_id")]
         for i, sid in enumerate(sids):
-            hits = glob.glob(os.path.join(a.transcripts, "*", f"{sid}.jsonl")) if sid else []
+            hits = glob.glob(os.path.join(a.transcripts, "*", f"{sid}*.jsonl")) if sid else []
             if sid:
                 known.add(sid)
             name = m["name"] if len(sids) == 1 else f"{m['name']}#{i + 1}"
@@ -88,7 +88,7 @@ def main():
     ms = os.path.join(run, "manager_session.json")      # v1 new_run records the manager's session id
     if mgr and os.path.exists(ms):
         sid = json.load(open(ms))["session_id"]
-        hits = glob.glob(os.path.join(a.transcripts, "*", f"{sid}.jsonl"))
+        hits = glob.glob(os.path.join(a.transcripts, "*", f"{sid}*.jsonl"))
         if hits:
             known.add(sid)
             rows = [r for r in rows if r[4] != hits[0]]

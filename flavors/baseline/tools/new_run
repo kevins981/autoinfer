@@ -139,6 +139,12 @@ def main():
                         "--append-system-prompt", prompt, first],
                        cwd=run, env=env, capture_output=True, text=True)
     print(r.stdout.strip() or r.stderr.strip())
+    # `claude --bg` assigns its own session id (it ignores --session-id): record the one it prints,
+    # a prefix of the transcript's file name (resources.py matches by prefix)
+    m = re.search(r"backgrounded\s*\S\s*([0-9a-f]{8})", r.stdout)
+    if m:
+        meta["session_id"] = m.group(1)
+        (run / "agents" / "researcher" / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     if r.returncode != 0:
         die("could not start the agent (see above). The folder is ready; fix and use --start.")
 

@@ -13,7 +13,7 @@ The first time, run `claude` once in the flavor folder and accept the trust prom
 --start starts the manager on a run created with --no-start (e.g. after editing its config.md).
 Pausing and resuming a run are messages to the manager (CLAUDE.md, "Pausing and resuming a run").
 """
-import argparse, json, os, shutil, subprocess, sys, uuid
+import argparse, json, re, os, shutil, subprocess, sys, uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -154,6 +154,12 @@ def main():
                         "--append-system-prompt", prompt, first],
                        cwd=flavor, env=env, capture_output=True, text=True)
     print(r.stdout.strip() or r.stderr.strip())
+    # `claude --bg` assigns its own session id (it ignores --session-id): record the one it prints,
+    # a prefix of the transcript's file name (resources.py matches by prefix)
+    m = re.search(r"backgrounded\s*\S\s*([0-9a-f]{8})", r.stdout)
+    if m:
+        (run / "manager_session.json").write_text(json.dumps(
+            {"session_id": m.group(1), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}) + "\n")
     if r.returncode != 0:
         die("could not start the manager (see above). Folder is ready; fix and start it by hand.")
 

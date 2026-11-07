@@ -139,3 +139,7 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
 - **Never write to `$HOME`** (the partition is nearly full). Caches go under `autoinfer/.cache`
   (the task's `env.sh` sets this up).
 - Never use the GPUs outside `gpu run`. Never `git push`.
+- **Runs are independent.** Never read or use other runs' folders (`runs/<other>/`, in any flavor):
+  no earlier task definitions, ledgers, KB, journals, records or results, not even as a template.
+  Work only from `task/` and your own run's files. (Different AutoInfer variations are compared on
+  the same task, so carried-over knowledge would spoil the comparison.)

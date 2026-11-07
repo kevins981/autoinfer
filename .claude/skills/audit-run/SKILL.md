@@ -82,7 +82,8 @@ Read every agent's log (skip copies with 0 new calls) for:
 - GPU work outside the queue, touching other users' processes or files, writing to `$HOME`.
 
 **Fan out when the logs are big.** Logs are compact (a v1 run with ~10 agents is ~1 MB in total).
-If the total is more than you can read carefully (roughly over 300 KB), launch subagents in
+If the total is more than you can read carefully (roughly over 300 KB), launch subagents
+(**model Sonnet 5.5 (`sonnet`), effort medium**: pass both in the Agent call) in
 parallel, **one per 2-3 agents** (group each leader with its workers; the manager alone or with
 the brainstormers). Give each one: the run folder, its agents' log paths, the scan's flags for
 those agents, and the criteria of steps 2-3 (paste them). Ask for findings in the label scheme

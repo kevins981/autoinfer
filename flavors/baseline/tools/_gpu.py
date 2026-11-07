@@ -90,19 +90,40 @@ def check_start(tool, run, experiment=False):
                   f"later (e.g. in 10 min); never compete for the GPUs.", EXIT_FOREIGN)
 
 
+def session_members(sid):
+    """pids in session `sid` (the job runs in its own session: start_new_session=True). Catches
+    processes that left the job's process group (e.g. torchrun workers), which killpg misses."""
+    out = []
+    for d in os.listdir("/proc"):
+        if d.isdigit():
+            try:
+                with open(f"/proc/{d}/stat") as f:
+                    if int(f.read().rsplit(")", 1)[1].split()[3]) == sid:
+                        out.append(int(d))
+            except (OSError, ValueError, IndexError):
+                pass
+    return out
+
+
 def kill_group(proc, grace=10):
-    try:
-        os.killpg(proc.pid, signal.SIGINT)
-    except ProcessLookupError:
-        return
-    for _ in range(grace):
-        if proc.poll() is not None:
-            break
-        time.sleep(1)
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    """Kill everything the job started: SIGINT to its session, then SIGKILL after `grace` s."""
+    sid = proc.pid
+    for sig, wait in ((signal.SIGINT, grace), (signal.SIGKILL, 10)):
+        proc.poll()
+        pids = session_members(sid)
+        if not pids:
+            return
+        for pid in pids:
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+        t0 = time.time()
+        while time.time() - t0 < wait:
+            proc.poll()
+            if not session_members(sid):
+                return
+            time.sleep(0.5)
 
 
 def run_job(tool, run, cmd, log_path, timeout_min, label):

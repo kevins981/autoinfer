@@ -43,6 +43,14 @@ Residual gaps: a determined agent can still get around the soft rule (e.g. a scr
 built at run time); runs created after a run starts aren't in its deny list (the classifier rule
 covers "any other run"); live runs keep the settings they started with. Backstop: the cheat audit
 (EVAL.md TODO).
+Found by the first audit (test-4, 2026-11-07):
+- **Finished runs' agents stay reachable.** Agent names are reused across runs (`manager`,
+  `leader-1`, ...), and an idle finished session keeps its name: in test-4 a brainstormer messaged
+  "manager" and test-3's manager answered (it refused; nothing leaked). Fix options: run-scoped
+  names (`<run>/manager`), or stop a run's sessions when it ends. Open.
+- Under `task/env.sh`, a bare `import vllm` loads `qwen38_opt/vllm` (the env's editable install).
+  It is clean at the baseline commit, so not a leak, but agents must point PYTHONPATH at their
+  workspace to run their own code. Open: say so in the tools README, or fix the env.
 **Pending, needs the human's go-ahead (not while runs are live):** move `flavors/<f>/runs/` out of
 the autoinfer repo (e.g. `/scratch/kevinsong/learning/autoinfer_runs/<f>/`, `runs` a symlink to
 it). Then git in a run folder no longer finds the autoinfer repo. Runs aren't meant to be tracked

@@ -54,14 +54,12 @@ def fmt(n):
     return f"{n/1e6:.2f}M" if n >= 1e6 else f"{n/1e3:.0f}K"
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("run")
-    ap.add_argument("--transcripts", default=os.path.expanduser("~/.claude/projects"))
-    a = ap.parse_args()
-    run = os.path.abspath(a.run)
+def find_agents(run, transcripts=os.path.expanduser("~/.claude/projects")):
+    """The run's agents: [(name, role, started, stopped, transcript path or None)], unregistered
+    transcripts in the run's project folders included. Also used by the audit-run skill."""
+    run = os.path.abspath(run)
     enc = re.sub(r"[^A-Za-z0-9]", "-", run)
-    proj_dirs = [d for d in glob.glob(os.path.join(a.transcripts, "*"))
+    proj_dirs = [d for d in glob.glob(os.path.join(transcripts, "*"))
                  if os.path.basename(d) == enc or os.path.basename(d).startswith(enc + "-")]
 
     rows, known = [], set()
@@ -70,7 +68,7 @@ def main():
         # an agent restarted with new sessions (baseline flavor: new_run --resume) lists them all
         sids = [s["session_id"] for s in m.get("sessions", [])] or [m.get("session_id")]
         for i, sid in enumerate(sids):
-            hits = glob.glob(os.path.join(a.transcripts, "*", f"{sid}*.jsonl")) if sid else []
+            hits = glob.glob(os.path.join(transcripts, "*", f"{sid}*.jsonl")) if sid else []
             if sid:
                 known.add(sid)
             name = m["name"] if len(sids) == 1 else f"{m['name']}#{i + 1}"
@@ -83,12 +81,12 @@ def main():
     # a hand-started manager runs in the flavor folder (flavors/<f>/), not the run folder: take the
     # flavor folder's transcripts that mention this run's path
     flavor_dir = os.path.dirname(os.path.dirname(run))
-    fenc = os.path.join(a.transcripts, re.sub(r"[^A-Za-z0-9]", "-", flavor_dir))
+    fenc = os.path.join(transcripts, re.sub(r"[^A-Za-z0-9]", "-", flavor_dir))
     mgr = next((r for r in rows if r[1] == "manager" and not r[4]), None)
     ms = os.path.join(run, "manager_session.json")      # v1 new_run records the manager's session id
     if mgr and os.path.exists(ms):
         sid = json.load(open(ms))["session_id"]
-        hits = glob.glob(os.path.join(a.transcripts, "*", f"{sid}*.jsonl"))
+        hits = glob.glob(os.path.join(transcripts, "*", f"{sid}*.jsonl"))
         if hits:
             known.add(sid)
             rows = [r for r in rows if r[4] != hits[0]]
@@ -101,6 +99,17 @@ def main():
             if sid not in known and first and abs((iso(first) - iso(mgr[2])).total_seconds()) < 600:
                 rows[rows.index(mgr)] = mgr = (mgr[0], "manager", mgr[2], mgr[3], f)
                 break
+
+    return rows
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("run")
+    ap.add_argument("--transcripts", default=os.path.expanduser("~/.claude/projects"))
+    a = ap.parse_args()
+    run = os.path.abspath(a.run)
+    rows = find_agents(run, a.transcripts)
 
     print(f"# Resources used: {run}\n")
     print("## Tokens (unique assistant messages; cache reads are cheap but counted separately)")

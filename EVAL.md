@@ -175,7 +175,8 @@ judge. Rules:
       resources.py finds the transcript by start time).
 - [x] Keep run agents away from `answer_keys/` and `evals/`: deny rules + a classifier rule, from
       `new_run` (design/open_questions.md, "Keeping run agents in their run").
-- [ ] **Cheat audit** (human, 2026-11-07): a skill or subagent in the judging process that checks a
+- [ ] **Cheat audit** (human, 2026-11-07; built as the `audit-run` skill + `audit_scan.py`, scan
+      tested on all runs, judge steps not yet tested): a skill in the judging process that checks a
       run's transcripts for any access to answer keys, evals, design notes, other runs or
       qwen38_opt's findings (including attempts that were blocked), as a second check on top of the
       permissions.

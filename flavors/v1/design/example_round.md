@@ -6,8 +6,8 @@ DRAM-bound at ~80% of peak; NCCL all-reduce ~27%); every result after the baseli
 **illustrative**, not measured. Regenerate the images with `diagrams/make_diagrams.py`.
 
 ## 1. Global state and how it links together
-What exists after round 1, who writes each piece, and the pointers between them: tree nodes → bank
-records, CHAMPION → a bank record, shared-KB entries → the records they cite, journal → tree nodes.
+What exists after round 1, who writes each piece, and the pointers between them: graph nodes → bank
+records, CHAMPION → a bank record, shared-KB entries → the records they cite, journal → graph nodes.
 
 ![global state](diagrams/1_global_state.png)
 

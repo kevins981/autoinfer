@@ -36,8 +36,9 @@ BANK               # bank/<id>/: every experiment, pass or fail (format below).
                    # owner: the leader of that team; official_eval appends official results
 SHARED_KB          # shared_kb.md: confirmed understanding of the system, each entry citing
                    # its records.                                                   owner: manager
-TREE               # tree.md: what was tried: directions -> experiments (records) that build on each
-                   # other, with results, failures included; the champion's path marked. owner: manager
+GRAPH              # graph.md: what was tried: directions -> experiments (records) that build on each
+                   # other (a DAG: a record can build on several), with results, failures included;
+                   # the champion's path marked.                                    owner: manager
 IDEAS              # ideas.md: proposed but untried ideas, with scores and round. owner: manager
 JOURNAL            # journal.md: decisions and why.                                 owner: manager
 LOCAL_KB[leader]   # local_kb/<leader>.md: a leader's working notes.                owner: that leader
@@ -70,12 +71,14 @@ agent.run(task: str) -> report: str
 bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. T1-003
   record.md               # free text, short:
     team:         T1
+    builds_on:    T1-002   (the record(s) whose change this one starts from: BASE, one record, or
+                  several, e.g. "T1-001 + T2-003" when it combines them)
     performance:  "unofficial: ~+4% at c=16" / "unofficial: within noise" / "build failed"
                   (official_eval appends official results below; only those count. Once one
                   lands, the owner may update this line to show it)
     summary:
       hypothesis:
-      change:     what was done; "builds on T1-002" if not from the baseline
+      change:     what was done
       results:    Observed: what was measured or seen (numbers, how measured)
       conclusion: Interpretation: what we think it means
     validity:     the leader's review of the diff against TASK.definition

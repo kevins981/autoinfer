@@ -208,7 +208,7 @@ def data_structures():
             color=GRAY, style="italic", linespacing=1.3)
 
     # Tree (same height as the bank)
-    card(ax, TX, topB, TW, "TREE  (search_tree.md, the index)", "", MANAGER, h=bank_h)
+    card(ax, TX, topB, TW, "GRAPH  (graph.md, the index)", "", MANAGER, h=bank_h)
     nodes = [
         ("N1  Mixed GEMM kernel by tokens/pass", "win", GREEN, "nov 2 . up 4 . by systematic engineer", ["T1-001", "T1-002"]),
         ("N2  Fuse SiLU*mul into gate/up GEMM", "no gain", "#9e6a00", "nov 2 . up 3 . by systematic engineer", ["T2-001"]),
@@ -278,10 +278,10 @@ def data_structures():
     y -= hC + 5
 
     # Row D: who reads what
-    who = ("Manager::  everything; the only writer of TREE, SHARED_KB, JOURNAL and CHAMPION.\n"
+    who = ("Manager::  everything; the only writer of GRAPH, SHARED_KB, JOURNAL and CHAMPION.\n"
            "Leaders::  all global state; write their own local KB; file BANK records.\n"
            "Workers::  only their workspace (the baseline + the starting record's diff + brief files the leader copied in).\n"
-           "Brainstormers::  everything (TASK incl. the baseline profile, BANK, KBs, TREE, JOURNAL), plus the manager's "
+           "Brainstormers::  everything (TASK incl. the baseline profile, BANK, KBs, GRAPH, JOURNAL), plus the manager's "
            "briefing; chat with leaders; profile any record through the GPU queue. Variety comes from the personas.")
     h = card(ax, 2, y, W - 4, "WHO READS WHAT", who, PLAIN)
     finish(fig, ax, W, y - h, "1_global_state.png")
@@ -352,7 +352,7 @@ def round_overview():
     tfs_ = 11
     trow = 3.3
     sel_note = ("Selection (search_policy.md rule 3: nothing has improved yet): 2 slots by upside (a, b) + 1 protected "
-                "high-novelty slot (c), even though napkin math is pessimistic about c. d and e stay in the TREE as "
+                "high-novelty slot (c), even though napkin math is pessimistic about c. d and e stay in the GRAPH as "
                 "backlog; the JOURNAL records why.")
     brief_body = ("\"FFN GEMMs are half the time and already near DRAM peak. NCCL over PCIe is 27%. Tried so far: "
                   "spec tokens 2 (+12%), Triton FP8 backend (net -4%) ...\"")
@@ -393,7 +393,7 @@ def round_overview():
                "All can access everything, chat with any leader, and profile any record (GPU queue, unbudgeted). "
                "Round 1: same inputs for all (task, focus, baseline profile); only the persona differs.\n\n"
                "3. The manager dedupes and scores: novelty 1-5, upside 1-5.\n\n"
-               "4. The manager selects one direction per leader with SEARCH_POLICY; the rest go to the TREE as `proposed` (an archive, not a queue: brainstormers may re-propose them later).")
+               "4. The manager selects one direction per leader with SEARCH_POLICY; the rest go to the GRAPH as `proposed` (an archive, not a queue: brainstormers may re-propose them later).")
     t, h = row("bs", "brainstorm()", bs_left, brainstorm_right)
     down_arrow(t, h)
 
@@ -439,9 +439,9 @@ def round_overview():
                "All GPU jobs go through the queue, charged to the team.", exec_right, color=LEADER)
     down_arrow(t, h)
 
-    t, h = row("collect", "collect_and_update()", "Update the TREE, promote the CHAMPION, update SHARED_KB and "
+    t, h = row("collect", "collect_and_update()", "Update the GRAPH, promote the CHAMPION, update SHARED_KB and "
                "the JOURNAL, report to the human.",
-               simple("TREE: N1 win, N2 no gain, N3 slower, each with its experiments.\n"
+               simple("GRAPH: N1 win, N2 no gain, N3 slower, each with its experiments.\n"
                       "@b CHAMPION <- T1-002 (689 tok/s: +5% beats the ~3% noise, and GSM8K holds).\n"
                       "SHARED_KB += K2 [T1-001, T1-002], K3 [T3-001].   JOURNAL: round summary.\n"
                       "Report to the human: what was tried, what was learned, the new champion, the backlog.\n"

@@ -6,3 +6,5 @@ Behaviors worth noting across runs, with the decision taken. Not rules.
   Decision: fine. Teams aren't isolated, and what isn't disallowed is allowed. No new rule.
 - **Brainstorm skipped when continuing leaders fill every slot** (test-4, round 2). Both leaders beat BASE, so search policy rule 1 gave both slots to their own next steps, and the manager skipped the brainstorm.
   Decision: correct. Made explicit in search_policy.md rule 1, manager.md and DESIGN.md.
+- **Records with two parents** (test-4: T1-003, T2-006). An indented tree.md could only show the second parent as a note.
+  Decision: the search structure is a DAG. tree.md -> graph.md; records get a `builds_on:` field (one or several records).

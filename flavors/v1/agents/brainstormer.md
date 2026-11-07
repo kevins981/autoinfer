@@ -23,7 +23,7 @@ brainstormer(persona, briefing).propose() -> ideas:
         #   analyzed it for you. What exists and how to query it: task/PROFILING.md
         # the engine's code: a clean baseline tree to read at $CACHE_ROOT/tasks/<task>/baseline/vllm (`$CACHE_ROOT` is set by `source task/env.sh`)
         #   (or any workspace, for a record's version)
-        # BANK (records, diffs, official results, profiles), SHARED_KB, TREE (what was tried), IDEAS (ideas
+        # BANK (records, diffs, official results, profiles), SHARED_KB, GRAPH (what was tried), IDEAS (ideas
         #   proposed before but not selected), JOURNAL, reports/
         # any leader (`agent list`, SendMessage): what they saw, what surprised them, what they
         #   didn't try. Ask like a colleague would.
@@ -49,7 +49,7 @@ brainstormer(persona, briefing).propose() -> ideas:
         #                  of the raw data, a file, a code location, a record id) or "assumed"
         #   bottleneck     what it addresses, and its share of the time
         #   upside         your estimate (napkin math from those numbers) and how sure you are
-        #   novelty        how different from what was tried (see TREE / BANK)
+        #   novelty        how different from what was tried (see GRAPH / BANK)
         #   cheapest test  how a leader could check it quickly
         # then: which ones you'd bet on, and why
 ```

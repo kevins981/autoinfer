@@ -12,7 +12,7 @@ AutoInfer():
     # how: `flavors/v1/tools/new_run <run> --task <task>` created $AUTOINFER_RUN and started you.
     #      First thing: `agent register manager --role manager`.
     # Resuming a run instead (a new session pointed at an existing run folder): rebuild your
-    # picture from the files (journal.md, tree.md, champion.md, bank/, reports/, `agent list
+    # picture from the files (journal.md, graph.md, champion.md, bank/, reports/, `agent list
     # --all`, `gpu status`), tell the human where things stand, and continue where it stopped.
     initialize()
     for round in 1..CONFIG.max_rounds:
@@ -56,7 +56,7 @@ initialize():                                       # WITH the human
     CHAMPION = BASE + its official numbers
     CHAMPION.profile = task/baseline/               # raw profiles that come with the task
                                                     # (task/PROFILING.md); no profiling here
-    TREE = new_tree(root = FOCUS); SHARED_KB = []; JOURNAL = ["run started: ..."]
+    GRAPH = new_graph(root = FOCUS); SHARED_KB = []; JOURNAL = ["run started: ..."]
 
     # 3. Tell the human the plan: rounds, leaders, workers, budgets. One GPU job runs at a time,
     #    so a round takes at least (leaders x budget) of GPU time.
@@ -73,7 +73,7 @@ set_budgets(round):
 
 ```python
 brainstorm(round) -> directions:
-    # out: one direction per leader (k = CONFIG leaders), each = (tree node, rationale,
+    # out: one direction per leader (k = CONFIG leaders), each = (graph node, rationale,
     #      bottleneck addressed)
     # If search_policy.md's continuing leaders already take every slot, skip the brainstorm
     # (no briefing, no brainstormers) and note it in the journal.
@@ -113,9 +113,9 @@ brainstorm(round) -> directions:
     directions = select(ideas, k = number of leaders, SEARCH_POLICY)
         # SEARCH_POLICY may reserve slots first: e.g. each leader whose round beat the starting
         # champion keeps its own "next" (from its report); brainstorm ideas fill the other slots.
-    TREE.add(directions, status = assigned, round)  # a direction enters the tree once worked on
+    GRAPH.add(directions, status = assigned, round) # a direction enters the graph once worked on
     IDEAS.add(ideas - directions, scores, round)    # ideas.md: scored but untried ideas, kept out
-        # of the tree. An archive, not a queue: never selected directly. Only this round's ideas (and a slot
+        # of the graph. An archive, not a queue: never selected directly. Only this round's ideas (and a slot
         # SEARCH_POLICY reserves) are selected; an old idea comes back only if proposed again.
     JOURNAL.append(why these directions)
     report_to_human(if CONFIG.human_checkpoints asks for it here)
@@ -151,14 +151,16 @@ execute(tasks) -> reports:                          # leaders in parallel; barri
 
 ```python
 collect_and_update(reports, round):
-    TREE.update(reports)
-        # tree.md is for a human to see at a glance what was tried and how the champion came
+    GRAPH.update(reports)
+        # graph.md is for a human to see at a glance what was tried and how the champion came
         # about. Only what was tried: directions (top level) -> experiments (BANK records) under
-        # them, a child = a record that builds on its parent. Each node: record id, one line on
+        # them; edges = each record's builds_on. It is a DAG: a record that combines several
+        # records has several parents. As text: an indented outline, each record once, under one
+        # parent, naming the others ("+ T2-003"). Each node: record id, one line on
         # the change, its result (official or unofficial) and conclusion. Failures and null
         # results stay as branches, marked; mark the champion's path. Untried ideas go to
         # ideas.md, not here. Leader-internal worker steps stay inside the records.
-        # Reorganize the tree freely to keep it readable.
+        # Reorganize the outline freely to keep it readable.
     best = the BANK record from this round with the best official numbers
     if valid(best) and beats(best, CHAMPION) and gates_pass(best):
         # valid: per TASK.definition (check its validity review; skim its diff)
@@ -182,7 +184,7 @@ collect_and_update(reports, round):
 ```python
 finalize():
     stop(every agent still alive)                   # `agent stop <name>`
-    write(reports/final.md)                         # champion, what was learned, the tree,
+    write(reports/final.md)                         # champion, what was learned, the graph,
                                                     # what is left open
     commit(run records); report_to_human()
 ```

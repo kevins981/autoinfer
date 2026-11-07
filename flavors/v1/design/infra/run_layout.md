@@ -23,7 +23,7 @@ task_definition.md        # agreed in initialize(): correctness, hard constraint
 assumption_ledger.md      # agreed in initialize(): frozen vs open
 search_policy.md          # copied from the flavor at start; the human may edit it mid-run
 champion.md               # current champion: record id + official numbers (manager)
-tree.md  journal.md  shared_kb.md          # manager
+graph.md  journal.md  shared_kb.md          # manager
 local_kb/<leader>.md                       # each leader's notes
 bank/<record id>/         # record.md, change.diff, serve_args.txt (optional), official/<n>/,
                           #   profiles, logs

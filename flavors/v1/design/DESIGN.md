@@ -11,7 +11,7 @@ concrete example, see [example_round.md](example_round.md).
 
 ## Agents
 - **Manager**: **persistent** (one session for the whole run, with compaction). Owns the search
-  tree, the shared KB (the only writer), the journal, the champion pointer and assignments; scores
+  graph, the shared KB (the only writer), the journal, the champion pointer and assignments; scores
   and selects ideas; talks to the human.
 - **Leaders** (the brain): **persistent**: one long-running session each, carrying its context
   across rounds (with compaction). Each drives one direction per round: plans experiments, picks
@@ -32,7 +32,7 @@ concrete example, see [example_round.md](example_round.md).
 | Store | Contents | Written by |
 |---|---|---|
 | Experiment records (bank) | One per experiment: id, team, performance, short summary (results = **Observed**, conclusion = **Interpretation**, kept separate), validity review, and a diff against the task baseline. See [Experiment record](#experiment-record) | the leader, from its workers' results; the evaluator appends official numbers |
-| Search tree | What was tried: directions -> experiments (records) that build on each other, with results and conclusions, failures included, the champion's path marked. Untried ideas are in a separate idea archive (`ideas.md`: scores, who proposed it, round) | manager |
+| Search graph | What was tried: directions -> experiments (records) that build on each other (a DAG: a record that combines several has several parents), with results and conclusions, failures included, the champion's path marked. Untried ideas are in a separate idea archive (`ideas.md`: scores, who proposed it, round) | manager |
 | Shared KB | Understanding of the system not tied to a single idea; each entry cites the experiments behind it | **manager only** (leaders propose insights in their reports) |
 | Local KB | A leader's working notes, hypotheses, plans | that leader |
 | Journal | The order of decisions and why | manager |
@@ -48,11 +48,12 @@ One folder per experiment in the bank. Every field is free-form text.
 bank/<id>/                # id by team, e.g. T1-003 (the manager may rename)
   record.md
     team:         T1
+    builds_on:    BASE, one record, or several ("T1-001 + T2-003")
     performance:  e.g. "official: 689 tok/s at c=16 (+5% vs E0), GSM8K 93.6%",
                   or "unofficial: ~+1% (within noise)", or "build failed"
     summary:      short, for a quick scan:
                     hypothesis
-                    change         (what was done; "builds on T1-002" if not from the baseline)
+                    change         (what was done)
                     results        = Observed: what was measured or seen
                     conclusion     = Interpretation: what we think it means
     validity:     the leader's review of the diff against TASK.md
@@ -84,7 +85,7 @@ CHAMPION   # current best version: a BANK record id + its official numbers + pro
            # (No mid-round "new best" notifications.)
 BANK       # experiment bank: every attempt (record + diff vs the task baseline), pass or fail
 SHARED_KB  # confirmed understanding of the system (written by the manager only)
-TREE       # search tree (manager)
+GRAPH      # search graph, a DAG (manager)
 JOURNAL    # decisions and why (manager)
 ```
 
@@ -110,7 +111,7 @@ AutoInfer():
         tasks = manager.assign(directions, leaders)     # one task string per leader
         reports = execute(tasks)                        # leaders work in parallel; barrier
         collect_and_update(reports)
-    return finalize()                                   # final report: champion, tree, journal
+    return finalize()                                   # final report: champion, graph, journal
 ```
 
 ```python
@@ -122,7 +123,7 @@ initialize():                                   # run by the manager, WITH the h
     CHAMPION  = evaluate(TASK.baseline)                 # official eval (record BASE, empty diff);
                                                         # also checks the harness works
     CHAMPION.profile = TASK.baseline_profile            # provided with the task (no profiling here)
-    TREE      = new_tree(root = FOCUS)
+    GRAPH     = new_graph(root = FOCUS)
     SHARED_KB = []; BANK = [CHAMPION]; JOURNAL = []
 ```
 No separate bound analysis: speed-of-light estimates are napkin math that leaders, workers and
@@ -153,7 +154,7 @@ skill (a checklist of what to ask about) once we have run it a few times.
 
 ```python
 brainstorm() -> directions:
-    # out: one direction per leader (k = number of leaders), each = (tree node, rationale,
+    # out: one direction per leader (k = number of leaders), each = (graph node, rationale,
     #      bottleneck addressed)
     # Skipped when the search policy's continuing leaders already take every slot.
 
@@ -167,7 +168,7 @@ brainstorm() -> directions:
     for persona in CONFIG.brainstormers:    # a persona = a prompt file in agents/personas/
         ideas += brainstormer(persona, briefing,
                               access = everything: TASK (incl. the baseline profile), BANK,
-                                       SHARED_KB, TREE, JOURNAL, multi-turn chat with any leader,
+                                       SHARED_KB, GRAPH, JOURNAL, multi-turn chat with any leader,
                                        profile any record, e.g. a new CHAMPION
                                          (GPU queue, 15 GPU-min each per round; saved into that
                                          record's folder so others reuse it)).propose()
@@ -181,7 +182,7 @@ brainstorm() -> directions:
     # 4. Selection: a portfolio, not a ranking.
     directions = manager.select(ideas, len(leaders), SEARCH_POLICY)   # e.g. "if a leader improved the champion,
                                                             # continue that line; 1 slot most novel"
-    TREE.add(directions, status = assigned)
+    GRAPH.add(directions, status = assigned)
     IDEAS.add(ideas - directions, round = r)
         # backlog = an archive, not a queue: visible to the human and to brainstormers, never
         # selected directly. The manager selects only from this round's ideas; an old idea comes
@@ -200,7 +201,7 @@ brainstorm() -> directions:
 - **Bootstrap (round 1).** There are no experiments, leaders' findings or KB yet, so all
   brainstormers start from the same inputs: the task, the focus and the **baseline profile that
   comes with the task**. They differ only by persona. From round 2 on they also have the bank,
-  the KB, the tree and the leaders to talk to.
+  the KB, the graph and the leaders to talk to.
 - **Default personas** (v1):
   - **Systematic engineer**: careful and methodical. Works from the profile and the bank: where
     the time goes, what has been tried, what the numbers imply, what hasn't been covered. Also
@@ -313,16 +314,16 @@ costs and an end-to-end example: [evaluation.md](evaluation.md).
 
 ```python
 collect_and_update(reports):
-    TREE.update(reports)                    # manager turns reports into idea nodes + experiments;
-                                            # may reorganize the tree
+    GRAPH.update(reports)                   # manager turns reports into directions + experiments
+                                            # (edges = builds_on); may reorganize the outline
     best = the BANK record from this round with the best official numbers
-    if best beats CHAMPION by more than the noise (~3% for the qwen task) and GSM8K holds:
+    if best beats CHAMPION consistently (no minimum %) and the gates pass:
         CHAMPION = best                           # manager promotes; starting point doesn't matter
         # No re-profiling here: the bottlenecks have changed, and next round's brainstormers
         # profile the new champion themselves (see brainstorm()); the manager may turn what they
         # find into SHARED_KB entries.
-    # No integrate(): combining wins from several teams is just another idea, proposed in the next
-    # brainstorm (e.g. by the systematic engineer) and run like any other direction.
+    # No integrate() step: any leader may build on any record, another team's included (a
+    # combination is a record with several builds_on), and combining is also a brainstorm idea.
     SHARED_KB.update(accepted insights from reports)   # manager is the only writer
     JOURNAL.append(round summary)
     report_to_human()                       # as CONFIG.human_checkpoints says (default: a short
@@ -336,7 +337,8 @@ These run throughout, outside the loop:
 
 ## Decisions specific to v1
 - Barrier rounds (tentative; rolling is a candidate for a future flavor).
-- The search tree is one free-form markdown file of what was tried (directions -> records);
+- The search graph is one free-form markdown file of what was tried (directions -> records, a
+  DAG via each record's builds_on, written as an indented outline);
   untried ideas live in `ideas.md`.
 - Agent lifetimes: manager and leaders are persistent (compaction keeps them going); workers are
   persistent by default, and the leader decides when to start a fresh one; brainstormers are new

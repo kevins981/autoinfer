@@ -31,6 +31,6 @@ Possible gate if needed: a short run with a tiny KV budget that forces preemptio
 with the reference one request at a time.
 
 ## Handoff packet as a skill (from test-3)
-The human-readable packet (offline index.html: interactive tree, per-record diffs, overview, KB,
+The human-readable packet (offline index.html: interactive graph (a DAG: records with several parents), per-record diffs, overview, KB,
 untried ideas, rulings) was built ad hoc by test-3's manager (runs/test-3/reports/packet_src/).
 Make it a reusable skill/tool for checkpoints and the end of a run.

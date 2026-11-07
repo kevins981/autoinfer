@@ -42,6 +42,8 @@ leader.run(task) -> report:
                 # constraints, no benchmark-specific tricks. A worker's "it's correct" is not enough.
             if record.validity.ok and wants_official_eval(record):
                 # typically: the unofficial result beats CHAMPION by more than the noise (~3%)
+                # If you're confident in several changes, you may stack them into one record and
+                # request one official eval; evaluate an uncertain change on its own.
                 evaluate(record)
             LOCAL_KB.update(observations)
         if useful_checkpoint() or manager_says_stop(): break

@@ -50,6 +50,10 @@ in TASK for things: model files (e.g. `config.json`, the tokenizer) are on the H
 `huggingface_hub.hf_hub_download("<model>", "config.json")` after `source task/env.sh` (it
 resolves to the local copy).
 
+**Accuracy checks cost GPU time.** Skip them when a change is shown to be exact (outputs bitwise
+equal to the baseline's, or a flag that doesn't touch the math); run one when you're unsure. The
+official eval runs the full accuracy gate anyway.
+
 ## Interface
 ```python
 agent.run(task: str) -> report: str

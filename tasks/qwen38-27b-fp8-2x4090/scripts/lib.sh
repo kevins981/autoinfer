@@ -2,7 +2,8 @@
 #   source $AUTOINFER_RUN/task/scripts/lib.sh            # after `source <workspace>/env.sh`
 #   start_server [extra vllm serve args...]   # task flags + yours; waits until ready (or fails)
 #   bench <num_prompts> <concurrency> <out_dir>   # ShareGPT, T=0, seed 0, like the official bench
-#   gsm8k <n> <out.json>                       # accuracy check (official gate: n=250)
+#   gsm8k <n> <out.json>                       # accuracy check (official gate: n=250); for changes
+#                                              that may alter the math. Skip it for exact changes.
 #   stop_server                                # also happens automatically when the job ends
 # Env: PORT (default 8000), OUT (default: current dir; server.log goes there).
 # Unofficial numbers only: official ones come from `official_eval`. A short bench is NOT comparable

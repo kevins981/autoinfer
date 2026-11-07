@@ -25,32 +25,21 @@ key already carries what other runs found). Output: `evals/<flavor>/<run>/judge-
 3. **Read the run's own artifacts, not just summaries:** the graph (`graph.md`, older runs
    `tree.md`), every `bank/*/record.md`, `shared_kb.md`, `ideas.md`, `brainstorm/r*/`,
    `journal.md`, `assumption_ledger.md`. Open diffs and logs when a claim depends on them.
-4. **Overlay.** For each answer-key node, find the run's matching records/ideas by what the change
-   *does* (the node's "recognize" line), not by name. Record:
-   - **contact:** `reached` (tried and kept in the run's stack) / `tried` (tried, not kept) /
-     `idea-only` (in ideas or a brainstorm, never tried) / `not-considered`. For a node with
-     `alternative_to`, say which alternative the run reached.
-   - **base:** the stack the run tried it on, in key ids (e.g. "host-ar + draft-head-diet").
-     `reached` without the node's `builds_on` is still `reached` if the gain showed; note it.
-   - **run's result and stated cause**, with strength (official / abab / ab / component / estimate).
-   - **verdict vs the key:**
-     - `as expected`: matches what the key knows on that base, incl. dropping a dead end for the
-       right cause.
-     - `missed win`: a node with a win on some base, not reached (including tried only on a base
-       where it doesn't pay, e.g. `prefill-graphs` on BASE).
-     - `wrong cause`: dropped with a cause the key's facts contradict, or with none.
-     - `new info`: a result on a base the key doesn't have, or one that contradicts it (a key
-       update).
-     - `-`: nothing to grade (e.g. a dead end the run never considered).
-   **Only measurements count.** A run gets credit for what it tested, never for what it only
-   thought: an `idea-only` node is never `as expected` (dropping a win on reasoning alone is a
-   `missed win`; an unmeasured dead end gets `-`), and an estimate is not a result.
-   Then list **novel** run nodes: changes the run **measured** (tried or reached) that match no
-   key node: what, builds_on (key ids), result. Every key node has a measured result; untested
-   ideas and estimate-only ones are in `answer_keys/<task>/ideas.md`, which you don't grade.
-   A run's own unmeasured ideas are not novel nodes; list new ones briefly under Key updates
-   (for the key's `ideas.md`), and say if the run measured one of its ideas (a key update).
-5. **Why missed.** For each `missed win` and `wrong cause`: the run's closest approach (nearest record or
+4. **Overlay.** Grade every answer-key node with the definitions in `EVAL.md`, "Grading a run
+   against the key"; apply them exactly (they are the contract, not a guideline):
+   - **win nodes:** `idea` / `implementation` / `result`, each yes or no, each yes with its
+     evidence; the base (key ids); the run's result with strength (official / abab / ab /
+     component); `covered_by_alt` if its alternative passed `result`; `wrong_cause` if the run's
+     stated cause for dropping it contradicts the key.
+   - **dead-end nodes:** `reason` right / wrong / not-considered, `how` measured / reasoned, and the
+     run's stated reason vs the key's cause.
+   - A doubtful case gets the stricter answer and a sentence why.
+   Then list **novel** run nodes: changes the run **measured** (passed `implementation` with a
+   measured outcome) that match no key node: what, builds_on (key ids), result. Untested ideas and
+   estimate-only ones are in `answer_keys/<task>/ideas.md`, which you don't grade. A run's own
+   unmeasured ideas are not novel nodes; list new ones briefly under Key updates (for the key's
+   `ideas.md`), and say if the run measured one of its ideas (a key update).
+5. **Why missed.** For each missed win, wrong cause and wrong reason: the stage where it stopped, then the run's closest approach (nearest record or
    idea in the same direction) and where its path diverged, then what happened in plain words
    (e.g. dropped after one noisy A/B; never surfaced; out of budget; tried on the wrong base). Don't
    force a fixed category.
@@ -62,25 +51,27 @@ key already carries what other runs found). Output: `evals/<flavor>/<run>/judge-
    corrections. Each with evidence.
 8. **Picture.** Write `evals/<flavor>/<run>/overlay.json` from your overlay, then render it:
    ```
-   MPLCONFIGDIR=.cache/mpl .cache/venv/bin/python .claude/skills/eval-run/overlay_plot.py map \
+   MPLCONFIGDIR=.cache/mpl .cache/venv/bin/python .claude/skills/eval-run/overlay_plot.py \
      answer_keys/<task>/answer_key.md evals/<flavor>/<run>/overlay.json evals/<flavor>/<run>/overlay.png
    ```
-   Look at the PNG (it is the key as a tree, each node colored by contact, missed wins / wrong
-   causes in red, novel nodes in purple under their parent) and fix the JSON if it misreads.
-   `novel` holds measured changes only (contact `reached` or `tried`).
-   Schema (all key node ids must appear in `nodes`):
+   Look at the PNG (the key as a tree: win nodes colored by the last stage passed, missed wins in
+   red, dead ends dashed with their reason grade, novel nodes in purple under their parent) and fix
+   the JSON if it misreads. Schema (every key node id must appear in `nodes`):
    ```
    {"run": "<flavor>/<run>", "source": "judge-<id>.md", "base": <BASE tok/s>,
-    "champion": {"record": "T1-003", "tok_s": 691.3, "pct": 8.7, "stack": ["host-ar", ...]},
-    "best_measured": {"record": ..., "tok_s": ..., "pct": ..., "adds": [key ids]},   # optional: a
-                                                       # better measured stack never promoted
+    "champion": {"record": "T1-003", "tok_s": 691.3, "pct": 8.7, "stack": [key ids]},
+    "best_measured": {"record": ..., "tok_s": ..., "pct": ..., "adds": [key ids]},  # optional: a
+                                                     # better measured stack that wasn't promoted
     "resources": {"wall_h": 3.26, "gpu_min": 164.5, "output_tokens": "411K"},
-    "nodes": {"<key id>": {"contact": "reached|tried|idea-only|not-considered",
-                           "verdict": "as expected|missed win|wrong cause|new info|-",
-                           "records": "T2-002, T2-005"}},
-    "novel": [{"id": "<short-id>", "title": "...", "builds_on": ["<key id>"],
-               "contact": "reached|tried", "result": "+1.0% ab"}]}
+    "nodes": {
+      "<win id>": {"type": "win", "idea": true, "implementation": true, "result": false,
+                   "covered_by_alt": null, "wrong_cause": false, "base": "BASE",
+                   "evidence": "T1-004 (official +0.3%), KB:22"},
+      "<dead-end id>": {"type": "dead-end", "reason": "right|wrong|not-considered",
+                        "how": "measured|reasoned|-", "evidence": "T1-002 (component)"}},
+    "novel": [{"id": "<short-id>", "title": "...", "builds_on": [key ids], "result": "+1.0% ab"}]}
    ```
+   Keep `evidence` short (it is printed beside the node; details go in the report).
 
 **Grade the agents against the run's own rules and conditions.**
 - Separate the human's decisions (stopping the run, rulings, budget changes; see `journal.md`,
@@ -93,7 +84,7 @@ key already carries what other runs found). Output: `evals/<flavor>/<run>/judge-
   a label depends on it.
 
 **Citations are mandatory.** Every claim cites a record id, KB entry, idea id, or file path + line.
-An uncited claim doesn't count. Every `never-considered` / `not-tried` says what you searched
+An uncited claim doesn't count. Every `no` (and every `not-considered`) says what you searched
 (e.g. `grep -i "prefill_cudagraph"` over records, ideas, brainstorms, KB, journal). Prefer
 `grep -rn` over memory. If unsure, say so and give the label you'd bet on.
 
@@ -102,8 +93,9 @@ Report layout:
 # Judge <id>: <flavor>/<run>
 ## Resources        (resources.py output)
 ## Config and outcome
-## Overlay graph    (![overlay](overlay.png), then the key's outline annotated with contact / verdict)
-## Overlay          (table: node | contact | base | run's result and cause | verdict | evidence)
+## Overlay graph    (![overlay](overlay.png))
+## Win nodes        (table: node | idea | impl | result | base | run's result (strength) | missed? / wrong cause | evidence)
+## Dead-end nodes   (table: node | reason | how | run's stated reason vs the key's cause | evidence)
 ## Novel nodes
 ## Why missed
 ## Process notes

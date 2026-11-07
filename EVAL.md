@@ -15,12 +15,11 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
 - **Answer key** (per task, `answer_keys/<task>/answer_key.md`). A map of the task's search
   space as far as we know it, merged from all runs of all flavors (and hand studies). Details in
   "The answer key" below. It is a lower bound on what's possible, and it evolves.
-- **Overlay.** For each key node: how far the run got (reached, tried, idea only, never
-  considered), on which base, and whether its result and stated cause agree with the key. Changes
-  the run **measured** that match no key node are **novel**; they feed the key. (Its unmeasured
-  ideas are not nodes; new ones may feed `ideas.md`.) **Only measurements count**, as in real
-  research: an idea a run thought of but never tested claims nothing, earns no credit and is
-  never novel.
+- **Overlay.** Each key node graded against the run, by its type (win or dead end), as defined
+  in "Grading a run against the key" below. Changes the run **measured** that match no key node
+  are **novel**; they feed the key. (Its unmeasured ideas are not nodes; new ones may feed
+  `ideas.md`.) **Only measurements count**, as in real research: an idea a run thought of but never
+  tested claims no gain, earns no credit and is never novel.
 - **Why it was missed (qualitative).** For each missed node, find the run's closest approach (the
   nearest record or idea in the same direction) and where its path diverged. Then say what
   happened, e.g.:
@@ -90,6 +89,53 @@ section records them. Rules:
   evidence that corrected them.
 - **Merge, don't append:** a run's finding that matches an existing node adds evidence to it.
 - Box state (e.g. a locked GPU clock) is a fact with a date; nodes that depend on it name it.
+
+## Grading a run against the key
+Precise definitions; judges apply them exactly and cite evidence for every yes. Where evidence
+sits between two answers, give the stricter one and say why.
+
+**Matching.** A run's work matches a node if it contains the node's core mechanism (the node's
+"what"; recognize it by its "recognize" line), whatever the run called it. Anything the node's
+"Not this" excludes doesn't match. Work by any of the run's agents counts (leader, worker,
+brainstormer); anything the human did is reported as the human's, not the agents'.
+
+**Node type**, from the key: a **win node** has a win on at least one base; a **dead-end node** has
+no gain or harm on every base the key knows.
+
+**Win nodes: three stages, each yes / no** (a later stage implies the earlier ones):
+1. **idea**: some agent wrote this change down as a proposal of its own: an entry (idea id,
+   bullet, paragraph) in ideas, brainstorms, records, KB, journal or reports whose subject is this
+   change and that says what to change. A passing mention inside another idea's entry is not
+   enough (cite it as context).
+2. **implementation**: the change (code, flag or env var) was written **and executed** on this
+   task: a server run, a microbenchmark or a kernel test of the changed code. Not enough: an
+   estimate, back-of-envelope math, reading code, or code written but never run.
+3. **result**: the run measured a gain from this change at least as large as the key's best known
+   gain for this node minus **1.6 percentage points** (the spread between repeat measurements of
+   the same code across jobs, TASK.md), on a base where the key says it pays. E.g. key best +3.0%,
+   run +2.4%: yes. A node measured only as a swap for its `alternative_to` passes if it measured
+   equal to or better than that alternative (within the same 1.6 points) and the alternative
+   passed **result** (its gain then follows from the alternative's). Being kept or
+   promoted is not required (that's shown separately: ★ champion, ☆ best measured). Not enough: a
+   microbenchmark alone (it can't show the end-to-end gain); a test only on a base where it doesn't
+   pay (e.g. `prefill-graphs` on BASE). A gain beyond the key's best is a yes and a key update.
+
+A win node that doesn't pass **result** is a **missed win**, unless its `alternative_to` passed
+**result** ("covered by its alternative"; not a miss). Where the run stated a cause for dropping a
+win node and the key's facts contradict it, flag **wrong cause** too.
+
+**Dead-end nodes: one grade, the run's reason**:
+- **right**: the run dropped or ruled it out for a reason the key's cause and facts support.
+- **wrong**: dropped or ruled out for a reason the key contradicts, or with no reason; or kept it
+  in the stack as if it helped.
+- **not considered**: the run never proposed it (stage-1 test above). No penalty, no credit.
+Also record **how**: `measured` or `reasoned` (estimate, math, code reading). Not graded: a run that
+correctly rules out a dead end without spending GPU time loses nothing; time spent measuring it
+shows up in resources and process notes. (Ruling out by reasoning is fine here because the key
+already holds the measurement; claims of gains always need a measurement.)
+
+**Base.** The stage tests don't depend on the stack the run used, except **result** (it must be a
+base where the node pays). Record the base in key ids either way.
 
 ## Comparing runs and flavors
 - Compare at **matched config and resources**. Otherwise, say what differs and don't attribute the

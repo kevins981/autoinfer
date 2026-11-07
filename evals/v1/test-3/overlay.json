@@ -1,6 +1,6 @@
 {
  "run": "v1/test-3",
- "source": "judge-b.md",
+ "source": "judge-c.md",
  "base": 631.4,
  "champion": {
   "record": "T1-009",
@@ -8,8 +8,8 @@
   "pct": 15.8,
   "stack": [
    "host-ar",
-   "host-allgather",
    "prefill-graphs",
+   "host-allgather",
    "draft-head-diet",
    "greedy-fastpath"
   ]
@@ -24,75 +24,121 @@
  },
  "resources": {
   "wall_h": 4.84,
-  "gpu_min": 166.3,
+  "gpu_min": 177.0,
   "output_tokens": "695K"
  },
  "nodes": {
   "host-ar": {
-   "contact": "reached",
-   "verdict": "as expected",
-   "records": "T1-002, T1-003"
+   "type": "win",
+   "idea": true,
+   "implementation": true,
+   "result": true,
+   "covered_by_alt": null,
+   "wrong_cause": false,
+   "base": "BASE",
+   "evidence": "T1-002 official +5.0% (key best +5.7%, within noise)"
   },
   "prefill-graphs": {
-   "contact": "reached",
-   "verdict": "as expected",
-   "records": "T1-001, T1-005"
-  },
-  "host-allgather": {
-   "contact": "reached",
-   "verdict": "as expected",
-   "records": "T1-004"
-  },
-  "ar-kernel-tuning": {
-   "contact": "tried",
-   "verdict": "as expected",
-   "records": "T1-003 (KB5)"
+   "type": "win",
+   "idea": true,
+   "implementation": true,
+   "result": true,
+   "covered_by_alt": null,
+   "wrong_cause": false,
+   "base": "host-ar",
+   "evidence": "T1-005 +4.8% ab on host-ar, official 699.2; T1-001 +2.2% on BASE"
   },
   "draft-head-diet": {
-   "contact": "reached",
-   "verdict": "as expected",
-   "records": "T1-006, T1-007"
+   "type": "win",
+   "idea": true,
+   "implementation": true,
+   "result": true,
+   "covered_by_alt": null,
+   "wrong_cause": false,
+   "base": "host-ar + prefill-graphs",
+   "evidence": "T1-006/T1-007 +3.0% ab vs T1-005"
   },
   "greedy-fastpath": {
-   "contact": "reached",
-   "verdict": "as expected",
-   "records": "T1-009"
+   "type": "win",
+   "idea": true,
+   "implementation": true,
+   "result": true,
+   "covered_by_alt": null,
+   "wrong_cause": false,
+   "base": "host-ar + prefill-graphs + draft-head-diet",
+   "evidence": "T1-009 +2.4% ab, official 730.9 (+4.5% vs T1-005)"
   },
   "sharded-sampling": {
-   "contact": "not-considered",
-   "verdict": "-",
-   "records": "alt greedy-fastpath reached"
+   "type": "win",
+   "idea": false,
+   "implementation": false,
+   "result": false,
+   "covered_by_alt": "greedy-fastpath",
+   "wrong_cause": false,
+   "base": "-",
+   "evidence": "never proposed; alt passed (T1-009)"
   },
   "gdn-replay": {
-   "contact": "tried",
-   "verdict": "as expected",
-   "records": "T1-012 (official, not promoted: 3% bar)"
+   "type": "win",
+   "idea": true,
+   "implementation": true,
+   "result": true,
+   "covered_by_alt": null,
+   "wrong_cause": false,
+   "base": "T1-009 stack",
+   "evidence": "T1-012 official +2.6%, ab +2.2%; not promoted (3% bar)"
+  },
+  "host-allgather": {
+   "type": "dead-end",
+   "reason": "right",
+   "how": "measured",
+   "evidence": "T1-004 ~0 ab; kept as neutral block (KB6)"
+  },
+  "ar-kernel-tuning": {
+   "type": "dead-end",
+   "reason": "right",
+   "how": "measured",
+   "evidence": "T1-003 chunking loses, ~5 us floor (KB5)"
   },
   "draft-depth-3": {
-   "contact": "tried",
-   "verdict": "as expected",
-   "records": "T1-008, T1-010, T1-011"
+   "type": "dead-end",
+   "reason": "right",
+   "how": "measured",
+   "evidence": "T1-008 -6.9%; KB13 capacity; T1-010/11 OOM"
   },
   "nccl-env": {
-   "contact": "tried",
-   "verdict": "as expected",
-   "records": "R1-C (bs r1 AF M2 microbench)"
+   "type": "dead-end",
+   "reason": "right",
+   "how": "measured",
+   "evidence": "bs-r1-AF M2 microbench (component)"
   },
   "prefill-ar-overlap": {
-   "contact": "idea-only",
-   "verdict": "-",
-   "records": "R1-L"
+   "type": "dead-end",
+   "reason": "right",
+   "how": "reasoned",
+   "evidence": "R1-L; r2 SE: <=4%, skew is GPU 0 clock (KB8)"
   },
   "triton-linear": {
-   "contact": "not-considered",
-   "verdict": "-",
-   "records": "forbidden by task_definition"
+   "type": "dead-end",
+   "reason": "not-considered",
+   "how": "-",
+   "evidence": "forbidden by task_definition.md:16"
   },
   "stock-flag-tweaks": {
-   "contact": "not-considered",
-   "verdict": "-",
-   "records": ""
+   "type": "dead-end",
+   "reason": "not-considered",
+   "how": "-",
+   "evidence": "no flag sweep; passing mention r3 SE:148"
   }
  },
- "novel": []
+ "novel": [
+  {
+   "id": "marlin-fp32red-off",
+   "title": "Marlin use_fp32_reduce=False (microbench only)",
+   "builds_on": [
+    "BASE"
+   ],
+   "result": "-1.3% Marlin time/step, component"
+  }
+ ]
 }

@@ -4,6 +4,10 @@
 #   bench <num_prompts> <concurrency> <out_dir>   # ShareGPT, T=0, seed 0, like the official bench
 #   gsm8k <n> <out.json>                       # accuracy check (official gate: n=250); for changes
 #                                              that may alter the math. Skip it for exact changes.
+#                                              n=50 = the first 50 of the official 250 (same order):
+#                                              BASE scores 88.0% (44/50) on it; SE ~+-4.6 points.
+#   long_request <tokens> [out.json]           # one max-length request + a health check (official
+#                                              gate: 128000). For changes that affect GPU memory.
 #   stop_server                                # also happens automatically when the job ends
 # Env: PORT (default 8000), OUT (default: current dir; server.log goes there).
 # Unofficial numbers only: official ones come from `official_eval`. A short bench is NOT comparable
@@ -54,5 +58,9 @@ bench() {   # bench <num_prompts> <concurrency> <out_dir> [extra vllm bench serv
 
 gsm8k() {   # gsm8k <n> <out.json>
   python "$TASK_DIR/harness/gsm8k.py" --n "$1" --url "http://localhost:$PORT" --out "$2" | tail -2
+}
+long_request() {   # long_request <tokens> [out.json]   (official gate: 128000)
+  python "$TASK_DIR/harness/long_request.py" --tokens "$1" --url "http://localhost:$PORT" \
+    --out "${2:-$OUT/long_request.json}"
 }
 trap stop_server EXIT

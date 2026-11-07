@@ -8,11 +8,12 @@ What it does, from $AUTOINFER_RUN/bank/<record id>/ (needs change.diff; serve_ar
 1. Prepare (CPU, not charged): a fresh workspace eval-<id>-<n> = the baseline + the record's
    change.diff ONLY (nothing else from your workspace is used); `ws build` if the diff touches
    compiled code (adds ~2-11 min).
-2. Measure: one GPU job (`gpu run --label official:<id>`, charged to your team, ~14 GPU-min) that
+2. Measure: one GPU job (`gpu run --label official:<id>`, charged to your team, ~15 GPU-min) that
    runs the task's frozen harness (tasks/<task>/harness/eval.sh): starts the server from that
    workspace with the task's serve flags (+ the record's serve_args.txt), runs the benchmark
    (qwen task: 3 trials, each on a freshly started server: ShareGPT, 400 prompts, concurrency 16;
-   score = mean) and the accuracy gate (GSM8K-250, once), stops it.
+   score = mean), the accuracy gate (GSM8K-250, once) and the long-request gate (one 128K-token
+   request), stops it.
 3. Record: bank/<id>/official/<n>/ (results.json, logs, provenance.json) and one line appended
    to bank/<id>/record.md, e.g. "official #1 (...): 662.0 tok/s at c=16 (+5.0% vs BASE), GSM8K
    93.2%, ...". Append-only; failures (diff doesn't apply, build, server start, bench) are
@@ -149,7 +150,8 @@ def main():
     line = (f"official #{n} ({now()[:16]}): {res['output_throughput']:.1f} tok/s at c=16{tr}{vs}, "
             f"GSM8K {100 * res['gsm8k_accuracy']:.1f}%, MTP acceptance {res.get('mtp_acceptance_length', 'n/a')}, "
             f"TTFT p50 {res['median_ttft_ms']:.0f} ms, TPOT p50 {res['median_tpot_ms']:.1f} ms; "
-            f"gates: GSM8K {res.get('gate_gsm8k', 'n/a')}, latency {res.get('gate_latency', 'n/a')} "
+            f"gates: GSM8K {res.get('gate_gsm8k', 'n/a')}, latency {res.get('gate_latency', 'n/a')}, "
+            f"128K request {res.get('gate_long_request', 'n/a')} "
             f"(official/{n}/results.json)")
     record(line, 0)
 

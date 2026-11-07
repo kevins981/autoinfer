@@ -1,11 +1,12 @@
 #!/bin/bash
 # Official eval of one workspace: TRIALS (default 3) trials, each on a freshly started server
 # (start, bench c=16 ShareGPT 400 prompts, stop), so restart-to-restart drift averages out.
-# GSM8K-250 runs once, on the last trial's server. Score = mean over trials (summarize.py).
+# GSM8K-250 and the long-request check (one 128K-token request) run once, on the last trial's
+# server. Score = mean over trials (summarize.py).
 # Run inside a GPU job (official_eval does this). Frozen: agents must not modify.
 # usage: eval.sh <workspace dir> <output dir> [extra serve args file]
 # output: <out>/trial<t>/{server.log,startup.txt,bench_c16.json,bench.log,metrics_*.txt,gpu_clocks.csv},
-#         <out>/server_cmd.txt, <out>/gsm8k.{json,log}
+#         <out>/server_cmd.txt, <out>/gsm8k.{json,log}, <out>/long_request.{json,log}
 WS=$1; OUT=$2; EXTRA=${3:-}
 TRIALS=${TRIALS:-3}
 HARNESS=$(cd "$(dirname "$0")" && pwd)
@@ -68,6 +69,9 @@ for t in $(seq 1 $TRIALS); do
     PYTHONPATH=$BASELINE_TREE python "$HARNESS/gsm8k.py" --n 250 --url http://localhost:$PORT --out "$OUT/gsm8k.json" \
       > "$OUT/gsm8k.log" 2>&1 || fail gsm8k
     tail -1 "$OUT/gsm8k.log"
+    PYTHONPATH=$BASELINE_TREE python "$HARNESS/long_request.py" --tokens 128000 --url http://localhost:$PORT \
+      --model "$MODEL" --out "$OUT/long_request.json" > "$OUT/long_request.log" 2>&1
+    tail -1 "$OUT/long_request.log"      # a FAIL is a gate result, not an eval failure (summarize.py)
   fi
   stop_server
 done

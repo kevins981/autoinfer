@@ -22,7 +22,7 @@ demand), never copied into assignments. Only the owner writes each one.
 TASK               # task/ (read-only): TASK.md (objective, metric, constraints), harness/ (the
                    # frozen official eval), scripts/ (helpers for GPU jobs), baseline/
                    # (official/: the baseline's official result; raw nsys/ncu profiles;
-                   # PROFILING.md: what exists and how to query it). The engine's baseline code, to read: .cache/tasks/<task>/baseline/vllm
+                   # PROFILING.md: what exists and how to query it). The engine's baseline code, to read: $CACHE_ROOT/tasks/<task>/baseline/vllm (`$CACHE_ROOT` is set by `source task/env.sh`)
 TASK.definition    # task_definition.md: the agreed correctness criteria, hard constraints and
                    # known loopholes. What a validity review checks against.        owner: manager
 ASSUMPTION_LEDGER  # assumption_ledger.md: what is frozen and what is open in this run. owner: manager
@@ -69,7 +69,8 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   record.md               # free text, short:
     team:         T1
     performance:  "unofficial: ~+4% at c=16" / "unofficial: within noise" / "build failed"
-                  (official_eval appends official results below; only those count)
+                  (official_eval appends official results below; only those count. Once one
+                  lands, the owner may update this line to show it)
     summary:
       hypothesis:
       change:     what was done; "builds on T1-002" if not from the baseline

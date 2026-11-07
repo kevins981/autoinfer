@@ -51,7 +51,7 @@ initialize():                                       # WITH the human
 
     # 2. Baseline: it comes with the task. new_run put its official result in bank/BASE/
     #    (from task/baseline/official/) and wrote champion.md = BASE. Don't re-measure it.
-    #    Only if bank/BASE/ has no official result: `official_eval BASE` (background, ~14 GPU-min,
+    #    Only if bank/BASE/ has no official result: `official_eval BASE` (background, ~15 GPU-min,
     #    unbudgeted), then write champion.md.
     CHAMPION = BASE + its official numbers
     CHAMPION.profile = task/baseline/               # raw profiles that come with the task
@@ -154,7 +154,7 @@ collect_and_update(reports, round):
         # valid: per TASK.definition (check its validity review; skim its diff)
         # beats: clearly, per the task's noise notes (a small gain needs a same-job comparison,
         #   repeated, before it counts as real)
-        # gates_pass: the task's gates (qwen: GSM8K, p99 latency; in its official results)
+        # gates_pass: the task's gates (qwen: GSM8K, p99 latency, 128K request; in its official results)
         CHAMPION = best                             # write champion.md; starting point doesn't matter
         # No re-profiling here: next round's brainstormers profile the new champion themselves.
     # No integration step: combining wins is just another idea for the next brainstorm.

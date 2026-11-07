@@ -24,6 +24,12 @@ the model computes.
 - **Accuracy gate**: GSM8K-250 (fixed questions, temperature 0, thinking off) must be
   **>= 89.6%** (BASE 92.8%, standard error ±1.6; the gate is 2 SE below). A safety net: lossy
   changes are forbidden anyway (below).
+  Quick unofficial check: `gsm8k 50` (`scripts/lib.sh`) = the first 50 of the same 250
+  questions; BASE scores **88.0%** (44/50) on it, SE ±4.6. A smoke test, not the gate.
+- **Long-request gate**: one 128,000-token request (`harness/long_request.py`, after GSM8K on the
+  last trial's server) must return generated tokens, and the server must still answer afterwards.
+  Changes to memory (CUDA graphs, KV budget, buffers) can break it while the benchmark passes.
+  Run it yourself before an official eval when a change affects memory: `long_request 128000`.
 
 ## Hardware and software
 2x RTX 4090 (sm_89, 24 GB each, FP8 tensor cores), **no GPU peer-to-peer** (PCIe through the

@@ -62,8 +62,9 @@ leader.run(task) -> report:
 evaluate(record):                                   # OFFICIAL; only leaders request it
     # how: `official_eval <record id>` as a BACKGROUND command (`official_eval --help`).
     # Builds baseline + change.diff from scratch (nothing else from your workspace), then one GPU
-    # job charged to your team (~14 GPU-min): server with the task's flags (+ serve_args.txt),
-    # benchmark (c=16, 400 prompts; 3 trials on fresh servers, score = mean) + GSM8K-250. Appends the result (or the failure) to the record.
+    # job charged to your team (~15 GPU-min): server with the task's flags (+ serve_args.txt),
+    # benchmark (c=16, 400 prompts; 3 trials on fresh servers, score = mean) + GSM8K-250 + one
+    # 128K-token request. Appends the result (or the failure) to the record.
     # Only these numbers count. A fixed version of a change is a new record, not a re-eval.
 ```
 
@@ -77,7 +78,7 @@ evaluate(record):                                   # OFFICIAL; only leaders req
   - A new idea with no evidence behind it: don't chase it. Report it as left open; the next
     brainstorm can pick it up (generating ideas is the brainstormers' job).
 - **GPU budget: yours to manage.** Give each worker a maximum number of GPU-minutes in its task,
-  keep some for official evals (~14 min each), and move minutes to whatever looks most promising
+  keep some for official evals (~15 min each), and move minutes to whatever looks most promising
   as results come in. Workers may ask you for more; decide with the evidence they give (or say
   no). You may ask the manager for more for your team, with your reasons. `gpu status` shows
   your team's remaining budget and each worker's use. Brief workers to batch several tests per

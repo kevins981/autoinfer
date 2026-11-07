@@ -6,6 +6,12 @@ however you like (Python is easiest). Make new profiles of any workspace with
 `scripts/profile_nsys.sh` and `scripts/profile_ncu.sh` (GPU jobs); they produce the same kinds
 of files. `source <workspace>/env.sh` (or the task's `env.sh`) first.
 
+**nsys distorts CPU-side timing.** Tracing adds overhead to every CUDA API call, so steps that
+launch kernels one by one (eager, no CUDA graph) look slower and more launch-bound under nsys
+than they are; graph-replayed steps are barely affected. Use nsys for the GPU-side picture and
+check launch-bound claims without it (e.g. the same server with and without CUDA graphs for those
+steps, in a plain bench).
+
 What was profiled:
 - `baseline/nsys_c16/`: the BASE server (`harness/serve_args.sh`: TP=2, FP8 KV, MTP 2 draft
   tokens) under 64 ShareGPT prompts at concurrency 16, both GPUs, CUDA graphs traced per kernel

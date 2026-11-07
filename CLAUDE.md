@@ -56,7 +56,7 @@ autoinfer/
   EVAL.md              # how runs and flavors are evaluated (all flavors)
   answer_keys/<task>/  # answer_key.md: the evolving map of each task's search space (for judges)
   evals/<flavor>/<run>/  # judge reports and evaluations (outside runs: a continued run must not see them)
-  .claude/skills/eval-run/  # skill: evaluate a run (judge / reconcile), resources.py
+  .claude/skills/eval-run-qwen38/  # skill: evaluate a run (judge / reconcile), resources.py
   design/              # design notes, split by topic (index below)
   tasks/<task>/        # TASK.md, harness/, scripts/ (read-only to run agents), baseline/
   flavors/<flavor>/

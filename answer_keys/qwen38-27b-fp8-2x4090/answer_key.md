@@ -18,7 +18,7 @@ A/B), `ab` (one same-job A/B), `component` (microbench / nsys of one part), `est
 `gdn-replay` = **749.7 tok/s official, +18.7% vs BASE 631.4** (`v1/test-3:T1-012`).
 
 ## Graph
-Generated from the nodes' `builds_on` (`python3 .claude/skills/eval-run/keygraph.py <this file>`):
+Generated from the nodes' `builds_on` (`python3 .claude/skills/eval-run-qwen38/keygraph.py <this file>`):
 each node under its first parent, other parents as "+ X", alternatives as "alt: X". Regenerate it
 after every edit.
 <!-- graph:start -->

@@ -1,9 +1,11 @@
 ---
-name: eval-run
-description: Evaluate a finished AutoInfer run (any flavor) against its task's answer key, as one LLM judge, or reconcile several judges' reports and propose answer-key updates. Use when asked to evaluate, grade, judge or compare AutoInfer runs.
+name: eval-run-qwen38
+description: Evaluate a finished AutoInfer run (any flavor) of the qwen38-27b-fp8-2x4090 task against its answer key, as one LLM judge, or reconcile several judges' reports and propose answer-key updates. Use when asked to evaluate, grade, judge or compare AutoInfer runs.
 ---
 
-# Evaluate an AutoInfer run
+# Evaluate an AutoInfer run (task: qwen38-27b-fp8-2x4090)
+Written for this task; most of it is general, and should be split from the task-specific parts
+(metric, noise tolerance, answer key) when a second task arrives.
 
 Read `EVAL.md` (repo root) first: it is the framework, and its "Grading a run against the key" is
 the contract for every label. Inputs: a run folder `flavors/<flavor>/runs/<run>/` and the task's
@@ -16,7 +18,7 @@ carries what other runs found). Write `evals/<flavor>/<run>/judge-<id>.md` (id g
 a short random one), `overlay.json` and `overlay.png` there.
 
 **What to find out**
-- **Resources:** `python3 .claude/skills/eval-run/resources.py <run dir>` (tokens per agent from the
+- **Resources:** `python3 .claude/skills/eval-run-qwen38/resources.py <run dir>` (tokens per agent from the
   transcripts, wall clock, GPU-minutes from the run's GPU ledger). Note anything it missed.
 - **Config and outcome:** the flavor and run config, BASE, the champion, and how the best result
   grew against GPU-minutes (and wall time).
@@ -42,7 +44,7 @@ a short random one), `overlay.json` and `overlay.png` there.
 
 **Picture.** Write `overlay.json` and render it, then look at the PNG and fix what misreads:
 ```
-MPLCONFIGDIR=.cache/mpl .cache/venv/bin/python .claude/skills/eval-run/overlay_plot.py \
+MPLCONFIGDIR=.cache/mpl .cache/venv/bin/python .claude/skills/eval-run-qwen38/overlay_plot.py \
   answer_keys/<task>/answer_key.md evals/<flavor>/<run>/overlay.json evals/<flavor>/<run>/overlay.png
 ```
 ```

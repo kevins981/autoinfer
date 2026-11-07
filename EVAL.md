@@ -68,7 +68,7 @@ idea moves into the key once a run measures it.
 - **Facts (F):** diagnoses and environment facts that explain nodes, used to judge whether a run's
   reasons were right.
 - **Frontier:** the best known stack and its official number.
-- **Outline:** generated from the edges by `.claude/skills/eval-run/keygraph.py` (each node under
+- **Outline:** generated from the edges by `.claude/skills/eval-run-qwen38/keygraph.py` (each node under
   its first parent, "+ X" for other parents). Regenerate it after every edit.
 
 Each node needs enough detail for a judge to recognize it in a run by what the change does
@@ -149,7 +149,7 @@ base where the node pays). Record the base in key ids either way.
   re-measures, repeats) on the same task with the same resources. AutoInfer's claim is that more
   agents and tokens give better results, and this control is the reference for that claim.
 
-## LLM as judge (procedure: `.claude/skills/eval-run/SKILL.md`; reports in `evals/<flavor>/<run>/`, outside the run folder
+## LLM as judge (procedure: `.claude/skills/eval-run-qwen38/SKILL.md`; reports in `evals/<flavor>/<run>/`, outside the run folder
 so a continued run's agents never see its grades)
 Most of the grading (matching records to key nodes, judging reasons, "why missed") needs an LLM
 judge. Rules:
@@ -167,7 +167,7 @@ judge. Rules:
       harness and GPU queue, same budget), and its run layout.
 - [x] Answer key for `qwen38-27b-fp8-2x4090`: `answer_keys/qwen38-27b-fp8-2x4090/answer_key.md`
       (from v1 test-3, test-4 and qwen38_opt).
-- [x] Judge and reconcile procedure: the `eval-run` skill (`.claude/skills/eval-run/`), with
+- [x] Judge and reconcile procedure: the `eval-run` skill (`.claude/skills/eval-run-qwen38/`), with
       `resources.py` (tokens per agent/role, wall clock, GPU-minutes from transcripts + ledger).
 - [ ] The flavor should record the manager's session id (v1's agents/manager/meta.json has none;
       resources.py finds the transcript by start time).

@@ -53,7 +53,8 @@ leader.run(task) -> report:
     stop(workers you no longer need)                # `agent stop <name>`
     return report:                                  # SendMessage to the manager
         # summary of findings
-        # + every experiment, with its BANK record id and performance
+        # + every experiment, with its BANK record id, the record it builds on, and performance
+        #   (failures and null results too)
         # + proposed insights for SHARED_KB (the manager decides what goes in)
         # + what was left open
         # + next: the ONE direction you would pursue next round (what, why, the evidence). If your

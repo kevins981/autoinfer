@@ -36,7 +36,9 @@ BANK               # bank/<id>/: every experiment, pass or fail (format below).
                    # owner: the leader of that team; official_eval appends official results
 SHARED_KB          # shared_kb.md: confirmed understanding of the system, each entry citing
                    # its records.                                                   owner: manager
-TREE               # tree.md: the ideas (selected and not), with their experiments. owner: manager
+TREE               # tree.md: what was tried: directions -> experiments (records) that build on each
+                   # other, with results, failures included; the champion's path marked. owner: manager
+IDEAS              # ideas.md: proposed but untried ideas, with scores and round. owner: manager
 JOURNAL            # journal.md: decisions and why.                                 owner: manager
 LOCAL_KB[leader]   # local_kb/<leader>.md: a leader's working notes.                owner: that leader
 REPORTS            # reports/: round reports for the human.                         owner: manager

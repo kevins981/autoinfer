@@ -32,7 +32,7 @@ concrete example, see [example_round.md](example_round.md).
 | Store | Contents | Written by |
 |---|---|---|
 | Experiment records (bank) | One per experiment: id, team, performance, short summary (results = **Observed**, conclusion = **Interpretation**, kept separate), validity review, and a diff against the task baseline. See [Experiment record](#experiment-record) | the leader, from its workers' results; the evaluator appends official numbers |
-| Search tree | Index of ideas; each node = an idea with its experiments, a summary/conclusion, novelty + upside scores, who proposed it, status (incl. `proposed` = not yet selected) | manager |
+| Search tree | What was tried: directions -> experiments (records) that build on each other, with results and conclusions, failures included, the champion's path marked. Untried ideas are in a separate idea archive (`ideas.md`: scores, who proposed it, round) | manager |
 | Shared KB | Understanding of the system not tied to a single idea; each entry cites the experiments behind it | **manager only** (leaders propose insights in their reports) |
 | Local KB | A leader's working notes, hypotheses, plans | that leader |
 | Journal | The order of decisions and why | manager |
@@ -181,7 +181,7 @@ brainstorm() -> directions:
     directions = manager.select(ideas, len(leaders), SEARCH_POLICY)   # e.g. "if a leader improved the champion,
                                                             # continue that line; 1 slot most novel"
     TREE.add(directions, status = assigned)
-    TREE.add(ideas - directions, status = proposed, round = r)
+    IDEAS.add(ideas - directions, round = r)
         # backlog = an archive, not a queue: visible to the human and to brainstormers, never
         # selected directly. The manager selects only from this round's ideas; an old idea comes
         # back only if a brainstormer proposes it again (updated for what is known now).
@@ -335,7 +335,8 @@ These run throughout, outside the loop:
 
 ## Decisions specific to v1
 - Barrier rounds (tentative; rolling is a candidate for a future flavor).
-- The search tree is one free-form markdown file; a node = an idea with experiments attached.
+- The search tree is one free-form markdown file of what was tried (directions -> records);
+  untried ideas live in `ideas.md`.
 - Agent lifetimes: manager and leaders are persistent (compaction keeps them going); workers are
   persistent by default, and the leader decides when to start a fresh one; brainstormers are new
   every round.
@@ -357,7 +358,7 @@ These run throughout, outside the loop:
 - Running out of tokens or plan usage: the manager stops the run and tells the human.
 - What to work on next is decided by `search_policy.md` (an isolated, editable variable).
 - One direction per leader per round (k = number of leaders).
-- Ideas not selected stay in the tree as `proposed` (with the round): an archive, not a queue.
+- Ideas not selected go to `ideas.md` (with the round): an archive, not a queue.
   Only this round's ideas are selected; old ones come back only if a brainstormer re-proposes them,
   so stale ideas never run.
 - Ideas come only from brainstormers (leaders don't propose next steps). Brainstormers are listed

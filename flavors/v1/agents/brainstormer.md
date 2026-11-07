@@ -23,8 +23,8 @@ brainstormer(persona, briefing).propose() -> ideas:
         #   analyzed it for you. What exists and how to query it: task/PROFILING.md
         # the engine's code: a clean baseline tree to read at $CACHE_ROOT/tasks/<task>/baseline/vllm (`$CACHE_ROOT` is set by `source task/env.sh`)
         #   (or any workspace, for a record's version)
-        # BANK (records, diffs, official results, profiles), SHARED_KB, TREE (incl. ideas proposed
-        #   before but not selected), JOURNAL, reports/
+        # BANK (records, diffs, official results, profiles), SHARED_KB, TREE (what was tried), IDEAS (ideas
+        #   proposed before but not selected), JOURNAL, reports/
         # any leader (`agent list`, SendMessage): what they saw, what surprised them, what they
         #   didn't try. Ask like a colleague would.
         # new profiles when the existing data doesn't answer your question (e.g. of a new

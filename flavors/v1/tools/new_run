@@ -111,7 +111,7 @@ def main():
             (run / d).mkdir()
         shutil.copy(flavor / "config_default.md", run / "config.md")
         shutil.copy(flavor / "design" / "search_policy.md", run / "search_policy.md")
-        for f in ("tree.md", "journal.md", "shared_kb.md", "champion.md", "focus.md"):
+        for f in ("tree.md", "ideas.md", "journal.md", "shared_kb.md", "champion.md", "focus.md"):
             (run / f).write_text("")
         seed_base(run, task)
         write_settings(run, flavor)

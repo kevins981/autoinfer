@@ -111,9 +111,9 @@ brainstorm(round) -> directions:
     directions = select(ideas, k = number of leaders, SEARCH_POLICY)
         # SEARCH_POLICY may reserve a slot first: e.g. the champion-producing leader's own "next"
         # (from its report) for its team; brainstorm ideas fill the other slots.
-    TREE.add(directions, status = assigned, round)
-    TREE.add(ideas - directions, status = proposed, round)
-        # an archive, not a queue: never selected directly. Only this round's ideas (and a slot
+    TREE.add(directions, status = assigned, round)  # a direction enters the tree once worked on
+    IDEAS.add(ideas - directions, scores, round)    # ideas.md: scored but untried ideas, kept out
+        # of the tree. An archive, not a queue: never selected directly. Only this round's ideas (and a slot
         # SEARCH_POLICY reserves) are selected; an old idea comes back only if proposed again.
     JOURNAL.append(why these directions)
     report_to_human(if CONFIG.human_checkpoints asks for it here)
@@ -149,8 +149,14 @@ execute(tasks) -> reports:                          # leaders in parallel; barri
 
 ```python
 collect_and_update(reports, round):
-    TREE.update(reports)                            # ideas -> experiments (bank record ids),
-                                                    # conclusions; you may reorganize the tree
+    TREE.update(reports)
+        # tree.md is for a human to see at a glance what was tried and how the champion came
+        # about. Only what was tried: directions (top level) -> experiments (BANK records) under
+        # them, a child = a record that builds on its parent. Each node: record id, one line on
+        # the change, its result (official or unofficial) and conclusion. Failures and null
+        # results stay as branches, marked; mark the champion's path. Untried ideas go to
+        # ideas.md, not here. Leader-internal worker steps stay inside the records.
+        # Reorganize the tree freely to keep it readable.
     best = the BANK record from this round with the best official numbers
     if valid(best) and beats(best, CHAMPION) and gates_pass(best):
         # valid: per TASK.definition (check its validity review; skim its diff)

@@ -56,19 +56,37 @@ def confine(s, run):
                    for r in (f / "runs").iterdir() if r.is_dir() and r.resolve() != own)
     dirs += [QWEN38_OPT / d for d in ("results", "logs", "ext", "vllm", "build")]
     files = [ROOT / "EVAL.md", ROOT / "CLAUDE.md"] + [e for e in flav if not e.is_dir()] + [QWEN38_OPT / f for f in ("FINDINGS.md", "TODO.md", "CLAUDE.md")]
+    # Claude Code's per-session folders (transcripts, memory, background-job output, scratchpads),
+    # named after each session's working directory: deny all that exist at launch except this run's
+    # own (its agents read their own job output there). Other runs, the designer and the judges.
+    enc = lambda p: re.sub(r"[^A-Za-z0-9]", "-", str(p))
+    mine = enc(own)
+    others = {enc(r) for f in (ROOT / "flavors").iterdir() if (f / "runs").is_dir()
+              for r in (f / "runs").iterdir() if r.is_dir() and r.resolve() != own}
+    def is_mine(n):   # this run's folders, not another run whose name starts with ours (test-5-b)
+        return (n == mine or n.startswith(mine + "-")) and not any(
+            n == o or n.startswith(o + "-") for o in others if o.startswith(mine + "-"))
+    sess_roots = [Path.home() / ".claude" / "projects", Path(f"/tmp/claude-{os.getuid()}")]
+    dirs += sorted(d for r in sess_roots if r.is_dir() for d in r.iterdir()
+                   if d.is_dir() and d.name.startswith("-") and not is_mine(d.name))
     pats = [f"/{d}/**" for d in dirs] + [f"/{f}" for f in files]
     ro = [f"/{ROOT / 'tasks'}/**", f"/{run / 'task'}/**"]   # the task is read-only to agents
     deny = s["permissions"]["deny"]
     deny += [f"{tool}({p})" for p in pats for tool in ("Read", "Edit")]   # Edit covers every file-writing tool
     deny += [f"Edit({p})" for p in ro]
-    off = ", ".join(str(p) for p in dirs + files if p.parent.name != "runs" and QWEN38_OPT not in p.parents)
+    off = ", ".join(str(p) for p in dirs + files if p.parent.name != "runs" and QWEN38_OPT not in p.parents
+                    and not any(r in p.parents for r in sess_roots))
     s["includeGitInstructions"] = False   # else the system prompt holds the autoinfer repo's recent commits
     s["autoMode"] = {"soft_deny": ["$defaults", (
         f"Leaving the run: this agent belongs to one AutoInfer optimization run, folder {run}. "
         f"Never read, list, search, copy or print the following, by any method (Read, cat, grep, find, "
         f"python, symlinks, git log/show/grep/diff on the {ROOT} repository or reading its .git): {off}; any other AutoInfer "
         f"run's folder (other runs under {ROOT}/flavors/*/runs/, or anywhere else); and {QWEN38_OPT}'s "
-        f"notes, results, logs and code (FINDINGS.md, TODO.md, results/, logs/, ext/, vllm/, build/). They hold "
+        f"notes, results, logs and code (FINDINGS.md, TODO.md, results/, logs/, ext/, vllm/, build/); "
+        f"other Claude sessions' transcripts, memory and scratch folders (under ~/.claude/projects/ and "
+        f"/tmp/claude-{os.getuid()}/, every folder except this run's own); and the autoinfer repository "
+        f"on GitHub (kevins981/autoinfer: no gh, git clone, curl or web fetches of it or its files; "
+        f"other GitHub use, e.g. vLLM issues and PRs, is fine). They hold "
         f"the evaluators' answers and grades, design notes, or other runs' results; using them invalidates "
         f"the experiment. Allowed outside the run: running the run's tools; reading the flavor's agents/ "
         f"and tools/; the engine code and caches under {ROOT}/.cache; {QWEN38_OPT}/env (the conda env) "
@@ -203,7 +221,8 @@ def main():
                         "--autocompact", os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),
                         "--settings", str(run / "manager_settings.json"),
                         "--append-system-prompt", prompt, first],
-                       cwd=flavor, env=env, capture_output=True, text=True)
+                       cwd=run, env=env, capture_output=True, text=True)   # its own run folder:
+    # Claude's per-session folders are named after the cwd, and confine() denies all but the run's
     print(r.stdout.strip() or r.stderr.strip())
     # `claude --bg` assigns its own session id (it ignores --session-id): record the one it prints,
     # a prefix of the transcript's file name (resources.py matches by prefix)

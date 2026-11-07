@@ -44,19 +44,34 @@ built at run time); runs created after a run starts aren't in its deny list (the
 covers "any other run"); live runs keep the settings they started with. Backstop: the cheat audit
 (EVAL.md TODO).
 Found by the first audit (test-4, 2026-11-07):
-- **Finished runs' agents stay reachable.** Agent names are reused across runs (`manager`,
+- **Finished runs' agents stay reachable.** Agent names were reused across runs (`manager`,
   `leader-1`, ...), and an idle finished session keeps its name: in test-4 a brainstormer messaged
-  "manager" and test-3's manager answered (it refused; nothing leaked). Fix options: run-scoped
-  names (`<run>/manager`), or stop a run's sessions when it ends. Open.
+  "manager" and test-3's manager answered (it refused; nothing leaked). Fixed: run-scoped names.
 - Under `task/env.sh`, a bare `import vllm` loads `qwen38_opt/vllm` (the env's editable install).
   It is clean at the baseline commit, so not a leak, but agents must point PYTHONPATH at their
-  workspace to run their own code. Open: say so in the tools README, or fix the env.
-**Pending, needs the human's go-ahead (not while runs are live):** move `flavors/<f>/runs/` out of
-the autoinfer repo (e.g. `/scratch/kevinsong/learning/autoinfer_runs/<f>/`, `runs` a symlink to
-it). Then git in a run folder no longer finds the autoinfer repo. Runs aren't meant to be tracked
-anyway. At that point: set AUTOINFER_RUN to the real path, check tools that resolve paths, add a
-`Bash(git -C <autoinfer> *)` deny (today it would also match workspaces inside runs), and consider
-starting the v1 manager in its run folder instead of `flavors/v1/` (inside the repo).
+  workspace to run their own code. Fixed: env.sh loads the task baseline tree (9b2a78e).
+- **Claude's per-session folders** (added 2026-11-07): `~/.claude/projects/<cwd>/` (transcripts,
+  memory) and `/tmp/claude-<uid>/<cwd>/` (background-job output, scratchpads) of every other session:
+  other runs' agents, the designer and the judges. `confine()` Read+Edit-denies every such folder
+  that exists at launch except the run's own (its agents read their own job output there), and the
+  classifier rule names them. That is why the v1 manager now starts in its run folder, not
+  `flavors/v1/` (a folder all managers shared).
+- **GitHub** (added 2026-11-07): `gh` is logged in as the human, so the private repo is reachable.
+  Classifier rule only: no `gh`, `git clone`, `curl` or web fetch of kevins981/autoinfer; other GitHub
+  use (vLLM issues, PRs) stays allowed, so no `Bash(gh *)` deny.
+- Probe (Haiku, in a v1 run, 2026-11-07): another session's memory, my scratchpad, another run's
+  transcripts and the repo via `gh api` all blocked; `gh api` on vllm-project, the run's own
+  transcript folder, reading its own background-job output and the task copy all allowed.
+- The v1 manager no longer commits run records (`git -C $AUTOINFER_RUN commit` ran git on the
+  autoinfer repo); the human or designer commits them after a run.
+- `import vllm` under `task/env.sh` now loads the task's baseline tree (9b2a78e).
+- Run-scoped agent names (`<run>-<name>`) fixed the cross-run messaging (ecb20fa).
+
+**Decided: runs stay in the repo** (2026-11-07, human). Moving `flavors/<f>/runs/` out behind a
+symlink would only stop git and relative paths from reaching the repo; absolute paths still reach
+it, so the deny rules stay the protection. Costs: existing runs have absolute paths baked in
+(workspace worktree links, meta.json cwd, transcript folders keyed by cwd), and the deny rules'
+behavior on symlinked paths is untested.
 
 ## Infrastructure
 - GPU job queue: a wrapper we write; all GPU work goes through it (agents trusted to use it in v1).

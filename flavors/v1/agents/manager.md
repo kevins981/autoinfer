@@ -179,8 +179,6 @@ collect_and_update(reports, round):
     write(reports/r<round>.md)
     report_to_human()                               # as CONFIG.human_checkpoints says
                                                     # (default: a short summary every round)
-    # Commit the run's records (never push; workspaces and agent logs are git-ignored):
-    #   git -C $AUTOINFER_RUN add . && git -C $AUTOINFER_RUN commit -m "<run> round <round>"
 ```
 
 ```python
@@ -188,7 +186,7 @@ finalize():
     stop(every agent still alive)                   # `agent stop <name>`
     write(reports/final.md)                         # champion, what was learned, the graph,
                                                     # what is left open
-    commit(run records); report_to_human()
+    report_to_human()
 ```
 
 These run throughout, outside the loop:

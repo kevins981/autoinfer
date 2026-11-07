@@ -51,7 +51,7 @@ initialize():                                       # WITH the human
 
     # 2. Baseline: it comes with the task. new_run put its official result in bank/BASE/
     #    (from task/baseline/official/) and wrote champion.md = BASE. Don't re-measure it.
-    #    Only if bank/BASE/ has no official result: `official_eval BASE` (background, ~15 GPU-min,
+    #    Only if bank/BASE/ has no official result: `official_eval BASE` (background, ~11 GPU-min,
     #    unbudgeted), then write champion.md.
     CHAMPION = BASE + its official numbers
     CHAMPION.profile = task/baseline/               # raw profiles that come with the task

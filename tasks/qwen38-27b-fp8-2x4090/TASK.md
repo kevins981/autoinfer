@@ -10,7 +10,7 @@ the model computes.
 - **Official benchmark** (`harness/eval.sh`, run only by `official_eval`): `vllm bench serve`,
   ShareGPT (400 prompts, input mean ~260 tokens incl. chat template, output = the reference reply
   length, mean ~228), `/v1/chat/completions`, temperature 0, seed 0, closed loop with 16
-  concurrent requests. 3 trials, each on a freshly started server; score = their mean (per-trial
+  concurrent requests. 2 trials, each on a freshly started server; score = their mean (per-trial
   values and CV in results.json).
 - **Noise**: repeat runs on the same server vary ~0.5% (CV). Across server restarts and jobs it is
   larger: BASE scored 641.4 and 631.4 tok/s in two runs (1.6% apart). So a 1-3% gain may well be

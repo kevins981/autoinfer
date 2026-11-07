@@ -1,5 +1,5 @@
 #!/bin/bash
-# Official eval of one workspace: TRIALS (default 3) trials, each on a freshly started server
+# Official eval of one workspace: TRIALS (default 2) trials, each on a freshly started server
 # (start, bench c=16 ShareGPT 400 prompts, stop), so restart-to-restart drift averages out.
 # GSM8K-250 and the long-request check (one 128K-token request) run once, on the last trial's
 # server. Score = mean over trials (summarize.py).
@@ -8,7 +8,7 @@
 # output: <out>/trial<t>/{server.log,startup.txt,bench_c16.json,bench.log,metrics_*.txt,gpu_clocks.csv},
 #         <out>/server_cmd.txt, <out>/gsm8k.{json,log}, <out>/long_request.{json,log}
 WS=$1; OUT=$2; EXTRA=${3:-}
-TRIALS=${TRIALS:-3}
+TRIALS=${TRIALS:-2}
 HARNESS=$(cd "$(dirname "$0")" && pwd)
 TASK=$(basename "$(dirname "$HARNESS")")
 PORT=8100

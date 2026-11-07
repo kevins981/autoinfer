@@ -1,0 +1,24 @@
+{
+  "id": 17,
+  "pid": 3152094,
+  "team": "T1",
+  "agent": "leader-1.w2",
+  "label": "T1-hostar2-nsysB",
+  "timeout_min": 9.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/task/scripts/profile_nsys.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.hostar2",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.hostar2/out/nsysB",
+    "64",
+    "--compilation-config",
+    "{\"max_prefill_cudagraph_capture_tokens\": 2048}"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.hostar2",
+  "submitted": "2026-11-07T00:22:30+00:00",
+  "state": "done",
+  "started": "2026-11-07T00:22:31+00:00",
+  "ended": "2026-11-07T00:24:53+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.37
+}

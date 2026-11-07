@@ -1,0 +1,19 @@
+{
+  "id": 11,
+  "pid": 3139051,
+  "team": "T1",
+  "agent": "leader-1.w2",
+  "label": "T1-hostar-race",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "out/job7.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.hostar",
+  "submitted": "2026-11-06T23:59:08+00:00",
+  "state": "done",
+  "started": "2026-11-06T23:59:08+00:00",
+  "ended": "2026-11-06T23:59:36+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.46
+}

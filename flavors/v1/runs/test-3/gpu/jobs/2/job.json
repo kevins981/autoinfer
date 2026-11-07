@@ -1,0 +1,19 @@
+{
+  "id": 2,
+  "pid": 3121838,
+  "team": null,
+  "agent": "bs-r1-adjacent_field",
+  "label": "bs-adj-arbench",
+  "timeout_min": 12.0,
+  "command": [
+    "bash",
+    "brainstorm/r1/adjacent_field_mb/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3",
+  "submitted": "2026-11-06T23:02:05+00:00",
+  "state": "cancelled",
+  "started": "2026-11-06T23:02:05+00:00",
+  "ended": "2026-11-06T23:13:55+00:00",
+  "exit_code": 130,
+  "gpu_minutes": 11.835
+}

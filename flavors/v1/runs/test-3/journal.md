@@ -1,0 +1,9 @@
+- 2026-11-06T22:47:22Z run started: task qwen38-27b-fp8-2x4090; focus/task_definition/assumption_ledger drafted from the human's answers (via proxy qwen38-opt-12); waiting for the human's OK before the BASE eval.
+- 2026-11-06T22:47:37Z task definition OK'd by the human's proxy (wording of the memory-change validation rule narrowed). Running BASE official eval.
+- 2026-11-06T22:53:36Z BASE official #1: 631.4 tok/s, TTFT p99 1487, TPOT p99 48.4, GSM8K 92.8%. CHAMPION=BASE. Round 1: T1 budget 80. Starting brainstormers.
+- 2026-11-06T23:13:55Z round 1 brainstorm ideas in (systematic_engineer.md, adjacent_field.md); both brainstormers stopped. Paused for the human's review before scoring.
+- 2026-11-06T23:21:42Z round 1 ideas scored (tree.md); paused again for the human before selection.
+- 2026-11-06T23:37:15Z human rulings 1-3 recorded (all allowed with conditions). Round 1 direction (human-approved): R1-B main line + R1-A one-flag test first; T1 80 GPU-min. Rationale: the largest measured gaps; R1-A's test resolves the brainstormers' disagreement about the prefill bottleneck.
+- 2026-11-06T23:45:22Z leader-1 interim: R1-A filed as T1-001, unofficial +2.2% (noise); prefill steps look GPU-bound, not CPU-bound (supports AF's reading). No official eval. R1-B in microbench phase.
+- 2026-11-07T00:06:48Z T1-002 (host-staged AR) official #1: 662.8 tok/s (+5.0%), TTFT p99 1357, TPOT p99 49.0, GSM8K 94.0%; validity checked (diff skimmed). Champion candidate at round end. leader-1 continues (18/80 GPU-min used).
+- 2026-11-07T00:41:52Z ROUND 1 collected: CHAMPION = T1-005 (699.2 tok/s official, +10.7%; gates pass; validity: leader review + 128K test on exact config; diff = T1-002 + all_gather, which I skimmed earlier). SHARED_KB KB1-7 added. Unused T1 budget: 33.4 min.

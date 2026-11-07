@@ -1,0 +1,21 @@
+{
+  "id": 3,
+  "pid": 3128591,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": "T1-prefillgraph",
+  "timeout_min": 20.0,
+  "command": [
+    "bash",
+    "out/job.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.prefillgraph",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.prefillgraph/out/run1"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-3/workspaces/leader-1.prefillgraph",
+  "submitted": "2026-11-06T23:39:19+00:00",
+  "state": "done",
+  "started": "2026-11-06T23:39:19+00:00",
+  "ended": "2026-11-06T23:44:33+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 5.231
+}

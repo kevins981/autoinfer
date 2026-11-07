@@ -48,9 +48,11 @@ command: it takes longer than the Bash limit).
 **The goal is simple: get the highest `tok_s` (output tokens/s at concurrency 16) with all gates
 passing** (GSM8K, latency p99s, the 128K request). BASE scores 635.9 tok/s.
 
-**Noise.** Repeat measurements of the same code on fresh servers differ by up to ~1.6%. A gain
-smaller than that may be noise: if a change looks like a small win, re-run `experiment` on it (or
-on the previous best) before you build on it. `TASK.md` explains the noise in detail.
+**Noise.** Repeat measurements of the same code on fresh servers differ by up to ~1.6%, so one
+official run can't confirm a smaller gain. That means measure more carefully, not drop small
+gains: there is no minimum gain, and several 0.5-1% wins stack into a large one. To show a small
+gain, run the current best and the change back to back in one `gpujob`, interleaved and repeated
+(`TASK.md` explains how); if the change wins consistently, it counts as an improvement (step 8).
 
 **Simplicity criterion**: all else being equal, simpler is better. A small improvement that adds
 ugly complexity is not worth it. Removing something and getting equal or better results is a win.
@@ -123,7 +125,8 @@ LOOP until the run's limit is reached:
    attempts, give up on that idea.
 7. Record the results in the tsv.
 8. If tok_s improved over the best kept result and all gates pass, you "advance" the branch,
-   keeping the git commit.
+   keeping the git commit. A gain within noise counts as improved if a same-job A/B shows it
+   consistently (see Noise) and the official run passes all gates.
 9. If tok_s is equal or worse, or a gate fails, you git reset back to where you started.
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep.
@@ -147,7 +150,9 @@ should continue. Do NOT ask "should I keep going?" or "is this a good stopping p
 might be asleep, or gone from a computer and expects you to continue working until the run's limit
 is reached. You are autonomous. If you run out of ideas, think harder: re-read the profiles and
 the in-scope files for new angles, profile the current best, read the engine code on the hot path,
-try combining previous near-misses, try more radical changes.
+try combining previous near-misses, try more radical changes. Only exit 76 ends the run: small
+expected gains, ideas below noise or budget left over are not reasons to stop (unused budget is
+wasted, not saved).
 
 ## If the human asks you to pause
 This is the one exception to "don't stop early". Let a running `experiment` or `gpujob` finish if

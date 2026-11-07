@@ -21,6 +21,8 @@ AutoInfer():
         set_budgets(round)
         directions = brainstorm(round)              # what to work on next
         if directions is empty: break               # nothing worth running: tell the human why
+                                                    # (small expected gains are worth running:
+                                                    # they stack; budget left over is wasted)
         tasks = assign(directions, leaders)         # one task per leader
         reports = execute(tasks)                    # leaders in parallel; barrier
         collect_and_update(reports, round)

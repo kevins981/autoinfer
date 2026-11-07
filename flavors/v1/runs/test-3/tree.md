@@ -34,3 +34,15 @@ Ruled out by the brainstormers (with numbers): PP=2 (doubles weight reads; TPOT 
 - T1-003 diagnosis (no code). T1-004 + host-staged all_gather: unofficial ~0.
 - T1-005 = T1-004 + R1-A flag: official 699.2 (+10.7%) -> CHAMPION.
 - Open leads from round 1: copy-engine path for large-M AR; prefill-step rank skew (~214 us/AR); full (non-piecewise) mixed-batch graphs; prefill stalls decodes (ITL p99 ~290 ms).
+
+## Round 2 ideas (scored by manager)
+Sources: brainstorm/r2/systematic_engineer.md (SE), brainstorm/r2/adjacent_field.md (AF). Base: champion T1-005.
+| id | idea | from | N | U | status | reason |
+|---|---|---|---|---|---|---|
+| R2-A | Logits diet: draft-logits local argmax (flag) + FP8 draft head (flag, ruling 1) + greedy local-argmax fast path for target verification (code); then the 3-draft re-check | SE1, AF2 (=R1-F/G/I) | 2 | 4 | **assigned r2, T1** | Measured ~3 ms of a 38.5 ms decode step (lm_heads + logits all-gathers 6.0 ms total); flags exist; exact; est. +5-6%. Both brainstormers' top-2. Continues the comms line (it shrinks the remaining logits all-gathers, T1-004). |
+| R2-B | GDN spec-decode state: checkpoint + log replay (write 1 state, not 3) | AF1, SE4 (=R1-K) | 4 | 3 | proposed | New measurement: 100 MB/layer of state traffic, a spill into the next GEMMs (gate_up 141 vs 122 us) -> ~5 ms/step; est. +3.5-5%, bitwise exact; medium-high effort; 1-GPU-min ceiling test. Makes 3 draft tokens cheaper. |
+| R2-C | L2 prefetch of the next weights during the host-AR windows (8 SMs, 43 us x 137) | SE2 (=R1-D) | 5 | 3 | proposed | Unchanged premise; est. +3-7%, low-medium confidence; 1-GPU-min kill test. |
+| R2-D | Marlin decode M=48 retune (670 vs 800 GB/s at M=3, same bytes) | SE3 (=R1-E) | 2 | 3 | proposed | The loss is inside the kernel (measured contrast); est. +5% from configs. |
+| R2-E | Copy-engine full-duplex AR for large M | AF3 | 2 | 2 | proposed | ~+1.5-3%; ~half of the prefill AR time is the GPU 0 skew (hardware), which transport can't fix. |
+| R2-F | 3 draft tokens re-check | SE, AF | 1 | 2 | folded into R2-A as a follow-up | ~+4% net now; better after R2-A/R2-B. |
+Ruled down (measured): chasing the prefill skew or uneven TP (GPU 0 hardware, net ≈ 0); the decode step-start gap (an nsys artifact under node tracing); dequant + cuBLAS for prefill (Marlin at ~75-85% of peak).

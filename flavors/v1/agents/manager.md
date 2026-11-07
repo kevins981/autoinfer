@@ -109,10 +109,12 @@ brainstorm(round) -> directions:
 
     # 4. Selection: a portfolio, not a ranking.
     directions = select(ideas, k = number of leaders, SEARCH_POLICY)
+        # SEARCH_POLICY may reserve a slot first: e.g. the champion-producing leader's own "next"
+        # (from its report) for its team; brainstorm ideas fill the other slots.
     TREE.add(directions, status = assigned, round)
     TREE.add(ideas - directions, status = proposed, round)
-        # an archive, not a queue: never selected directly. Only this round's ideas are selected;
-        # an old idea comes back only if a brainstormer proposes it again.
+        # an archive, not a queue: never selected directly. Only this round's ideas (and a slot
+        # SEARCH_POLICY reserves) are selected; an old idea comes back only if proposed again.
     JOURNAL.append(why these directions)
     report_to_human(if CONFIG.human_checkpoints asks for it here)
     return directions

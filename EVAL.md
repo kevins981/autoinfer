@@ -127,8 +127,11 @@ win node and the key's facts contradict it, flag **wrong cause** too.
 **Dead-end nodes: one grade, the run's reason**:
 - **right**: the run dropped or ruled it out for a reason the key's cause and facts support.
 - **wrong**: dropped or ruled out for a reason the key contradicts, or with no reason; or kept it
-  in the stack as if it helped.
+  in the stack claiming it gave a gain. (Keeping it as a stated neutral building block, e.g. "no
+  gain, exact, kept for later", is not wrong.)
 - **not considered**: the run never proposed it (stage-1 test above). No penalty, no credit.
+If the run revised its reason over time, grade the **final** one, and note in the process notes
+how long the wrong or missing reason stood (e.g. "cause undiagnosed in round 2, found in round 3").
 Also record **how**: `measured` or `reasoned` (estimate, math, code reading). Not graded: a run that
 correctly rules out a dead end without spending GPU time loses nothing; time spent measuring it
 shows up in resources and process notes. (Ruling out by reasoning is fine here because the key

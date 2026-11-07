@@ -122,7 +122,8 @@ def main():
             "session_id": sid, "started": info["started"], "stopped": None}
     (run / "agents" / "researcher" / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     g = lambda *c: subprocess.run(["git", "-C", str(ROOT), *c], capture_output=True, text=True).stdout.strip()
-    dirty = g("status", "--porcelain", "--", str(FLAVOR.relative_to(ROOT)))
+    dirty = g("status", "--porcelain", "--", str(FLAVOR.relative_to(ROOT)),
+              f":(exclude){FLAVOR.relative_to(ROOT)}/runs")
     (run / "flavor_commit.txt").write_text(f"{g('rev-parse', 'HEAD')}\n" +
                                            (f"uncommitted flavor changes:\n{dirty}\n" if dirty else ""))
     prompt = (FLAVOR / "program.md").read_text()

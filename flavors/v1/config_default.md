@@ -19,8 +19,8 @@ tasks. The `models` lines are also read by `agent start` and `new_run` (keep the
   - adjacent_field
 - human checkpoints: no blocking checkpoint after the task definition; a short summary to the
   human after every round.
-- models (role: model / effort; Opus 5.5 to think, Sonnet 5.5 to implement):
+- models (role: model / effort):
   - manager: claude-opus-5-5 / medium
   - leader: claude-opus-5-5 / medium
-  - worker: claude-sonnet-5-5 / medium
+  - worker: claude-opus-5-5 / medium
   - brainstormer: claude-opus-5-5 / medium

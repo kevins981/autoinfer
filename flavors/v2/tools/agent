@@ -69,13 +69,14 @@ def address(name):
 
 def read_meta(d):
     try:
-        return json.loads((d / "meta.json").read_text())
+        m = json.loads((d / "meta.json").read_text())
     except (OSError, ValueError):
         return None
+    return m if isinstance(m, dict) and m.get("name") else None
 
 
 def write_meta(d, meta):
-    tmp = d / "meta.json.tmp"
+    tmp = d / f"meta.json.{os.getpid()}.tmp"            # unique: concurrent writers can't collide
     tmp.write_text(json.dumps(meta, indent=2) + "\n")
     tmp.replace(d / "meta.json")
 
@@ -111,9 +112,11 @@ def message_line(text, sender, header=None):
     return json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
 
 
-def append_inbox(d, text, sender, header=None):
+def append_inbox(d, text, sender, header=None, update_task=True):
     with open(d / "inbox.jsonl", "a") as f:
         f.write(message_line(text, sender, header))
+    if not update_task:                                 # announcements/reminders aren't tasks
+        return
     meta = read_meta(d) or {}
     first = text.strip().splitlines()[0] if text.strip() else ""
     meta["last_task"] = f"{sender}: {first}"[:200]
@@ -377,39 +380,63 @@ def require_manager(what):
 
 
 def live_headless(names=None, role=None):
-    """(deliverable agent folders, [(name, why skipped)]) among the run's agents, sender excluded."""
-    out, skipped = [], []
+    """(deliverable [(folder, meta)], [(name, why skipped)]) among the run's agents."""
+    out, skipped, stopped = [], [], []
     for d in sorted(p for p in agents_dir().iterdir() if p.is_dir()):
         meta = read_meta(d)
-        if not meta or meta.get("name") == me():
+        if not meta:
             continue
-        if names and meta.get("name") not in names:
+        n = meta["name"]
+        if names and n not in names:
             continue
         if role and meta.get("role") != role:
             continue
-        if meta.get("registered"):
-            skipped.append((meta["name"], "interactive session, no inbox"))
-        elif not alive(meta):
-            if not meta.get("stopped") or names:
-                skipped.append((meta["name"], "not running"))
+        if n == me():
+            if names:
+                skipped.append((n, "that is you"))
+            continue
+        if not alive(meta):
+            stopped.append(n)
+        elif meta.get("registered"):
+            skipped.append((n, "interactive session, no inbox"))
         else:
             out.append((d, meta))
+    if stopped:
+        skipped.append((", ".join(stopped), "not running"))
     if names:
-        found = {m["name"] for _, m in out} | {n for n, _ in skipped}
-        skipped += [(n, "no such agent") for n in names if n not in found]
+        seen = {m["name"] for _, m in out} | set(stopped) | {n for n, _ in skipped}
+        skipped += [(n, "no such agent") for n in names if n not in seen]
     return out, skipped
+
+
+def message_text(a):
+    if a.file and a.text:
+        die("give the text or -f FILE, not both")
+    if a.file:
+        try:
+            return Path(a.file).read_text()
+        except OSError as e:
+            die(f"can't read {a.file}: {e}")
+    return " ".join(a.text)
 
 
 def cmd_announce(a):
     require_manager("announce")
-    text = Path(a.file).read_text() if a.file else " ".join(a.text)
+    text = message_text(a)
     if not text.strip():
         die("empty announcement")
+    targets, skipped = live_headless()
     with open(run_dir() / "announcements.md", "a") as f:
         f.write(f"## {now()} ({me()})\n{text.strip()}\n\n")
-    targets, skipped = live_headless()
+    failed = []
     for d, meta in targets:
-        append_inbox(d, text.strip(), me(), header=f"[announcement from {me()}; no reply needed]")
+        try:
+            append_inbox(d, text.strip(), me(), header=f"[announcement from {me()}; no reply needed]",
+                         update_task=False)
+        except OSError as e:
+            failed.append((meta["name"], f"delivery failed: {e}"))
+    targets = [t for t in targets if t[1]["name"] not in {n for n, _ in failed}]
+    skipped += failed
     print(f"announced to {len(targets)} agent(s): " + (", ".join(m["name"] for _, m in targets) or "-") +
           "; logged in announcements.md")
     for n, why in skipped:
@@ -429,10 +456,14 @@ def cmd_remind(a):
         if not f.exists():
             skipped.append((meta["name"], f"no reminder file for role {meta.get('role')}"))
             continue
-        append_inbox(d, "<system message>: " + f.read_text().strip(), me(),
-                     header="[reminder; no reply needed]")
-        sent.append(meta["name"])
-    print(f"reminded {len(sent)} agent(s): " + (", ".join(sent) or "-"))
+        try:
+            append_inbox(d, "<system message>: " + f.read_text().strip(), me(),
+                         header="[reminder; no reply needed]", update_task=False)
+            sent.append(meta["name"])
+        except OSError as e:
+            skipped.append((meta["name"], f"delivery failed: {e}"))
+    print(f"reminded {len(sent)} agent(s): " + (", ".join(sent) or "-") +
+          (f" (no running agent has role {a.role})" if a.role and not targets else ""))
     for n, why in skipped:
         print(f"  skipped {n}: {why}")
 
@@ -560,7 +591,7 @@ Returns immediately; talk to it with SendMessage (its name), check it with `agen
       --task "Briefing: $AUTOINFER_RUN/brainstorm/r2/briefing.md. Send your ideas to manager."
 """)
     s.add_argument("name", help="unique in the run, e.g. leader-1, leader-1.w2, bs-r3-systematic")
-    s.add_argument("--role", required=True, help="manager, leader, worker or brainstormer (picks the prompt)")
+    s.add_argument("--role", required=True, help="manager, leader_explore, leader_exploit or worker (picks the prompt agents/<role>.md and the reminder agents/reminders/<role>.md)")
     s.add_argument("--team", help="team id (e.g. T1): GPU jobs are charged to it. Workers: the leader's team")
     s.add_argument("--cwd", help="working directory (workers: their workspace; default: the run folder)")
     s.add_argument("--persona", help="brainstormers: a persona name from the flavor's agents/personas/ "

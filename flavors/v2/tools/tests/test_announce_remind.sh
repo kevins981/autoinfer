@@ -25,7 +25,7 @@ M() { AUTOINFER_ROLE=manager AUTOINFER_AGENT=manager "$@"; }
 inbox() { cat $BASE/run/agents/$1/inbox.jsonl 2>/dev/null | python3 -c "import json,sys;[print(json.loads(l)['message']['content']) for l in sys.stdin]"; }
 
 AUTOINFER_ROLE=worker AUTOINFER_AGENT=leader-1.w1 $A announce hi >/dev/null 2>&1; check "worker can't announce" 1 $?
-out=$(M $A announce "new champion T2-014 from team T2"); check "manager announces" 0 $?
+out=$(M $A announce "new champion T2-014 from team T2"); check "manager announces" 0 $?; out0="$out"
 echo "$out" | grep -q "announced to 4 agent(s)"; check "delivered to the 4 live headless agents" 0 $?
 inbox leader-1 | head -1 | grep -qx "\[announcement from manager; no reply needed\]"; check "announcement header" 0 $?
 inbox leader-2 | grep -q "new champion T2-014"; check "announcement body" 0 $?
@@ -60,5 +60,19 @@ l=importlib.machinery.SourceFileLoader('nr','new_run');m=importlib.util.module_f
 s=m.confine(json.loads(pathlib.Path('agent_settings.json').read_text()),pathlib.Path('$BASE/run'))
 h=s['hooks']['SessionStart'][0];print(h['matcher'],'_remind_hook.py' in h['hooks'][0]['command'], 'PreToolUse' in s['hooks'])")
 check "new_run settings: compact hook + message guard" "compact True True" "$s"
+
+# review fixes (2026-11-08)
+echo "$out0" | grep -q "skipped leader-3: not running"; check "stopped agent reported" 0 $?
+t=$(python3 -c "import json;print(json.load(open('$BASE/run/agents/leader-1/meta.json')).get('last_task'))"); check "announce/remind leave last_task alone" None "$t"
+mkdir -p $BASE/run/agents/broken; echo '{"role": "worker"}' > $BASE/run/agents/broken/meta.json
+mkdir -p $BASE/run/agents/broken2; echo '[1,2]' > $BASE/run/agents/broken2/meta.json
+M $A announce "odd folders" >/dev/null 2>&1; check "odd meta.json doesn't crash announce" 0 $?
+out=$(M $A remind manager); echo "$out" | grep -q "skipped manager: that is you"; check "remind yourself reported" 0 $?
+M $A announce x -f $BASE/a.txt >/dev/null 2>&1; check "text and -f together refused" 1 $?
+M $A announce -f $BASE/nope.txt 2>&1 | grep -q Traceback; check "missing -f file: no traceback" 1 $?
+out=$(M $A remind --role nosuchrole); echo "$out" | grep -q "no running agent has role nosuchrole"; check "unknown role hint" 0 $?
+pids=""; for i in 1 2 3 4 5 6; do M $A announce -f $BASE/a.txt >/dev/null 2>&1 & pids="$pids $!"; AUTOINFER_AGENT=human $A send leader-2 hello >/dev/null 2>&1 & pids="$pids $!"; done
+wait $pids; n=$(grep -c "received 80" $BASE/run/announcements.md); check "concurrent announces all logged" 7 $n
+n=$(inbox leader-1.w1 | grep -c "received 80"); check "concurrent announces all delivered" 7 $n
 kill $LIVE
 echo "== $pass passed, $fail failed"

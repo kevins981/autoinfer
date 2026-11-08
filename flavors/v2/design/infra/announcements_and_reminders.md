@@ -15,10 +15,14 @@ the whole run folder (bank, workspaces, proposals, reports).
 **`agent announce (TEXT | -f FILE)`** (manager or human):
 - Delivers the text to every live headless agent of the run except the sender. Each copy gets the
   header `[announcement from <sender>; no reply needed]`.
-- Appends it to `$AUTOINFER_RUN/announcements.md` with a timestamp, so agents started later can
-  catch up. The leader prompts point to this file.
-- Prints who received it and who was skipped (stopped agents, and interactive sessions, which
-  have no inbox).
+- Appends it to `$AUTOINFER_RUN/announcements.md` as `## <timestamp> (<sender>)` followed by the
+  text, so agents started later can catch up. The leader prompts point to this file.
+- Prints who received it and who was skipped: agents not running, collapsed into one line, and
+  interactive sessions, which have no inbox.
+- **Workers receive announcements too.** The human asked for "every agent". Each announcement
+  starts a turn for every idle agent, so announcements should stay rare: grants and champions.
+- **Announcements and reminders are not tasks.** They don't change the agent's "last task" that
+  `agent list` shows.
 
 **Content:** the manager's prompt gives two formats, each pointing to the details:
 - **Funding:** `team T3 (explore) received 80 GPU-min to work on <direction, one line>;
@@ -52,10 +56,24 @@ There are two ways a reminder reaches an agent.
      agent sees it right after its context is summarized.
    - `new_run` adds the hook to both `agent_settings.json` and `manager_settings.json`.
 
+## Robustness
+- `meta.json` writes use a per-process temp file, so concurrent writers can't collide.
+- A delivery failure to one agent is reported as skipped; the rest still get the message.
+- Odd agent folders (no `meta.json`, corrupt, or no name) are ignored.
+- `-f` and text together are refused.
+- A missing `-f` file is a clean error.
+- Naming yourself in `remind` is reported ("that is you").
+- `remind --role X` with no matching agent says so.
+
+**Trust:** as in v1, the role check relies on `AUTOINFER_ROLE`. An agent could unset it and pass
+as the human.
+
 ## Tests
 `flavors/v2/tools/tests/test_announce_remind.sh` uses fake agents (a `meta.json` plus a live
-`sleep` as their process), so no Claude sessions are started. On 2026-11-08: 27 of 27 checks
-passed. Covered:
+`sleep` as their process), so no Claude sessions are started. On 2026-11-08: 36 of 36 checks
+passed. Nine of them were added after a review subagent's findings: the stopped-agent report,
+`last_task` left alone, odd `meta.json`, reminding yourself, `-f` with text, a missing `-f` file,
+an unknown role, and concurrent announces with sends (all logged and delivered). Covered:
 - **Who may use them:** only the manager or the human can announce or remind.
 - **Announcements:**
   - delivery to live headless agents only: not the sender, not interactive sessions, not stopped

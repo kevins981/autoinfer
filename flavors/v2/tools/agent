@@ -1,0 +1,660 @@
+#!/usr/bin/env python3
+"""agent: launch AutoInfer run agents and see who is who.
+
+Messaging between agents is Claude Code's native SendMessage; this tool only starts, lists and
+stops agents (plus `send`, a convenience for the human and the manager to put a message into an
+agent's inbox). Spec: design/infra/agent_runtime.md.
+
+Every agent is a folder $AUTOINFER_RUN/agents/<name>/ and a headless `claude -p` process:
+  meta.json     name, role, team, parent, cwd, pgid, session_id, started, stopped
+  prompt.md     the prompt appended to Claude Code's system prompt (common + role)
+  inbox.jsonl   its stdin (stream-json user messages); `tail -f` keeps the process alive
+  events.jsonl  its stdout (stream-json events)
+  err.log       its stderr
+
+Usage:
+  agent start <name> --role R [--team T] [--cwd DIR] [--persona P] [--task TEXT | --task-file F]
+              [--model M] [--effort E] [--autocompact TOKENS] [--prompt-file F]... [--settings FILE]
+  agent register <name> --role R [--team T]   # an already running session (e.g. the manager)
+  agent list [--all] [--json]
+  agent send <name> (TEXT | -f FILE)          # append to its inbox ("[from <sender>]" header)
+  agent announce (TEXT | -f FILE)             # (manager) to every live agent + announcements.md
+  agent remind [--role R] [NAME...]           # (manager) each agent its role's reminder
+  agent restart <name> [--model M] [--effort E] [--force]   # same session, new model
+  agent stop <name>
+
+`agent <command> --help` explains each command, with examples.
+"""
+import argparse, json, os, signal, subprocess, sys, time, uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+TOOLS_DIR = Path(__file__).resolve().parent
+
+
+def die(msg):
+    print(f"agent: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def run_dir():
+    r = os.environ.get("AUTOINFER_RUN")
+    if not r:
+        die("AUTOINFER_RUN is not set (the run folder)")
+    p = Path(r).resolve()
+    if not p.is_dir():
+        die(f"run folder {p} does not exist")
+    return p
+
+
+def agents_dir():
+    d = run_dir() / "agents"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def now():
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def me():
+    return os.environ.get("AUTOINFER_AGENT", "human")
+
+
+def address(name):
+    """The Claude session name of a run's agent, used with SendMessage: scoped to the run
+    (e.g. test-4-leader-1), so agents of other runs on this machine never clash with it."""
+    return f"{run_dir().name}-{name}"
+
+
+def read_meta(d):
+    try:
+        return json.loads((d / "meta.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def write_meta(d, meta):
+    tmp = d / "meta.json.tmp"
+    tmp.write_text(json.dumps(meta, indent=2) + "\n")
+    tmp.replace(d / "meta.json")
+
+
+def pid_alive(pid):
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    # a zombie counts as dead
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().split(")")[-1].split()[0] != "Z"
+    except OSError:
+        return False
+
+
+def alive(meta):
+    if meta.get("stopped"):
+        return False
+    return pid_alive(meta.get("pid"))
+
+
+def message_line(text, sender, header=None):
+    if header is None:
+        reply = "" if sender == "human" else f"; reply with SendMessage to {address(sender)}"
+        header = f"[from {sender}{reply}]"
+    content = f"{header}\n{text}"
+    return json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
+
+
+def append_inbox(d, text, sender, header=None):
+    with open(d / "inbox.jsonl", "a") as f:
+        f.write(message_line(text, sender, header))
+    meta = read_meta(d) or {}
+    first = text.strip().splitlines()[0] if text.strip() else ""
+    meta["last_task"] = f"{sender}: {first}"[:200]
+    meta["last_task_at"] = now()
+    write_meta(d, meta)
+
+
+def activity(d):
+    """(busy, seconds since last event, cost in USD) from the event log."""
+    ev = d / "events.jsonl"
+    if not ev.exists() or ev.stat().st_size == 0:
+        inbox = d / "inbox.jsonl"
+        busy = inbox.exists() and inbox.stat().st_size > 0
+        return busy, None, None
+    age = time.time() - ev.stat().st_mtime
+    # Read the tail: the last event decides busy/idle; the last result carries the cost.
+    with open(ev, "rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - 400_000))
+        lines = f.read().decode("utf-8", "replace").splitlines()
+    last_type, cost = None, None
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        t = e.get("type")
+        if t in ("assistant", "user", "result") or (t == "system" and e.get("subtype") == "init"):
+            last_type = t
+        if t == "result" and e.get("total_cost_usd") is not None:
+            cost = e["total_cost_usd"]
+    busy = last_type not in (None, "result")
+    return busy, age, cost
+
+
+def fmt_age(s):
+    if s is None:
+        return "-"
+    s = int(s)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m"
+    return f"{s // 3600}h{(s % 3600) // 60:02d}m"
+
+
+# ------------------------------------------------------------------------------------------
+def cmd_start(a):
+    d = agents_dir() / a.name
+    if d.exists() and (read_meta(d) or {}).get("pid") and alive(read_meta(d)):
+        die(f"{a.name} is already running")
+    if d.exists() and any(d.iterdir()):
+        die(f"{d} already exists (agent names are unique in a run; pick another name)")
+    d.mkdir(parents=True, exist_ok=True)
+
+    parts = []
+    prompt_files = a.prompt_file
+    if not prompt_files:
+        # Default: the flavor's common instructions + the role's prompt
+        # (the run folder is flavors/<flavor>/runs/<run>/).
+        agents = Path(__file__).resolve().parents[1] / "agents"   # flavors/<f>/agents
+        prompt_files = [agents / "common.md", agents / f"{a.role}.md"]
+        missing = [str(f) for f in prompt_files if not f.exists()]
+        if missing:
+            die(f"no --prompt-file given and default prompts not found: {', '.join(missing)}")
+    if a.persona:
+        pf = Path(a.persona)
+        if not pf.exists():
+            pf = Path(__file__).resolve().parents[1] / "agents" / "personas" / f"{a.persona.removesuffix('.md')}.md"
+        if not pf.exists():
+            die(f"persona {a.persona} not found (a file, or a name in the flavor's agents/personas/)")
+        prompt_files = list(prompt_files) + [pf]
+    for pf in prompt_files:
+        parts.append(Path(pf).read_text().rstrip() + "\n")
+    parts.append(
+        f"\n## Who you are in this run\n"
+        f"- Your name: `{a.name}` (others send you messages at this name). Role: {a.role}."
+        + (f" Team: {a.team}." if a.team else "")
+        + f"\n- You were started by `{me()}` (your parent).\n"
+        f"- Run folder: `{run_dir()}`.\n"
+    )
+    prompt = "\n".join(parts)
+    (d / "prompt.md").write_text(prompt)
+    (d / "inbox.jsonl").touch()
+    (d / "events.jsonl").touch()
+
+    cwd = Path(a.cwd).resolve() if a.cwd else run_dir()
+    if not cwd.is_dir():
+        die(f"cwd {cwd} does not exist")
+    settings = a.settings or os.environ.get("AUTOINFER_AGENT_SETTINGS")
+    if not settings:
+        run_settings = run_dir() / "agent_settings.json"
+        settings = str(run_settings if run_settings.exists() else TOOLS_DIR / "agent_settings.json")
+    if not Path(settings).exists():
+        die(f"settings file {settings} not found (permissions for headless agents)")
+    session_id = str(uuid.uuid4())
+
+    cfg_model, cfg_effort = role_model(a.role)
+    a.model = a.model or cfg_model
+    a.effort = a.effort or cfg_effort
+    proc = launch(d, a.name, a.role, a.team, cwd, settings, a.permission_mode, a.autocompact,
+                  prompt, a.model, a.effort, ["--session-id", session_id], fresh=True)
+    meta = {
+        "name": a.name, "role": a.role, "team": a.team, "parent": me(), "cwd": str(cwd),
+        "pid": proc.pid, "pgid": proc.pid, "session_id": session_id, "model": a.model, "effort": a.effort,
+        "settings": settings, "permission_mode": a.permission_mode, "autocompact": str(a.autocompact),
+        "started": now(), "stopped": None, "last_task": None, "last_task_at": None,
+    }
+    write_meta(d, meta)
+    task = Path(a.task_file).read_text() if a.task_file else a.task
+    if task:
+        append_inbox(d, task, me())
+    print(f"started {a.name} (role {a.role}{', team ' + a.team if a.team else ''}); "
+          f"events: {d / 'events.jsonl'}")
+
+
+def launch(d, name, role, team, cwd, settings, permission_mode, autocompact, prompt, model,
+           effort, session_args, fresh):
+    """Start the headless claude process for agent folder d. fresh=False (restart): resume the
+    session, read only NEW inbox lines (the old ones were already delivered), append events."""
+    claude = [
+        "claude", "-p",
+        "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--name", address(name),
+        *session_args,
+        "--permission-mode", permission_mode,
+        "--autocompact", str(autocompact),
+        "--settings", settings,
+        "--disallowedTools", "ListAgents",
+        "--strict-mcp-config",
+        "--append-system-prompt", prompt,
+    ]
+    if model:
+        claude += ["--model", model]
+    if effort:
+        claude += ["--effort", effort]
+    env = dict(os.environ)
+    env.update({
+        "AUTOINFER_RUN": str(run_dir()),
+        "AUTOINFER_AGENT": name,
+        "AUTOINFER_ROLE": role,
+        "PATH": f"{TOOLS_DIR}:{env.get('PATH', '')}",
+        "TMPDIR": str(d / "tmp"),       # scratch stays in the agent's folder (task env.sh may
+    })                                   # point it elsewhere inside autoinfer/)
+    (d / "tmp").mkdir(exist_ok=True)
+    if team:
+        env["AUTOINFER_TEAM"] = team
+    else:
+        env.pop("AUTOINFER_TEAM", None)
+    # tail -f keeps stdin open, so the agent stays alive between tasks until it is stopped.
+    if fresh:
+        shell = 'exec tail -n +1 -f "$1/inbox.jsonl" | "${@:2}" > "$1/events.jsonl" 2> "$1/err.log"'
+    else:
+        shell = 'exec tail -n 0 -f "$1/inbox.jsonl" | "${@:2}" >> "$1/events.jsonl" 2>> "$1/err.log"'
+    return subprocess.Popen(
+        ["bash", "-c", shell, "agent-launch", str(d)] + claude,
+        cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, start_new_session=True,
+    )
+
+
+def find_claude_ancestor():
+    pid = os.getppid()
+    for _ in range(30):
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                cmd = f.read().split(b"\0")
+            with open(f"/proc/{pid}/stat") as f:
+                ppid = int(f.read().split(")")[-1].split()[1])
+        except OSError:
+            return None
+        if cmd and os.path.basename(cmd[0].decode()) == "claude":
+            return pid
+        if ppid <= 1:
+            return None
+        pid = ppid
+    return None
+
+
+def cmd_register(a):
+    d = agents_dir() / a.name
+    if d.exists() and read_meta(d) and alive(read_meta(d)):
+        die(f"{a.name} is already registered and alive")
+    d.mkdir(parents=True, exist_ok=True)
+    pid = find_claude_ancestor()
+    meta = {
+        "name": a.name, "role": a.role, "team": a.team, "parent": "human", "cwd": os.getcwd(),
+        "pid": pid, "pgid": None, "session_id": None, "model": None, "started": now(),
+        "stopped": None, "registered": True, "last_task": None, "last_task_at": None,
+    }
+    write_meta(d, meta)
+    print(f"registered {a.name} (pid {pid})")
+
+
+def collect(include_stopped):
+    rows = []
+    for d in sorted(agents_dir().iterdir()):
+        meta = read_meta(d)
+        if not meta:
+            continue
+        is_alive = alive(meta)
+        if not is_alive and not include_stopped:
+            continue
+        if meta.get("registered"):
+            busy, age, cost = None, None, None
+        else:
+            busy, age, cost = activity(d)
+        rows.append({
+            "name": meta["name"], "address": address(meta["name"]), "role": meta.get("role"), "team": meta.get("team"),
+            "parent": meta.get("parent"), "state": ("alive" if is_alive else "stopped"),
+            "busy": busy, "last_event_age_s": None if age is None else int(age),
+            "cost_usd": cost, "task": meta.get("last_task"), "started": meta.get("started"),
+        })
+    return rows
+
+
+def cmd_list(a):
+    rows = collect(a.all)
+    if a.json:
+        print(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        print("no agents" + ("" if a.all else " alive (use --all to include stopped ones)"))
+        return
+    hdr = ["NAME", "SENDMESSAGE TO", "ROLE", "TEAM", "PARENT", "STATE", "ACTIVITY", "LAST EVENT", "COST", "TASK"]
+    table = []
+    for r in rows:
+        act = "-" if r["busy"] is None else ("busy" if r["busy"] else "idle")
+        if r["state"] == "stopped":
+            act = "-"
+        cost = "-" if r["cost_usd"] is None else f"${r['cost_usd']:.3f}"
+        table.append([r["name"], r["address"], r["role"] or "-", r["team"] or "-", r["parent"] or "-",
+                      r["state"], act, fmt_age(r["last_event_age_s"]), cost,
+                      (r["task"] or "-")[:70]])
+    w = [max(len(str(x[i])) for x in table + [hdr]) for i in range(len(hdr) - 1)]
+    for row in [hdr] + table:
+        print("  ".join(str(c).ljust(w[i]) for i, c in enumerate(row[:-1])) + "  " + str(row[-1]))
+
+
+def cmd_send(a):
+    d = agents_dir() / a.name
+    meta = read_meta(d)
+    if not meta:
+        die(f"no agent named {a.name} in this run (see `agent list --all`)")
+    if meta.get("registered"):
+        die(f"{a.name} is an interactive session without an inbox; use SendMessage")
+    if not alive(meta):
+        die(f"{a.name} is stopped; messages can't be delivered")
+    text = Path(a.file).read_text() if a.file else " ".join(a.text)
+    if not text.strip():
+        die("empty message")
+    append_inbox(d, text, me())
+    print(f"sent to {a.name}")
+
+
+def require_manager(what):
+    role = os.environ.get("AUTOINFER_ROLE") or None
+    if role not in (None, "manager"):
+        die(f"only the manager may {what} (your role: {role})")
+
+
+def live_headless(names=None, role=None):
+    """(deliverable agent folders, [(name, why skipped)]) among the run's agents, sender excluded."""
+    out, skipped = [], []
+    for d in sorted(p for p in agents_dir().iterdir() if p.is_dir()):
+        meta = read_meta(d)
+        if not meta or meta.get("name") == me():
+            continue
+        if names and meta.get("name") not in names:
+            continue
+        if role and meta.get("role") != role:
+            continue
+        if meta.get("registered"):
+            skipped.append((meta["name"], "interactive session, no inbox"))
+        elif not alive(meta):
+            if not meta.get("stopped") or names:
+                skipped.append((meta["name"], "not running"))
+        else:
+            out.append((d, meta))
+    if names:
+        found = {m["name"] for _, m in out} | {n for n, _ in skipped}
+        skipped += [(n, "no such agent") for n in names if n not in found]
+    return out, skipped
+
+
+def cmd_announce(a):
+    require_manager("announce")
+    text = Path(a.file).read_text() if a.file else " ".join(a.text)
+    if not text.strip():
+        die("empty announcement")
+    with open(run_dir() / "announcements.md", "a") as f:
+        f.write(f"## {now()} ({me()})\n{text.strip()}\n\n")
+    targets, skipped = live_headless()
+    for d, meta in targets:
+        append_inbox(d, text.strip(), me(), header=f"[announcement from {me()}; no reply needed]")
+    print(f"announced to {len(targets)} agent(s): " + (", ".join(m["name"] for _, m in targets) or "-") +
+          "; logged in announcements.md")
+    for n, why in skipped:
+        print(f"  skipped {n}: {why}")
+
+
+def reminders_dir():
+    return TOOLS_DIR.parent / "agents" / "reminders"
+
+
+def cmd_remind(a):
+    require_manager("send reminders")
+    targets, skipped = live_headless(a.names or None, a.role)
+    sent = []
+    for d, meta in targets:
+        f = reminders_dir() / f"{meta.get('role')}.md"
+        if not f.exists():
+            skipped.append((meta["name"], f"no reminder file for role {meta.get('role')}"))
+            continue
+        append_inbox(d, "<system message>: " + f.read_text().strip(), me(),
+                     header="[reminder; no reply needed]")
+        sent.append(meta["name"])
+    print(f"reminded {len(sent)} agent(s): " + (", ".join(sent) or "-"))
+    for n, why in skipped:
+        print(f"  skipped {n}: {why}")
+
+
+def kill_group(meta):
+    pgid = meta.get("pgid")
+    if pgid and alive(meta):
+        for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+            try:
+                os.killpg(pgid, sig)
+            except ProcessLookupError:
+                break
+            t0 = time.time()
+            while time.time() - t0 < wait and pid_alive(meta["pid"]):
+                time.sleep(0.2)
+            if not pid_alive(meta["pid"]):
+                break
+
+
+def group_extras(meta):
+    """Processes in the agent's group besides its launcher, tail and claude: background
+    commands it started (a build, a GPU job, ...), which a restart would kill."""
+    pgid, out = meta.get("pgid"), []
+    if not pgid:
+        return out
+    for p in Path("/proc").iterdir():
+        if not p.name.isdigit():
+            continue
+        try:
+            stat = (p / "stat").read_text()
+            if int(stat.split(")")[-1].split()[2]) != pgid:
+                continue
+            cmd = (p / "cmdline").read_bytes().split(b"\0")
+        except (OSError, ValueError, IndexError):
+            continue
+        prog = os.path.basename(cmd[0].decode()) if cmd and cmd[0] else ""
+        if int(p.name) == pgid or prog in ("tail", "claude"):
+            continue
+        out.append(f"{p.name} {b' '.join(cmd).decode(errors='replace')[:120]}")
+    return out
+
+
+def cmd_restart(a):
+    d = agents_dir() / a.name
+    meta = read_meta(d)
+    if not meta:
+        die(f"no agent named {a.name} in this run")
+    if meta.get("registered"):
+        die(f"{a.name} is an interactive session: change its model there (`claude attach <id>`, "
+            f"then /model)")
+    if not meta.get("session_id"):
+        die(f"{a.name} has no session id to resume")
+    if alive(meta) and not a.force:
+        busy, _, _ = activity(d)
+        if busy:
+            die(f"{a.name} is busy (mid-turn); restart it when idle, or --force (the turn is lost)")
+        extras = group_extras(meta)
+        if extras:
+            die(f"{a.name} has background commands that a restart would kill:\n  "
+                + "\n  ".join(extras) + "\nwait for them, or --force")
+    cfg_model, cfg_effort = role_model(meta["role"])
+    model, effort = a.model or cfg_model, a.effort or cfg_effort
+    kill_group(meta)
+    settings = meta.get("settings") or str(run_dir() / "agent_settings.json")
+    proc = launch(d, meta["name"], meta["role"], meta.get("team"), Path(meta["cwd"]), settings,
+                  meta.get("permission_mode") or "auto", meta.get("autocompact") or "400000",
+                  (d / "prompt.md").read_text(), model, effort,
+                  ["--resume", meta["session_id"]], fresh=False)
+    old = f"{meta.get('model')} / {meta.get('effort')}"
+    meta.update({"pid": proc.pid, "pgid": proc.pid, "model": model, "effort": effort,
+                 "stopped": None, "restarted": now()})
+    meta.setdefault("history", []).append({"at": now(), "from": old, "to": f"{model} / {effort}"})
+    write_meta(d, meta)
+    print(f"restarted {a.name}: {old} -> {model} / {effort} (same session, context kept)")
+
+
+def cmd_stop(a):
+    d = agents_dir() / a.name
+    meta = read_meta(d)
+    if not meta:
+        die(f"no agent named {a.name} in this run")
+    if meta.get("registered"):
+        meta["stopped"] = now()
+        write_meta(d, meta)
+        print(f"marked {a.name} as stopped (it is an interactive session; end it yourself)")
+        return
+    kill_group(meta)
+    meta["stopped"] = now()
+    write_meta(d, meta)
+    print(f"stopped {a.name}")
+
+
+def role_model(role, run=None):
+    """(model, effort) for a role from the run's config.md ("  - <role>: <model> / <effort>" under
+    the "models" item); defaults opus / medium. Explicit, so the user's default model doesn't apply."""
+    import re
+    model, effort = "claude-opus-5-5", "medium"
+    cfg = Path(run or os.environ.get("AUTOINFER_RUN", ".")) / "config.md"
+    if cfg.exists():
+        m = re.search(rf"^\s*-\s*{re.escape(role)}\s*:\s*([\w.\[\]-]+)\s*(?:/\s*(\w+))?\s*$",
+                      cfg.read_text(), re.M)
+        if m:
+            model, effort = m.group(1), m.group(2) or effort
+    return model, effort
+
+
+def main():
+    p = argparse.ArgumentParser(prog="agent", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    R = argparse.RawDescriptionHelpFormatter
+    s = sub.add_parser("start", formatter_class=R, help="launch a new agent",
+                       description="""Launch a new agent: a headless Claude Code session that keeps running (idle when it
+has nothing to do) until someone runs `agent stop`. It gets the flavor's agents/common.md +
+agents/<role>.md as its instructions, a "who you are" section (name, role, team, you as its
+parent), and --task / --task-file as its first message. Model and effort come from the role's
+line in the run's config.md. You are its parent: it reports back to you with SendMessage.
+Returns immediately; talk to it with SendMessage (its name), check it with `agent list`.""",
+                       epilog="""examples:
+  agent start leader-1 --role leader --team T1 --task-file $AUTOINFER_RUN/brainstorm/r1/task_leader-1.md
+  agent start leader-1.w1 --role worker --team T1 --cwd $AUTOINFER_RUN/workspaces/leader-1.fused-ar \\
+      --task-file $AUTOINFER_RUN/workspaces/leader-1.fused-ar/task.md
+  agent start bs-r2-systematic --role brainstormer --persona systematic_engineer \\
+      --task "Briefing: $AUTOINFER_RUN/brainstorm/r2/briefing.md. Send your ideas to manager."
+""")
+    s.add_argument("name", help="unique in the run, e.g. leader-1, leader-1.w2, bs-r3-systematic")
+    s.add_argument("--role", required=True, help="manager, leader, worker or brainstormer (picks the prompt)")
+    s.add_argument("--team", help="team id (e.g. T1): GPU jobs are charged to it. Workers: the leader's team")
+    s.add_argument("--cwd", help="working directory (workers: their workspace; default: the run folder)")
+    s.add_argument("--persona", help="brainstormers: a persona name from the flavor's agents/personas/ "
+                                     "(or a file), appended to the prompt")
+    s.add_argument("--prompt-file", action="append",
+                   help="replace the default prompts (repeatable, in order); rarely needed")
+    s.add_argument("--model", help="default: the role's model in the run's config.md, else claude-opus-5-5")
+    s.add_argument("--effort", help="default: the role's effort in config.md, else medium")
+    s.add_argument("--autocompact", default=os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),
+                   help="context size (tokens) at which the agent auto-compacts, or 'auto' "
+                        "(default: 400000, or $AUTOINFER_AUTOCOMPACT)")
+    s.add_argument("--permission-mode", default=os.environ.get("AUTOINFER_PERMISSION_MODE", "auto"),
+                   help="must be the same for every agent of a run (default: auto)")
+    s.add_argument("--settings", help="Claude Code settings file (default: $AUTOINFER_RUN/agent_settings.json)")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--task", help="first message (text)")
+    g.add_argument("--task-file", help="first message, from a file (better for long tasks)")
+    s.set_defaults(fn=cmd_start)
+
+    s = sub.add_parser("register", help="add an already running session (the manager does this once)",
+                       description="Add an already running Claude session to the run's agent list, so "
+                                   "`agent list` shows it (the manager runs this once at the start).",
+                       epilog="example: agent register manager --role manager")
+    s.add_argument("name")
+    s.add_argument("--role", required=True)
+    s.add_argument("--team")
+    s.set_defaults(fn=cmd_register)
+
+    s = sub.add_parser("list", help="who is in the run",
+                       description="List the run's agents: name (use it with SendMessage), role, team, "
+                                   "parent, busy/idle, cost so far, current task, last activity.")
+    s.add_argument("--all", action="store_true", help="include stopped agents")
+    s.add_argument("--json", action="store_true", help="machine-readable output")
+    s.set_defaults(fn=cmd_list)
+
+    s = sub.add_parser("send", help="put a message into an agent's inbox (for the human)",
+                       description="Append a message to an agent's inbox (with a [from <sender>] header). "
+                                   "Agents should use SendMessage instead; this is for the human or "
+                                   "scripts.",
+                       epilog="examples:  agent send leader-1 \"status?\"      agent send leader-1 -f msg.md")
+    s.add_argument("name")
+    s.add_argument("-f", "--file", help="message from a file")
+    s.add_argument("text", nargs="*", help="message text")
+    s.set_defaults(fn=cmd_send)
+
+    s = sub.add_parser("announce", formatter_class=R, help="(manager) message every live agent of the run",
+                       description="""Send one message to every live headless agent of the run (not yourself; interactive
+sessions have no inbox and are skipped), with the header "[announcement from <you>; no reply
+needed]", and append it to $AUTOINFER_RUN/announcements.md so agents started later can catch up.""",
+                       epilog="""examples:
+  agent announce "team T3 (explore) received 80 GPU-min to work on <direction>; proposal: proposals/T3.md"
+  agent announce "new champion T2-014 from team T2: 1010.3 tok/s (+7.2% over T1-042); how: bank/T2-014/"
+  agent announce -f /path/to/text.md""")
+    s.add_argument("text", nargs="*")
+    s.add_argument("-f", "--file")
+    s.set_defaults(fn=cmd_announce)
+    s = sub.add_parser("remind", formatter_class=R, help="(manager) send agents their role's reminder",
+                       description="""Send each live headless agent (or the named ones, or one role) the reminder for its
+role, from the flavor's agents/reminders/<role>.md, as an inbox message headed "[reminder; no reply
+needed]" whose body starts with "<system message>:". Roles without a reminder file are skipped.""",
+                       epilog="""examples:
+  agent remind                       (everyone)
+  agent remind --role leader_explore
+  agent remind leader-2""")
+    s.add_argument("names", nargs="*")
+    s.add_argument("--role")
+    s.set_defaults(fn=cmd_remind)
+    s = sub.add_parser("restart", formatter_class=R, help="restart an agent, e.g. on another model",
+                       description="""Restart an agent's process on the SAME session (its whole context is kept),
+e.g. to switch model or effort mid-run. Model/effort: the options, else the role's line in
+config.md (so: edit config.md, then restart). Refuses while the agent is mid-turn or has
+background commands running (a build, a GPU job): they would be killed. Messages sent while it
+restarts are kept and delivered after. The manager (an interactive session) can't be restarted
+this way: attach to it and use /model.""",
+                       epilog="""examples:
+  agent restart leader-1                                   # pick up config.md's leader model
+  agent restart leader-1.w1 --model claude-opus-5-5 --effort high""")
+    s.add_argument("name")
+    s.add_argument("--model")
+    s.add_argument("--effort")
+    s.add_argument("--force", action="store_true", help="restart even if busy (kills its turn and jobs)")
+    s.set_defaults(fn=cmd_restart)
+
+    s = sub.add_parser("stop", help="stop an agent",
+                       description="Stop an agent's process (and anything it started). Its folder, "
+                                   "events and workspaces stay. Agents never exit on their own: stop "
+                                   "the ones you started when they are no longer needed.",
+                       epilog="example: agent stop leader-1.w2")
+    s.add_argument("name")
+    s.set_defaults(fn=cmd_stop)
+
+    a = p.parse_args()
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

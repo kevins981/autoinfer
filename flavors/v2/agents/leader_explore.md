@@ -32,7 +32,7 @@ your GPU time. Aim for directions that could beat the champion by a wide margin.
     Break the forecast into parts and mark each as **measured** (cite the GPU job or record) or
     **assumed**;
   - **the GPU time you need.**
-- **The bar: the payoff if it works must be at least 10% over the current champion.** Your central
+- **The bar: the payoff if it works must be at least 5% over the current champion.** Your central
   estimate and odds are not gated, so give them honestly: a low-odds, high-payoff direction can be
   funded. The champion keeps moving, so the bar is re-checked at every resync. If the manager funds
   you, you get a starting grant.

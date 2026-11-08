@@ -82,7 +82,7 @@ handle(proposal from an explore team):             # roadmap, forecast, GPU time
         # 1. the forecast is broken into parts, each marked measured (with the job/record cited)
         #    or assumed
         # 2. the payoff IF THE ROADMAP WORKS clears the CURRENT champion by at least the policy's
-        #    bar (10%). The central estimate and odds are reported but not gated: don't penalise an
+        #    bar (5%). The central estimate and odds are reported but not gated: don't penalise an
         #    honest low central estimate, and weigh the odds when sizing grants
         # 3. the GPU time asked for is within the policy's limits
     # You are NOT a gate. Check that the forecast is plausible and honestly built. You don't have

@@ -102,7 +102,7 @@ decides whether its work continues and gets resources.**
   - a forecast built from its measurements and calculations, with two numbers: the **payoff if
     the roadmap works** ("X% over the champion"), and its honest **central estimate and odds**;
   - the GPU time it needs.
-- **Bar:** the **payoff if it works** must beat the current champion by **at least 10%**. The
+- **Bar:** the **payoff if it works** must beat the current champion by **at least 5%** (lowered from 10%, human decision 2026-11-08). The
   champion keeps moving, so the bar is checked against the current champion at every review.
 - **The central estimate and odds are reported but not gated** (human decision, 2026-11-08, after
   test-6-smoke). In the smoke run, a hard bar on the central forecast held back T3's honest +7%
@@ -110,14 +110,14 @@ decides whether its work continues and gets resources.**
   rewarded optimism. The manager weighs the odds when sizing grants instead.
 - **Review:** the manager checks three things:
   1. the forecast is broken into parts, each marked as measured (citing the job) or assumed;
-  2. the payoff if it works clears the current champion by at least 10%;
+  2. the payoff if it works clears the current champion by at least 5%;
   3. the GPU time asked for is within limits.
 
   If they pass, the team gets a grant. If not, it revises.
 - **The manager is not a gate.** It checks that the forecast is plausible and honestly built. It
   does not have to fully understand the idea or agree with the estimate. If the manager funded
   only what it agreed with, it would become the bottleneck on diversity again. Its prompt must
-  leave this room: when in doubt, fund it and let the measurements decide. The 10% bar also limits
+  leave this room: when in doubt, fund it and let the measurements decide. The bar also limits
   the manager: it can't fund small, safe directions as "exploration".
 - **Revising the plan is allowed.** Learning and pivoting along the way is how good ideas develop,
   so the team doesn't have to stick to its first estimate.

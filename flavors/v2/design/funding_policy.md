@@ -19,7 +19,7 @@ The highest total speedup the run achieves from its fixed GPU pool, across all t
 A proposal has a roadmap, a forecast and the GPU time requested. The forecast gives the
 **payoff if the roadmap works** and the team's honest **central estimate and odds**. Fund it if:
 1. the forecast is broken into parts, each marked measured (citing a job or record) or assumed;
-2. the **payoff if it works** clears the **current** champion by at least **10%**;
+2. the **payoff if it works** clears the **current** champion by at least **5%**;
 3. the GPU time requested is within reason for the roadmap.
 
 **The central estimate and odds are not gated.** A hard bar on the central estimate would reward

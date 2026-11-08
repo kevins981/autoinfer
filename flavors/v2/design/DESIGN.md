@@ -158,10 +158,25 @@ decides whether its work continues and gets resources.**
   - **Other teams' proposals and resync reports**, e.g. an explore team's roadmap and progress.
     They are for inspiration: every team can see what the others are proposing and learning.
 
-### 7. Brainstormers no longer assign work
-- **Teams own their direction.** Brainstormers don't decide what a team works on.
-- **Their exact role is open**, e.g. advisors that teams or the manager call on when they want
-  ideas.
+### 7. No brainstormers (for now)
+- **v2 has no brainstormers.** Teams own their direction and come up with their own ideas.
+
+### 8. Separate prompts for explore and exploit leaders
+- **Exploit leader** ([../agents/leader_exploit.md](../agents/leader_exploit.md)): make the champion
+  faster now, choose its own direction, and know how funding works.
+- **Explore leader.** The prompt's job is to give the incentive plus a small seed of inspiration,
+  without narrowing where the agent looks:
+  - **The incentive, explicitly.** Long-horizon plans are welcome. The team is judged not on
+    immediate wins but on how much it ultimately gains. The prompt explains how grants,
+    extensions and resyncs work.
+  - **Autonomy.** Any part of the serving stack may change, from the scheduler to the kernels,
+    as long as the change respects the task's constraints. There is no list of "areas".
+  - **Resources.** Any web or online research is welcome.
+  - **A few examples of *kinds* of moves**, explicitly not limits:
+    - an old idea in a new setting (how systolic arrays came about);
+    - an overlooked hardware feature;
+    - questioning conventional wisdom (e.g. "is the KV cache really a good thing here?").
+  - **No list of common optimizations.** That is fine for exploitation but limits novelty.
 
 ## Considered and not adopted (for now)
 - **Rewarding novelty directly.** It invites reward hacking: new designs that don't work. That's

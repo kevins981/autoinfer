@@ -29,17 +29,8 @@ decided.
 - Charge every job to a team. Enforce the grant. Print the remaining balance on every job, which
   also serves as a built-in reminder.
 
-## Idea generation (next discussion topic)
-How explore teams come up with genuinely new ideas. Candidates from the human's notes:
-- **First principles:** what are the real givens (hardware features, programming primitives),
-  versus conventional wisdom?
-- **Random subsets of features or principles per brainstormer** (AlphaEvolve-style), for
-  diversity.
-- **Old ideas revived** (the systolic-array example).
-- **No list of "common optimizations" for explore teams.** It's fine for exploit, but limiting for
-  novelty (the chess-heuristics analogy).
-- **Proposers can say honestly "this is my best idea, but it's probably weak".**
-- **The brainstormers' new role.**
+## Explore leader prompt
+- Draft it, from the outline in DESIGN.md section 8.
 
 ## Other
 - **Reminder prompts via hooks**, so long-running agents keep their instructions.

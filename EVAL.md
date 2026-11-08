@@ -200,3 +200,13 @@ judge. Rules:
       - the other fixes from test-4's feedback: `gpu wait` / background `gpu run` used instead of polling,
         `ws create --from-ws` (workers copying workspaces), `TRACE=graph` and `step_anatomy.py`;
       - the noise wording: agents kept measuring small gains instead of stopping early.
+      Added 2026-11-08 (GPU-time changes, 34ba3cd; the run to check is v1/test-5, resumed from test-3):
+      - inference servers start at all: per-run TMPDIR is now `.cache/tmp/<flavor>-<run>` (inside the run
+        folder, zmq's socket path passed 107 chars and every start failed);
+      - official evals: the bench client starts with the inference server (`--ready-check-timeout-sec`);
+        gap between "server ready" and bench end should be ~bench duration + ~5 s; no client failures;
+      - agents use `start_server_bench` and measure each arm on a fresh inference server (lib.sh note);
+      - JIT extensions (host-AR in T1-012's lineage) compiled outside GPU jobs: first-start times in
+        agents' jobs and official evals (a ~40 s NCCL/compile stall = compiled inside the job);
+      - resume (test-5 only): manager used prior/ and test-3's history sensibly, leader-2 read
+        local_kb/leader-1.md, records continue at T1-013, round budget not charged with rounds 1-3.

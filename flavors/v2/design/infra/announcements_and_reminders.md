@@ -33,9 +33,10 @@ The manager may announce other things too, e.g. a team being shut down and its w
 above all after context compaction. The explore leaders' persona is what matters most: the
 long-horizon incentive and their autonomy.
 
-**Reminder files:** `flavors/v2/agents/reminders/<role>.md`, one per role (`leader_explore`,
-`leader_exploit`, `worker`, `manager`). Each is a few lines restating the role's core. A role
-without a file gets no reminders.
+**Reminder files:** `flavors/v2/agents/reminders/<role>.md`, only for the leaders
+(`leader_explore`, `leader_exploit`). Each is a few lines restating the role's core. Workers and
+the manager don't need reminders (human decision, 2026-11-08), so they have no file, and a role
+without a file gets none.
 
 There are two ways a reminder reaches an agent.
 1. **Periodically, sent by the manager:** `agent remind [--role R] [NAME...]` (manager or human).
@@ -49,12 +50,11 @@ There are two ways a reminder reaches an agent.
    runs `_remind_hook.py`.
    - It reads `AUTOINFER_ROLE` and prints the role's reminder as `additionalContext`, so the
      agent sees it right after its context is summarized.
-   - It covers the manager too.
    - `new_run` adds the hook to both `agent_settings.json` and `manager_settings.json`.
 
 ## Tests
 `flavors/v2/tools/tests/test_announce_remind.sh` uses fake agents (a `meta.json` plus a live
-`sleep` as their process), so no Claude sessions are started. On 2026-11-08: 25 of 25 checks
+`sleep` as their process), so no Claude sessions are started. On 2026-11-08: 27 of 27 checks
 passed. Covered:
 - **Who may use them:** only the manager or the human can announce or remind.
 - **Announcements:**
@@ -63,8 +63,8 @@ passed. Covered:
   - the header, the body, the `announcements.md` log, `-f`, and an empty announcement refused.
 - **Reminders:** all agents, `--role`, by name; roles without a file are skipped; the header and
   the `<system message>:` body.
-- **The hook:** it outputs the role's reminder as `additionalContext` (manager included) and
-  prints nothing without a role or a file.
+- **The hook:** it outputs the role's reminder as `additionalContext`, and prints nothing for
+  roles without a file (worker, manager) or without a role.
 - **`new_run` settings:** they carry the compact hook next to the message guard.
 
 **Not yet tested end to end:** a real Claude session compacting and receiving the hook's text.

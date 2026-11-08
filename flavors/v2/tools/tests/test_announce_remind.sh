@@ -37,8 +37,9 @@ M $A announce -f $BASE/a.txt >/dev/null; c=$(grep -c "^## " $BASE/run/announceme
 M $A announce "" >/dev/null 2>&1; check "empty announcement refused" 1 $?
 
 out=$(M $A remind); check "remind all" 0 $?
-echo "$out" | grep -q "reminded 3 agent(s)"; check "3 roles with reminder files reminded" 0 $?
+echo "$out" | grep -q "reminded 2 agent(s)"; check "only the 2 leaders reminded" 0 $?
 echo "$out" | grep -q "skipped odd: no reminder file for role brainstormer"; check "role without file skipped" 0 $?
+echo "$out" | grep -q "skipped leader-1.w1: no reminder file for role worker"; check "worker not reminded" 0 $?
 inbox leader-1 | grep -q "^\[reminder; no reply needed\]"; check "reminder header" 0 $?
 inbox leader-1 | grep -q "^<system message>: You lead an explore team."; check "explore reminder body" 0 $?
 inbox leader-2 | grep -q "^<system message>: You lead an exploit team."; check "exploit reminder body" 0 $?
@@ -49,7 +50,8 @@ AUTOINFER_ROLE=leader_explore AUTOINFER_AGENT=leader-1 $A remind >/dev/null 2>&1
 
 h=$(AUTOINFER_ROLE=leader_explore python3 $T/_remind_hook.py | python3 -c "import json,sys;d=json.load(sys.stdin)['hookSpecificOutput'];print(d['hookEventName'], 'explore team' in d['additionalContext'])")
 check "compact hook: explore reminder as additionalContext" "SessionStart True" "$h"
-h=$(AUTOINFER_ROLE=manager python3 $T/_remind_hook.py | grep -c "investor"); check "compact hook covers manager" 1 $h
+h=$(AUTOINFER_ROLE=manager python3 $T/_remind_hook.py | wc -c); check "compact hook silent for manager" 0 $h
+h=$(AUTOINFER_ROLE=worker python3 $T/_remind_hook.py | wc -c); check "compact hook silent for worker" 0 $h
 h=$(AUTOINFER_ROLE=brainstormer python3 $T/_remind_hook.py | wc -c); check "compact hook silent without file" 0 $h
 h=$(env -u AUTOINFER_ROLE python3 $T/_remind_hook.py | wc -c); check "compact hook silent without role" 0 $h
 s=$(cd $T && python3 -c "

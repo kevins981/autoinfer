@@ -10,7 +10,8 @@ the task (`ws setup-task`), then starts the manager in the flavor folder with AU
 and the run's permission settings. Talk to it with `claude attach <id>` (printed at the end).
 The first time, run `claude` once in the flavor folder and accept the trust prompt.
 
---start starts the manager on a run created with --no-start (e.g. after editing its config.md).
+--start starts the manager on a run created with --no-start (e.g. after editing its config.md);
+--message-file F replaces its first message (e.g. a run seeded with another run's state).
 Pausing and resuming a run are messages to the manager (CLAUDE.md, "Pausing and resuming a run").
 """
 import argparse, json, re, os, shutil, subprocess, sys, uuid
@@ -168,6 +169,8 @@ def main():
     p.add_argument("--task", help="task name in tasks/ (required for a new run)")
     p.add_argument("--no-start", action="store_true", help="only create the folder")
     p.add_argument("--start", action="store_true", help="start the manager on a run created with --no-start")
+    p.add_argument("--message-file", help="with --start: the manager's first message instead of the default "
+                   "(e.g. for a run resumed from another run's state)")
     a = p.parse_args()
 
     flavor = FLAVOR
@@ -209,7 +212,7 @@ def main():
             return
     write_settings(run, flavor)
     record_flavor_commit(run, flavor)
-    first = (f"You are the manager of a new run. Run folder: {run} (AUTOINFER_RUN is set). "
+    first = Path(a.message_file).read_text() if a.message_file else (f"You are the manager of a new run. Run folder: {run} (AUTOINFER_RUN is set). "
              f"Task: {task_name}. Start with `agent register manager --role manager`, then begin "
              f"initialize(): greet the human and start defining the task with them.")
 

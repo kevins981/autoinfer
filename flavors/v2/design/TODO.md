@@ -29,8 +29,9 @@ decided.
 - Charge every job to a team. Enforce the grant. Print the remaining balance on every job, which
   also serves as a built-in reminder.
 
-## Explore leader prompt
-- Draft it, from the outline in DESIGN.md section 8.
+## Agent settings
+- **Add WebSearch and WebFetch to the v2 agents' allow list.** v1's allow list doesn't have them;
+  in auto mode the classifier decides. Keep v1's deny rule on fetching the autoinfer repository.
 
 ## Other
 - **Reminder prompts via hooks**, so long-running agents keep their instructions.

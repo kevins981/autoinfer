@@ -164,19 +164,42 @@ decides whether its work continues and gets resources.**
 ### 8. Separate prompts for explore and exploit leaders
 - **Exploit leader** ([../agents/leader_exploit.md](../agents/leader_exploit.md)): make the champion
   faster now, choose its own direction, and know how funding works.
-- **Explore leader.** The prompt's job is to give the incentive plus a small seed of inspiration,
-  without narrowing where the agent looks:
+- **Explore leader** ([../agents/leader_explore.md](../agents/leader_explore.md)). The prompt's job
+  is to give the incentive plus a small seed of inspiration, without narrowing where the agent
+  looks:
   - **The incentive, explicitly.** Long-horizon plans are welcome. The team is judged not on
     immediate wins but on how much it ultimately gains. The prompt explains how grants,
     extensions and resyncs work.
-  - **Autonomy.** Any part of the serving stack may change, from the scheduler to the kernels,
-    as long as the change respects the task's constraints. There is no list of "areas".
-  - **Resources.** Any web or online research is welcome.
-  - **A few examples of *kinds* of moves**, explicitly not limits:
+  - **Autonomy within vLLM.** Any part of vLLM may change, from the scheduler to the kernels, as
+    long as the change respects the task's constraints. There is no list of "areas". (Teams don't
+    write a new engine outside vLLM.)
+  - **First principles, in one line:** start from what the hardware and model fundamentally
+    require, not from how vLLM does it today.
+  - **A few examples of *kinds* of moves, as illustrations only:**
     - an old idea in a new setting (how systolic arrays came about);
-    - an overlooked hardware feature;
-    - questioning conventional wisdom (e.g. "is the KV cache really a good thing here?").
+    - an overlooked hardware capability;
+    - questioning what every inference engine does by default.
+
+    Nothing specific to this task (e.g. no "is the KV cache needed?"), because LLMs copy their
+    examples.
   - **No list of common optimizations.** That is fine for exploitation but limits novelty.
+
+### 9. What can and can't be challenged
+- **Constraints from the human can't be overridden:** the task, the task definition, and the
+  assumption ledger agreed with the human.
+- **Decisions and conclusions by agents can be challenged,** with measurements: records, SHARED_KB
+  entries, other teams' conclusions.
+
+### 10. Web research
+- **Every agent may search the web:** the manager, leaders and workers. Nothing routes research
+  through workers.
+
+### 11. Duplicate proposals (manager's search policy)
+- **By default, the manager rejects a proposal only if it is exactly the same as an already-funded
+  direction.** It then picks one team by track record, or at random.
+- **Similar but different proposals are the manager's call.** Funding several teams on the same
+  problem can be deliberate, as investors sometimes do, because they may reach different
+  solutions.
 
 ## Considered and not adopted (for now)
 - **Rewarding novelty directly.** It invites reward hacking: new designs that don't work. That's
@@ -187,5 +210,7 @@ decides whether its work continues and gets resources.**
 - **Scoring forecast accuracy as a reward.** In RL, the gap between predicted and actual outcome
   trains the predictor; it doesn't reward the actor. Forecast accuracy may still inform how much
   the manager trusts a team's next forecast. That is undecided.
+- **Special prompting for honesty.** The incentives already cover it: a team that oversells and
+  then doesn't deliver loses funding, and the manager can tell the difference.
 - **A separate "bet" mode inside a team.** Rejected in favour of the simpler model: a team is
   either an explore team or an exploit team.

@@ -133,10 +133,10 @@ handle(resync request):                             # a team asks for more GPU t
 ```python
 handle(champion candidate):                         # an official record beating CHAMPION
     if valid(record) and beats(record, CHAMPION) and gates_pass(record):
-        # valid: per TASK.definition (check its validity review; skim its diff). If the change
-        #   uses trained or tuned artifacts (e.g. a retrained draft head), check what they were
-        #   trained or tuned on: never the benchmark's data (ShareGPT, its prompts); it must
-        #   generalize
+        # valid: per TASK.definition (check its validity review; skim its diff). If anything in
+        #   the change was trained, tuned, calibrated or selected on data (weights, thresholds,
+        #   heuristics, tables), check that data: never the benchmark's (ShareGPT, its prompts,
+        #   look-alikes); the change must generalize
         # beats: consistently, not by a fixed margin. No minimum %: a small gain counts if the
         #   evidence shows it reliably (per-trial official numbers of both, same-job A/Bs,
         #   repeated; see the task's noise notes). If unclear, ask for a repeated same-job A/B.

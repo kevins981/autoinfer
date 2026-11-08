@@ -11,12 +11,14 @@ rm -rf $R/bank && cp -r $S/bank $R/bank
 cp $S/task_definition.md $S/assumption_ledger.md $S/focus.md $S/shared_kb.md $S/graph.md $S/champion.md $R/
 cat >> $R/task_definition.md <<'MD'
 
-## Ruling (human, 2026-11-08, for v2 runs): trained draft heads
-Retraining or distilling the MTP draft head (same role: it only proposes tokens; verification
-stays exact, so outputs are unchanged) is allowed. Its training or tuning data must not be the
-benchmark's data: not ShareGPT, not the benchmark's prompts, not anything selected because it
-resembles them. It must generalize to other workloads. The validity review and the manager check
-where any trained or tuned artifact's data came from.
+## Ruling (human, 2026-11-08): nothing may be fitted to the benchmark
+No change may be trained, tuned, calibrated or selected on the benchmark's data: not ShareGPT,
+not the benchmark's prompts, not anything chosen because it resembles them. This covers learned
+weights, tuned thresholds and heuristics, lookup tables, and picking between variants. Any such
+data must be generic, and the result must generalize to other workloads. The benchmark measures;
+it is never a training or tuning set. Retraining model parts that don't change outputs (e.g. the
+MTP draft head: verification stays exact) is allowed under this rule. The validity review and the
+manager check where any trained or tuned part's data came from.
 MD
 mkdir -p $R/history/test-5 && cp -r $S/journal.md $S/ideas.md $S/reports $R/history/test-5/
 cat > $R/history/README.md <<'MD'

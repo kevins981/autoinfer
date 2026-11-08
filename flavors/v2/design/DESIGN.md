@@ -79,6 +79,10 @@ decides whether its work continues and gets resources.**
   it, e.g. "favour long-horizon explore teams more".
 - **For now the manager also checks explore teams' forecasts.** A separate sceptic reviewer may do
   this later.
+- **The manager's objective:** the highest total speedup from a fixed pool of GPU-minutes, across
+  all its teams. The human sets the size of the pool.
+- **The manager doesn't do the teams' work.** It may investigate a proposal to understand it
+  better, but it doesn't run the direction itself.
 
 ### 3. Two team types: explore and exploit
 - **Each team is an explore team or an exploit team.** Teams don't declare individual bets.
@@ -100,8 +104,17 @@ decides whether its work continues and gets resources.**
   - the GPU time it needs.
 - **Bar:** the forecast must beat the current champion by **at least 10%**. The champion keeps
   moving, so the bar is checked against the current champion at every review.
-- **Review:** the manager checks the forecast is reasonable: neither too optimistic nor too
-  pessimistic. If it's sound, the team gets a grant. If not, the team revises it.
+- **Review:** the manager checks three things:
+  1. the forecast is broken into parts, each marked as measured (citing the job) or assumed;
+  2. the total clears the current champion by at least 10%;
+  3. the GPU time asked for is within limits.
+
+  If they pass, the team gets a grant. If not, it revises.
+- **The manager is not a gate.** It checks that the forecast is plausible and honestly built. It
+  does not have to fully understand the idea or agree with the estimate. If the manager funded
+  only what it agreed with, it would become the bottleneck on diversity again. Its prompt must
+  leave this room: when in doubt, fund it and let the measurements decide. The 10% bar also limits
+  the manager: it can't fund small, safe directions as "exploration".
 - **Revising the plan is allowed.** Learning and pivoting along the way is how good ideas develop,
   so the team doesn't have to stick to its first estimate.
 - **A pivot doesn't reset the grant.** The team keeps spending from the same grant. The risk is
@@ -114,12 +127,28 @@ decides whether its work continues and gets resources.**
 - **A team can request a resync at any time.** It doesn't have to wait for the grant to run out.
   Usually it asks when the grant is nearly used up, keeping a little in reserve. At the resync the
   team reports what it planned, what it achieved, and any pivots.
-- **Typical outcomes:**
-  - **Beat the champion:** more GPU time.
-  - **Not there yet, but the plan is on track:** e.g. "steps 1–5 done, with some pivots, and the
-    expected future value still looks good". More GPU time.
-  - **Little progress:** the manager decides between another grant, a required pivot, or shutting
-    the team down and launching a new one. The exact policy is open.
+- **Decisions at a resync.** Exploit teams read "progress" as "a win".
+
+  | What the team shows | Decision |
+  |---|---|
+  | Beat the champion, or a milestone measurably confirmed | Extend, possibly with a bigger grant |
+  | The measured part of the forecast grew, and the forecast still clears the bar | Extend |
+  | Nothing new measured, or the forecast fell below the bar | **Last chance:** a smaller grant. The team says what it will measure with it |
+  | A second last chance in a row | **Shut the team down** and launch a new team of the same type, so the ratio holds. The closing team first writes up what it learned |
+
+- **Re-forecasting isn't progress.** Rewriting the forecast is fine, but a forecast that stays as
+  high with nothing new measured counts as no progress. That way the manager never has to judge
+  whether the new forecast is believable. Each re-forecast is logged in the team's track record.
+- **The human's explore/exploit setting enters the policy in two places:** the team ratio, and
+  patience, e.g. "explore teams get 2 last-chance grants instead of 1".
+
+### 5b. Pool and grants
+- **There is a fixed total pool of GPU-minutes for the run,** set by the human. Every grant comes
+  out of it. Time a closed team didn't use goes back into the pool.
+- **Every new team gets a seed grant of 20 GPU-min,** e.g. for the microbenchmarks behind a
+  proposal.
+- **Every team starts with an 80 GPU-min grant,** explore and exploit alike.
+- **Extensions are up to the manager,** including the size of last-chance grants.
 
 ### 6. Asynchronous, no rounds
 - **Teams run independently.** v1's synchronous rounds and barrier are gone.

@@ -110,6 +110,7 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   a loop, don't `sleep` (sleeps are blocked; foreground commands are cut off after ~10 min).
   Meanwhile, do other work. To wait on a job you didn't start this way: `gpu wait <id>`, also as
   a background command.
+  Compile before the GPU job, not in it: code JIT-compiled at server start (e.g. `torch.utils.cpp_extension.load`) builds inside your GPU job, and again in each new workspace (official evals use a fresh copy), ~40 s of GPU time each. Build it with the engine (`ws build`) or trigger the compile from a plain shell first.
   `gpu status` shows the queue and budgets. **Exit 75 = the GPUs are used by someone outside the
   run: stop GPU work and tell the manager** (other people share these GPUs; we never compete).
   Exit 76 = your team's budget is used up: do GPU-free work.

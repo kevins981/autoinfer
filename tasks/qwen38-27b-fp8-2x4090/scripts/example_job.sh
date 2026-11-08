@@ -5,6 +5,5 @@
 WS=$1; export OUT=$2; shift 2
 source "$WS/env.sh"
 source "$AUTOINFER_RUN/task/scripts/lib.sh"
-start_server "$@" || exit 1
-bench 100 16 "$OUT/bench"
+start_server_bench 100 16 "$OUT/bench" "$@" || exit 1     # = start_server + bench, overlapped
 # gsm8k 50 "$OUT/gsm8k.json"   # only if the change may alter the math (see lib.sh)

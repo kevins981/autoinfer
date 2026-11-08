@@ -176,8 +176,9 @@ On your PATH; `<tool> --help` explains each.
 - `gpujob --timeout MIN [--label L] -- <command>`: one ad-hoc GPU job (e.g. a script that starts
   a server from your workspace, benches or profiles it, stops it). Background command; it kills
   everything it started when it ends. Logs in `$AUTOINFER_RUN/gpu/jobs/`. Use
-  `task/scripts/lib.sh` (`start_server`, `bench`, `gsm8k`, `long_request`, `stop_server`) and the
+  `task/scripts/lib.sh` (`start_server`, `bench`, `start_server_bench`, `gsm8k`, `long_request`, `stop_server`) and the
   profiling scripts.
+- Compile before the GPU job, not in it: code JIT-compiled at server start (e.g. `torch.utils.cpp_extension.load`) builds inside your GPU job, ~40 s of GPU time. Build it with the engine (`ws build`) or trigger the compile from a plain shell first.
 - `ws build main` (background): rebuild compiled code by hand (`experiment` does it for you when
   the commit changes `csrc/`). `source $AUTOINFER_RUN/workspaces/main/env.sh` before running
   anything from the workspace yourself: it sets the environment and makes Python load your code.

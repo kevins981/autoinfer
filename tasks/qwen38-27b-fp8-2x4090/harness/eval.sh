@@ -2,7 +2,8 @@
 # Official eval of one workspace: TRIALS (default 2) trials, each on a freshly started server
 # (start, bench c=16 ShareGPT 400 prompts, stop), so restart-to-restart drift averages out.
 # GSM8K-250 and the long-request check (one 128K-token request) run once, on the last trial's
-# server. Score = mean over trials (summarize.py).
+# server. The bench client starts with the server (it waits for it), so its ~13 s of setup
+# overlaps the server's startup. Score = mean over trials (summarize.py).
 # Run inside a GPU job (official_eval does this). Frozen: agents must not modify.
 # usage: eval.sh <workspace dir> <output dir> [extra serve args file]
 # output: <out>/trial<t>/{server.log,startup.txt,bench_c16.json,bench.log,metrics_*.txt,gpu_clocks.csv},
@@ -13,8 +14,8 @@ HARNESS=$(cd "$(dirname "$0")" && pwd)
 TASK=$(basename "$(dirname "$HARNESS")")
 PORT=8100
 mkdir -p "$OUT"
-SRV=; CLK=
-cleanup() { [ -n "$CLK" ] && kill $CLK 2>/dev/null; [ -n "$SRV" ] && { kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; }; }
+SRV=; CLK=; BENCH=
+cleanup() { [ -n "$CLK" ] && kill $CLK 2>/dev/null; [ -n "$BENCH" ] && kill $BENCH 2>/dev/null; [ -n "$SRV" ] && { kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; }; }
 trap cleanup EXIT
 fail() { echo "$1" > "$OUT/failed_stage"; echo "FAILED at $1"; exit 1; }
 
@@ -32,6 +33,8 @@ DATA=$(ls "$HF_HUB_CACHE"/datasets--anon8231489123--ShareGPT_Vicuna_unfiltered/s
 start_server() {   # $1 = trial dir; the server runs the workspace's code
   "${SERVE[@]}" > "$1/server.log" 2>&1 &
   SRV=$!
+}
+wait_ready() {     # $1 = trial dir
   local T0=$(date +%s)
   until curl -sf localhost:$PORT/health >/dev/null; do
     kill -0 $SRV 2>/dev/null || fail "server_start (trial $t)"
@@ -50,18 +53,23 @@ stop_server() {
 for t in $(seq 1 $TRIALS); do
   D=$OUT/trial$t; mkdir -p "$D"
   start_server "$D"
-  # clients run the baseline code: a record's diff can't change how it is measured
-  curl -s localhost:$PORT/metrics > "$D/metrics_before.txt"
-  nvidia-smi --query-gpu=index,clocks.sm,clocks.mem,power.draw,temperature.gpu --format=csv -l 30 > "$D/gpu_clocks.csv" &
-  CLK=$!
+  # clients run the baseline code: a record's diff can't change how it is measured.
+  # The client loads while the server starts; it sends nothing until the server answers.
   PYTHONPATH=$BASELINE_TREE vllm bench serve --port $PORT \
     --backend openai-chat --endpoint /v1/chat/completions --model "$MODEL" \
     --dataset-name sharegpt --dataset-path "$DATA" \
     --num-prompts 400 --max-concurrency 16 --request-rate inf \
-    --seed 0 --temperature 0 --num-warmups 2 \
+    --seed 0 --temperature 0 --num-warmups 2 --ready-check-timeout-sec 1000 \
     --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,99 \
     --save-result --result-dir "$D" --result-filename bench_c16.json \
-    > "$D/bench.log" 2>&1 || fail "bench (trial $t)"
+    > "$D/bench.log" 2>&1 &
+  BENCH=$!
+  wait_ready "$D"
+  curl -s localhost:$PORT/metrics > "$D/metrics_before.txt"
+  nvidia-smi --query-gpu=index,clocks.sm,clocks.mem,power.draw,temperature.gpu --format=csv -l 30 > "$D/gpu_clocks.csv" &
+  CLK=$!
+  wait $BENCH || fail "bench (trial $t)"
+  BENCH=
   kill $CLK 2>/dev/null; CLK=
   curl -s localhost:$PORT/metrics > "$D/metrics_after.txt"
   grep "Output token throughput" "$D/bench.log"

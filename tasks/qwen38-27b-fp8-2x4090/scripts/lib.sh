@@ -5,6 +5,9 @@
 #                                              task's (e.g. your --speculative-config replaces the
 #                                              whole JSON: include method and num_speculative_tokens)
 #   bench <num_prompts> <concurrency> <out_dir>   # ShareGPT, T=0, seed 0, like the official bench
+#   start_server_bench <num_prompts> <concurrency> <out_dir> [extra vllm serve args...]
+#                                              start_server + bench, faster: the bench client
+#                                              (~13 s to load) loads while the server starts
 #   gsm8k <n> <out.json>                       # accuracy check (official gate: n=250); for changes
 #                                              that may alter the math. Skip it for exact changes.
 #                                              n=50 = the first 50 of the official 250 (same order):
@@ -16,6 +19,8 @@
 # Unofficial numbers only: official ones come from `official_eval`. A short bench is NOT comparable
 # with the official 400-prompt numbers (e.g. BASE: ~596 tok/s with 100 prompts vs 630.6 official):
 # compare a change against BASE measured the same way, ideally in the same job.
+# Measure performance on a freshly started server each time (start_server_bench), not with repeated
+# benches on one server: state left by earlier requests (caches) can skew later numbers.
 TASK_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$TASK_DIR/harness/serve_args.sh"           # MODEL, SERVE_ARGS
 PORT=${PORT:-8000}
@@ -23,10 +28,16 @@ OUT=${OUT:-$PWD}
 SHAREGPT=$(ls "$HF_HUB_CACHE"/datasets--anon8231489123--ShareGPT_Vicuna_unfiltered/snapshots/*/ShareGPT_V3_unfiltered_cleaned_split.json | head -1)
 
 start_server() {
+  _launch_server "$@"
+  _wait_server
+}
+_launch_server() {
   mkdir -p "$OUT"
   echo "[lib] vllm serve $MODEL --port $PORT ${SERVE_ARGS[*]} $* (code: $(python -c 'import vllm,os;print(os.path.dirname(vllm.__file__))'))"
   vllm serve "$MODEL" --port "$PORT" "${SERVE_ARGS[@]}" "$@" > "$OUT/server.log" 2>&1 &
   SERVER_PID=$!
+}
+_wait_server() {
   local t0=$SECONDS
   until curl -sf "localhost:$PORT/health" >/dev/null; do
     if ! kill -0 $SERVER_PID 2>/dev/null; then
@@ -48,15 +59,33 @@ stop_server() {
 bench() {   # bench <num_prompts> <concurrency> <out_dir> [extra vllm bench serve args]
   local n=$1 c=$2 d=$3; shift 3; mkdir -p "$d"
   curl -s "localhost:$PORT/metrics" > "$d/metrics_before.txt"
+  _bench_client "$n" "$c" "$d" "$@"
+  local rc=$?
+  _bench_done "$d"
+  return $rc
+}
+_bench_done() {
+  curl -s "localhost:$PORT/metrics" > "$1/metrics_after.txt"
+  python "$TASK_DIR/harness/summarize.py" "$1" | grep -E '"(completed|output_throughput|median_ttft_ms|median_tpot_ms|mtp_acceptance_length)"'
+}
+start_server_bench() {   # start_server_bench <num_prompts> <concurrency> <out_dir> [extra vllm serve args]
+  local n=$1 c=$2 d=$3; shift 3; mkdir -p "$d"
+  _launch_server "$@"
+  _bench_client "$n" "$c" "$d" --ready-check-timeout-sec 1000 &
+  local bp=$!
+  _wait_server || { kill $bp 2>/dev/null; return 1; }
+  curl -s "localhost:$PORT/metrics" > "$d/metrics_before.txt"
+  wait $bp; local rc=$?
+  _bench_done "$d"
+  return $rc
+}
+_bench_client() {
+  local n=$1 c=$2 d=$3; shift 3
   vllm bench serve --port "$PORT" --backend openai-chat --endpoint /v1/chat/completions \
     --model "$MODEL" --dataset-name sharegpt --dataset-path "$SHAREGPT" \
     --num-prompts "$n" --max-concurrency "$c" --request-rate inf --seed 0 --temperature 0 \
     --num-warmups 2 --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,99 \
     --save-result --result-dir "$d" --result-filename bench.json "$@" > "$d/bench.log" 2>&1
-  local rc=$?
-  curl -s "localhost:$PORT/metrics" > "$d/metrics_after.txt"
-  python "$TASK_DIR/harness/summarize.py" "$d" | grep -E '"(completed|output_throughput|median_ttft_ms|median_tpot_ms|mtp_acceptance_length)"'
-  return $rc
 }
 
 gsm8k() {   # gsm8k <n> <out.json>

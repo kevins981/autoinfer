@@ -87,7 +87,7 @@ eval gives up after 15 min per server start).
 - `harness/`: the frozen official eval (`eval.sh`, `serve_args.sh`, `gsm8k.py`, `summarize.py`,
   GSM8K data). Only `official_eval` runs it.
 - `scripts/`: helpers for agents' GPU jobs (read-only, use as is or copy): `lib.sh`
-  (`start_server`, `bench`, `gsm8k`, `stop_server`), `example_job.sh`, `profile_nsys.sh` (nsys +
+  (`start_server`, `bench`, `start_server_bench`, `gsm8k`, `stop_server`), `example_job.sh`, `profile_nsys.sh` (nsys +
   kernel-time breakdown), `kernel_breakdown.py`, `profile_ncu.sh` (ncu on chosen kernels of a
   live server), `ncu_hotlines.py` (top source lines by stall samples).
 - `PROFILING.md`: what profiling data exists and how to query it (nsys SQLite, ncu Python API).

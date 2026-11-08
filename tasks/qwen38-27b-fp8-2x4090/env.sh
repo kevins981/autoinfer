@@ -16,7 +16,13 @@ export PIP_CACHE_DIR=$CACHE_ROOT/pip UV_CACHE_DIR=$CACHE_ROOT/uv CONDA_PKGS_DIRS
 # The first inference server start in a run compiles from scratch (a few minutes longer).
 RUN_CACHE=${AUTOINFER_RUN:+$AUTOINFER_RUN/.cache}
 RUN_CACHE=${RUN_CACHE:-$CACHE_ROOT}
-export TMPDIR=$RUN_CACHE/tmp
+# TMPDIR must stay short: vLLM and Python put unix sockets in it (path limit 107 chars), so a
+# run gets $CACHE_ROOT/tmp/<flavor>-<run>, not a folder inside the run
+if [ -n "${AUTOINFER_RUN:-}" ]; then
+  export TMPDIR=$CACHE_ROOT/tmp/$(basename "$(dirname "$(dirname "$AUTOINFER_RUN")")")-$(basename "$AUTOINFER_RUN")
+else
+  export TMPDIR=$CACHE_ROOT/tmp
+fi
 
 # Model weights and datasets: read from qwen38_opt's HF cache, offline (no downloads, no writes)
 export HF_HOME=$CACHE_ROOT/huggingface

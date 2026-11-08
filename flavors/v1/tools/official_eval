@@ -7,7 +7,7 @@ Usage: official_eval <record id> [--timeout MIN]
 What it does, from $AUTOINFER_RUN/bank/<record id>/ (needs change.diff; serve_args.txt optional):
 1. Prepare (CPU, not charged): a fresh workspace eval-<id>-<n> = the baseline + the record's
    change.diff ONLY (nothing else from your workspace is used); `ws build` if the diff touches
-   compiled code (adds ~2-11 min).
+   compiled code (adds ~1-10 min).
 2. Measure: one GPU job (`gpu run --label official:<id>`, charged to your team, ~11 GPU-min) that
    runs the task's frozen harness (tasks/<task>/harness/eval.sh): starts the server from that
    workspace with the task's serve flags (+ the record's serve_args.txt), runs the benchmark

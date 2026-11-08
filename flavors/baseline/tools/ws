@@ -233,6 +233,7 @@ def cmd_build(a):
     cmake = " ".join(cfg["build"]["cmake_args"] + [cfg["build"]["python_arg"].format(python=python)])
     script = f"""set -eo pipefail
 source {env_sh}
+[ -f {task_dir() / 'build_env.sh'} ] && source {task_dir() / 'build_env.sh'}
 mkdir -p {bdir}
 cd {bdir}
 if [ ! -f build.ninja ]; then

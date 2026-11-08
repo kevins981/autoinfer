@@ -99,8 +99,9 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
 
 ## Tools (on your PATH; `<tool> --help` and `<tool> <command> --help` explain each, with examples)
 - `ws`: workspaces, i.e. full independent copies of the engine (`ws create/build/diff/list`).
-  `source <workspace>/env.sh` before running anything in one. A cold `ws build` takes ~11 min:
-  run it as a **background** command.
+  `source <workspace>/env.sh` before running anything in one. A `ws build` takes ~1 min when the
+  compile cache has your files, up to ~10 min when you change many kernels: run it as a
+  **background** command.
 - `gpu`: **all GPU work goes through `gpu run --timeout <min> -- <script>`**: one job at a time
   for the whole run, charged to your team's budget. One job = one script (start the server, test,
   stop it); everything it started is killed when it ends.

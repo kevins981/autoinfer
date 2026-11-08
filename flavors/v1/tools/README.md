@@ -25,8 +25,8 @@ Agents get the essentials in `agents/common.md`; every tool's `--help` (and `<to
   original: inference servers load a workspace's code when they start, so don't edit one mid-job.
 - Python-only changes: nothing to build; restart the server.
 - C++/CUDA changes: `ws build <name>`. **Run it as a background command**: the first build in a
-  workspace takes ~2 min with a warm cache and ~11 min cold (over the 10-minute Bash limit); later
-  builds are incremental.
+  workspace takes ~1 min when the shared compile cache has its files, more per changed kernel file
+  (can pass the 10-minute Bash limit); later builds are incremental.
 - `ws diff <name>`: the change vs the baseline; this is what a record's `change.diff` is. Keep logs,
   results and scratch files **outside the code tree** (e.g. in the workspace folder), or they end
   up in the diff.

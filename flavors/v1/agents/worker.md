@@ -18,7 +18,7 @@ worker.run(task) -> report:
         estimate()          # napkin math first (Amdahl, roofline): what should the change gain?
         change_code()       # in <workspace>/vllm/
             # Python-only: no build, just restart the server.
-            # C++/CUDA: `ws build <workspace name>` as a BACKGROUND command (~2-11 min).
+            # C++/CUDA: `ws build <workspace name>` as a BACKGROUND command (~1-10 min).
         test()              # cheapest first: unit check → microbenchmark with real shapes →
                             # one forward pass + profile → short unofficial bench
             # GPU: only through `gpu run --timeout <min> -- <script>`, BACKGROUND, within your

@@ -250,6 +250,7 @@ def cmd_build(a):
     cmake = " ".join(cfg["build"]["cmake_args"] + [cfg["build"]["python_arg"].format(python=python)])
     script = f"""set -eo pipefail
 source {env_sh}
+[ -f {task_dir() / 'build_env.sh'} ] && source {task_dir() / 'build_env.sh'}
 mkdir -p {bdir}
 cd {bdir}
 if [ ! -f build.ninja ]; then
@@ -389,8 +390,9 @@ Keep notes, logs and results in <ws>/ (outside vllm/), or they end up in the dif
 and install the built libraries into the workspace. Only needed after C++/CUDA changes
 (csrc/, CMake files); Python-only changes need no build. Log: <ws>/build.log.
 
-Time: ~2 min for a workspace's first build with a warm cache, ~11 min cold; later builds are
-incremental. Run it as a BACKGROUND Bash command (it can exceed the 10-minute command limit).""",
+Time: ~1 min for a workspace's first build when the compile cache (shared by all workspaces) has
+its files; each changed .cu file adds its compile time (minutes for CUTLASS-heavy ones); later
+builds are incremental. Run it as a BACKGROUND Bash command (it can exceed the 10-minute command limit).""",
                        epilog="example: ws build leader-1.fused-ar")
     s.add_argument("name", help="workspace name")
     s.add_argument("--target", action="append", help="cmake target (repeatable; default: the task's, "

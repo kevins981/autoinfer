@@ -67,15 +67,41 @@ run pool and per-team grants, with no rounds.
   account").
   - It is checked at submission and again at the front of the queue, as in v1. Only one job runs
     at a time, so the check at the front is exact.
-  - Jobs are charged their actual time, never more than the timeout, so a balance can't go
-    negative. A job cancelled by `team close` is charged for its time too.
+  - **Charge** = min(actual run time, timeout). The kill grace and GPU cleanup after a timeout
+    or cancel are never charged, so a balance can't go negative. The ledger also records the real
+    `wall_minutes`. A job cancelled by `team close` is charged too.
+  - **A job refused at the front of the queue** gets `state: "refused"` and a reason in its
+    `job.json`, so `gpu wait` returns for it.
+  - **Signals can't split the bookkeeping.** During ledger writes and process start, signals are
+    held back. A second cancel while a job is being killed is ignored. Either way the job is
+    charged exactly once and its processes are killed.
 - **The balance on every job:** when a job starts and when it ends, `gpu run` prints the account's
   balance. Example: `team T2 (explore): 34.5 GPU-min left of 100 granted`.
 - **Low-balance notice:** when a job ends and the balance is under 25% of the account's latest
-  grant, the output adds: `low balance: consider requesting a resync from the manager`. This is
-  not shown for `MGR`.
+  grant (the seed counts as a grant), the output adds: `low balance: consider requesting a resync
+  from the manager`. This is not shown for `MGR` or for closed accounts.
+- **Closed accounts:** a job cancelled by `team close` prints `cancelled: team T closed`. The
+  balance lines then say the team is closed instead of showing minutes that went back to the
+  pool. `team close` waits (up to 2 min) until the cancelled jobs are charged, then prints the
+  pool's free minutes.
+- **Pool free while a closed team's job is still finishing** holds back that job's timeout until
+  the job is charged, so a grant made in the meantime can't overdraw the pool.
 - **Official evals are normal jobs** charged to the requesting team, as in v1. That includes the
   re-measurement after porting onto a new champion.
+- **Validation:**
+  - team ids are 1–32 letters, digits, `-` or `_`, and not `MGR`;
+  - `MGR` can't be closed;
+  - `--note` is required for `grant`, `team close` and `pool add`;
+  - `pool init` needs 0 ≤ seed ≤ total;
+  - `pool init` is refused if a pool or any account event already exists;
+  - a `pool.json` that exists but can't be read is an error, never a reason to re-create the
+    pool;
+  - malformed lines in the logs are skipped.
+- **"Spent"** in `status` = the charged GPU-minutes of all accounts. Uncharged (human) jobs are
+  listed separately.
+- **Trust:** as in v1, nothing stops an agent from setting another team's `AUTOINFER_TEAM` or
+  cancelling another team's job. Now that accounts have consequences (closure), the manager's
+  spot-checks and `gpu history` are the safeguard.
 - **Grants and opens are atomic:** checking the pool and appending the event happen under one
   lock, so two concurrent grants can't overdraw the pool.
 
@@ -90,7 +116,8 @@ $AUTOINFER_RUN/gpu/
                     #   {"t", "event": "pool_add", "minutes", "by", "note"}
   accounts.lock     # flock for open / grant / close / pool_add
   ledger.jsonl      # as in v1: job, team (the account charged, or null), agent, label, start,
-                    # end, gpu_minutes, exit_code, timed_out, cancelled, charged. No "round".
+                    # end, gpu_minutes (charged), wall_minutes, exit_code, timed_out,
+                    # cancelled, charged. No "round".
   (budget.json is gone)
 ```
 Balances are always computed from `accounts.jsonl` and `ledger.jsonl`, never stored, so they
@@ -105,19 +132,31 @@ can't drift.
 
 ## Tests
 `flavors/v2/tools/tests/test_gpu.sh` uses fake jobs (`sleep`), runs under `.cache/gpu2test/` and
-needs no GPU memory. It still calls `nvidia-smi` for the "outside this run" check. On 2026-11-08:
-38 of 38 checks passed. Covered:
+needs no GPU memory. It still calls `nvidia-smi` for the "outside this run" check.
+
+**First version** (2026-11-08): 38 checks covering:
 - **Roles:** only the human sets up the pool, and only the manager opens, grants and closes.
 - **Accounts:** the seed is automatic, team ids are never reused, and grants are refused when the
   pool can't cover them or the account is unknown or closed.
 - **Admission and charging:**
-  - which account a job is charged to: team, `MGR`, uncharged human, or refused for an agent with
-    no team;
-  - the admission checks: balance, closed team, no account;
-  - the re-check at the front of the queue;
+  - which account a job is charged to;
+  - the admission checks and the re-check at the front of the queue;
   - timeouts are charged.
 - **Output:** the balance is printed at the start and end of every job, and the low-balance
   notice appears.
 - **Closing a team:** its running and waiting jobs are cancelled and charged, and its unspent
   minutes return to the pool.
 - **`history`**, and concurrent grants not overdrawing the pool.
+
+**A review subagent then checked the implementation against this spec.** Its findings were fixed
+and 20 checks were added:
+- a job that ignores SIGTERM: the charge is capped at the timeout;
+- a double cancel: charged once, no traceback, processes gone;
+- the refused state at the front of the queue, and `gpu wait` on such a job;
+- `history MGR`, and structured `history --json`;
+- team id validation and required notes;
+- the cancel reason and closed-account output after `team close`;
+- `pool init` refused after a lost `pool.json`;
+- an odd line in `accounts.jsonl`.
+
+All 58 checks pass.

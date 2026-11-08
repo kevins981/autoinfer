@@ -26,7 +26,7 @@ Exit codes of `gpu run`: the job's own exit code; 124 = killed at its timeout; 7
 someone outside this run (job not run: report this to the manager); 130 = cancelled.
 `gpu <command> --help` explains each command, with examples.
 """
-import argparse, fcntl, json, os, signal, subprocess, sys, time
+import argparse, fcntl, json, os, re, signal, subprocess, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -104,7 +104,13 @@ def events():
 
 
 def pool():
-    return read_json(gdir() / "pool.json")
+    p = gdir() / "pool.json"
+    if not p.exists():
+        return None
+    d = read_json(p)
+    if not isinstance(d, dict) or "total" not in d or "seed" not in d:
+        die(f"{p} exists but can't be read; fix it by hand (the pool is never re-created)")
+    return d
 
 
 def append_event(ev):
@@ -131,17 +137,18 @@ def accounts(evs=None, led=None):
     led = ledger() if led is None else led
     acc = {}
     for e in evs:
-        if e["event"] == "open":
+        ev = e.get("event")
+        if ev == "open" and e.get("team") is not None and e.get("team") not in acc:
             acc[e["team"]] = {"type": e["type"], "open": True, "granted": 0.0, "used": 0.0,
                               "last_grant": None, "by_agent": {}}
-        elif e["event"] == "grant" and e["team"] in acc:
+        elif ev == "grant" and e.get("team") in acc and isinstance(e.get("minutes"), (int, float)):
             acc[e["team"]]["granted"] += e["minutes"]
             acc[e["team"]]["last_grant"] = e["minutes"]
-        elif e["event"] == "close" and e["team"] in acc:
+        elif ev == "close" and e.get("team") in acc:
             acc[e["team"]]["open"] = False
     for e in led:
         a = acc.get(e.get("team"))
-        if a is not None and e.get("charged"):
+        if a is not None and e.get("charged") and isinstance(e.get("gpu_minutes"), (int, float)):
             a["used"] += e["gpu_minutes"]
             a["by_agent"][e["agent"]] = a["by_agent"].get(e["agent"], 0.0) + e["gpu_minutes"]
     for a in acc.values():
@@ -156,9 +163,13 @@ def pool_state(acc=None, evs=None):
         return None
     evs = events() if evs is None else evs
     acc = accounts(evs) if acc is None else acc
-    total = p["total"] + sum(e["minutes"] for e in evs if e["event"] == "pool_add")
+    total = p["total"] + sum(e.get("minutes", 0) for e in evs if e.get("event") == "pool_add")
     granted_open = sum(a["granted"] for a in acc.values() if a["open"])
     used_closed = sum(a["used"] for a in acc.values() if not a["open"])
+    running = read_json(gdir() / "running.json")         # a closed team's job still finishing:
+    if running and pid_alive(running["pid"]) and running.get("team") in acc \
+            and not acc[running["team"]]["open"]:          # hold back its timeout until it is charged
+        used_closed += running["timeout_min"]
     return {"total": total, "seed": p["seed"], "granted_open": granted_open,
             "spent": sum(a["used"] for a in acc.values()),
             "free": total - granted_open - used_closed}
@@ -177,24 +188,33 @@ def job_account():
     die(f"no GPU account: agent with role '{role}' has no AUTOINFER_TEAM (ask the manager)", EXIT_BUDGET)
 
 
-def check_admission(team, timeout):
+def admission_error(team, timeout):
     if team is None:
-        return
+        return None
     a = accounts().get(team)
     if a is None:
-        die(f"no GPU account '{team}': the manager opens accounts with `gpu team open`", EXIT_BUDGET)
+        return f"no account: '{team}' has no GPU account (the manager opens accounts with `gpu team open`)"
     if not a["open"]:
-        die(f"team {team} is closed: its account takes no new jobs", EXIT_BUDGET)
+        return f"team closed: team {team}'s account takes no new jobs"
     if a["balance"] < timeout:
-        die(f"budget exhausted: team {team} has {a['balance']:.1f} GPU-min left, the job asks for up "
-            f"to {timeout:g} (lower --timeout, do GPU-free work, or request a resync from the "
-            f"manager)", EXIT_BUDGET)
+        return (f"budget exhausted: {a['balance']:.1f} GPU-min left for team {team}, the job asks for "
+                f"up to {timeout:g} (lower --timeout, do GPU-free work, or request a resync from the "
+                f"manager)")
+    return None
+
+
+def check_admission(team, timeout):
+    err = admission_error(team, timeout)
+    if err:
+        die(err, EXIT_BUDGET)
 
 
 def balance_line(team):
     a = accounts().get(team) if team else None
     if a is None:
         return None
+    if not a["open"]:
+        return f"team {team} ({a['type']}) is closed"
     return f"team {team} ({a['type']}): {a['balance']:.1f} GPU-min left of {a['granted']:g} granted"
 
 
@@ -285,8 +305,20 @@ class Stop(Exception):
     pass
 
 
+SIGS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
 def on_signal(signum, frame):
     raise Stop(signal.Signals(signum).name)
+
+
+def block_signals():
+    """Delay SIGTERM/SIGINT/SIGHUP (delivered when unblocked) so bookkeeping can't be cut in half."""
+    signal.pthread_sigmask(signal.SIG_BLOCK, SIGS)
+
+
+def unblock_signals():
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGS)
 
 
 def group_members(pgid):
@@ -356,17 +388,19 @@ def cmd_run(a):
     info = {"id": jid, "pid": os.getpid(), "team": team, "agent": agent, "label": a.label,
             "timeout_min": a.timeout, "command": a.command, "cwd": os.getcwd(),
             "submitted": now_iso()}
+    for sg in SIGS:
+        signal.signal(sg, on_signal)
+    block_signals()
     write_json(jdir / "job.json", info)
     ticket = g / "queue" / f"{jid:08d}.json"
     write_json(ticket, info)
-    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(s, on_signal)
 
     lockf = open(g / "lock", "w")
     log_path = jdir / "output.log"
     proc = None
     proc_started = False
     try:
+        unblock_signals()                               # a signal that came meanwhile lands here
         # Wait for our turn: the oldest live ticket, and the lock is free.
         announced = False
         while True:
@@ -383,8 +417,17 @@ def cmd_run(a):
                 announced = True
             time.sleep(POLL)
 
-        check_admission(team, a.timeout)                # exact now: only one job runs at a time
-        foreign = foreign_usage()
+        err = admission_error(team, a.timeout)          # exact now: only one job runs at a time
+        if err:
+            info.update({"state": "refused", "reason": err, "ended": now_iso()})
+            write_json(jdir / "job.json", info)
+            die(err, EXIT_BUDGET)
+        try:
+            foreign = foreign_usage()
+        except SystemExit:
+            info.update({"state": "refused", "reason": "nvidia-smi failed", "ended": now_iso()})
+            write_json(jdir / "job.json", info)
+            raise
         if foreign:
             msg = (f"GPUs in use by someone outside this run: {foreign}. The job was NOT run. "
                    f"Report this to the manager (other people may be using these GPUs; we must "
@@ -406,9 +449,12 @@ def cmd_run(a):
               "ws create <new name> --from-ws <workspace>", flush=True)
         env = dict(os.environ, AUTOINFER_GPU_JOB=str(jid))
         with open(log_path, "w") as log:
+            block_signals()
             proc_started = True
             proc = subprocess.Popen(a.command, stdout=log, stderr=subprocess.STDOUT,
-                                    stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+                                    stdin=subprocess.DEVNULL, env=env, start_new_session=True,
+                                    preexec_fn=unblock_signals)
+            unblock_signals()
             timed_out = False
             try:
                 rc = proc.wait(timeout=a.timeout * 60)
@@ -421,8 +467,10 @@ def cmd_run(a):
             kill_job(proc, grace=5)                 # anything the job left running
             cleanup_gpu(proc.pid, log)
         end = time.time()
-        finish(g, info, jdir, start, end, rc, timed_out, team, agent, a.label)
+        block_signals()
+        finish(g, info, jdir, start, end, rc, timed_out, team, agent, a.label, timeout=a.timeout)
         proc = None
+        unblock_signals()
         tail = log_path.read_text(errors="replace").splitlines()[-25:]
         print("\n".join(tail))
         print(f"[gpu] job {jid} {'TIMED OUT' if timed_out else 'exited'} with code {rc} after "
@@ -430,16 +478,23 @@ def cmd_run(a):
         low_balance_notice(team)
         sys.exit(rc)
     except Stop as e:
+        block_signals()                                 # a second signal must not cut this short
+        reason = ""
+        try:
+            reason = (jdir / "cancel_reason").read_text().strip()
+        except OSError:
+            pass
         if proc is not None:                            # we were killed/cancelled mid-job: charge it
             with open(log_path, "a") as log:
-                log.write(f"\n[gpu] cancelled ({e}): killing the job\n")
+                log.write(f"\n[gpu] cancelled ({reason or e}): killing the job\n")
                 kill_job(proc, grace=5)
                 cleanup_gpu(proc.pid, log)
-            finish(g, info, jdir, start, time.time(), 130, False, team, agent, a.label, cancelled=True)
+            finish(g, info, jdir, start, time.time(), 130, False, team, agent, a.label, cancelled=True,
+                   timeout=a.timeout)
         else:
             info.update({"state": "cancelled", "ended": now_iso()})
             write_json(jdir / "job.json", info)
-        print(f"[gpu] job {jid} cancelled", file=sys.stderr)
+        print(f"[gpu] job {jid} cancelled" + (f": {reason}" if reason else ""), file=sys.stderr)
         if proc_started:
             low_balance_notice(team)
         sys.exit(130)
@@ -451,10 +506,12 @@ def cmd_run(a):
         lockf.close()
 
 
-def finish(g, info, jdir, start, end, rc, timed_out, team, agent, label, cancelled=False):
+def finish(g, info, jdir, start, end, rc, timed_out, team, agent, label, cancelled=False, timeout=None):
+    wall = (end - start) / 60
+    charged_min = min(wall, timeout) if timeout else wall   # kill grace + cleanup are never charged
     entry = {"job": info["id"], "team": team, "agent": agent,
              "label": label, "start": now_iso(start), "end": now_iso(end),
-             "gpu_minutes": round((end - start) / 60, 3), "exit_code": rc,
+             "gpu_minutes": round(charged_min, 3), "wall_minutes": round(wall, 3), "exit_code": rc,
              "timed_out": timed_out, "cancelled": cancelled, "charged": team is not None}
     with open(g / "ledger.jsonl", "a") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
@@ -470,7 +527,7 @@ def low_balance_notice(team):
         return
     print(f"[gpu] {bl}", flush=True)
     a = accounts()[team]
-    if team != MGR and a["last_grant"] and a["balance"] < LOW_BALANCE_FRACTION * a["last_grant"]:
+    if team != MGR and a["open"] and a["last_grant"] and a["balance"] < LOW_BALANCE_FRACTION * a["last_grant"]:
         print("[gpu] low balance: consider requesting a resync from the manager", flush=True)
 
 
@@ -518,9 +575,10 @@ def cmd_status(a):
 
 def cmd_history(a):
     evs = events()
-    if not any(e.get("team") == a.team and e["event"] == "open" for e in evs):
+    if not any(e.get("team") == a.team and e.get("event") == "open" for e in evs):
         die(f"no account '{a.team}' (accounts are in `gpu status`)")
-    rows = [dict(e, kind_="account") for e in evs if e.get("team") == a.team]
+    rows = [dict(e, kind_="account") for e in evs if e.get("team") == a.team and e.get("t")
+            and e.get("event") in ("open", "grant", "close")]
     rows += [dict(e, t=e["end"], kind_="job") for e in ledger()
              if e.get("team") == a.team and e.get("charged")]
     rows.sort(key=lambda r: datetime.fromisoformat(r["t"]).timestamp())
@@ -538,7 +596,12 @@ def cmd_history(a):
             desc = f"open ({r['type']}) by {r['by']}"
         else:
             desc = f"close by {r['by']}" + (f": {r['note']}" if r.get("note") else "")
-        out.append({"t": r["t"], "what": desc, "balance": round(bal, 3)})
+        fields = {k: r[k] for k in ("event", "type", "kind", "minutes", "by", "note", "job", "agent",
+                                    "label", "gpu_minutes", "exit_code", "timed_out", "cancelled")
+                  if k in r}
+        if r["kind_"] == "job":
+            fields["event"] = "job"
+        out.append({"t": r["t"], **fields, "what": desc, "balance": round(bal, 3)})
     if a.json:
         print(json.dumps(out, indent=2))
         return
@@ -554,8 +617,10 @@ def cmd_pool(a):
         if a.action == "init":
             if p:
                 die(f"a pool already exists (total {p['total']:g}); use `gpu pool add`")
-            if a.minutes <= 0 or a.seed is None or a.seed < 0:
-                die("give a positive pool size and --seed <minutes>")
+            if events():
+                die("accounts.jsonl already has events: the pool was set up before; fix pool.json by hand")
+            if a.minutes <= 0 or a.seed is None or a.seed < 0 or a.seed > a.minutes:
+                die("give a positive pool size and --seed <minutes> (0 <= seed <= pool)")
             write_json(g / "pool.json", {"total": a.minutes, "seed": a.seed, "created": now_iso()})
             append_event({"event": "open", "team": MGR, "type": "manager", "by": who()})
             print(f"pool: {a.minutes:g} GPU-min, seed {a.seed:g} per new team; account {MGR} opened")
@@ -577,10 +642,12 @@ def cmd_team(a):
     with AccountsLock():
         evs = events()
         if a.action == "open":
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", a.team) or a.team == MGR:
+                die(f"bad team id '{a.team}' (letters, digits, - and _; not {MGR})")
             p = pool()
             if not p:
                 die("no pool yet (the human sets it up with `gpu pool init`)")
-            if any(e.get("team") == a.team and e["event"] == "open" for e in evs):
+            if any(e.get("team") == a.team and e.get("event") == "open" for e in evs):
                 die(f"team id {a.team} was already used; a new team needs a new id")
             ps = pool_state(evs=evs)
             if ps["free"] < p["seed"]:
@@ -601,22 +668,26 @@ def cmd_team(a):
                 die(f"the {MGR} account can't be closed")
             append_event({"event": "close", "team": a.team, "by": who(), "note": a.note})
     if a.action == "close":
-        n = cancel_team_jobs(a.team)
-        print(f"closed {a.team}; cancelled {n} job(s); its unspent minutes are back in the pool "
-              f"(pool free {pool_state()['free']:.1f} once cancelled jobs are charged)")
+        pids = cancel_team_jobs(a.team)
+        t0 = time.time()
+        while any(pid_alive(p) for p in pids) and time.time() - t0 < 120:
+            time.sleep(0.5)                             # let cancelled jobs be charged
+        print(f"closed {a.team}; cancelled {len(pids)} job(s); its unspent minutes are back in the "
+              f"pool (pool free {pool_state()['free']:.1f})")
 
 
 def cancel_team_jobs(team):
     g = gdir()
-    n = 0
+    pids = []
     for _, _, info in live_tickets(g):                  # waiting and running jobs keep a ticket
         if info.get("team") == team:
             try:
+                (g / "jobs" / str(info["id"]) / "cancel_reason").write_text(f"team {team} closed\n")
                 os.kill(info["pid"], signal.SIGTERM)
-                n += 1
-            except ProcessLookupError:
+                pids.append(info["pid"])
+            except (ProcessLookupError, OSError):
                 pass
-    return n
+    return pids
 
 
 def cmd_grant(a):
@@ -733,7 +804,7 @@ examples:
     s.add_argument("action", choices=["init", "add"])
     s.add_argument("minutes", type=float)
     s.add_argument("--seed", type=float, default=None, help="init: GPU-min granted to every new team")
-    s.add_argument("--note", default=None)
+    s.add_argument("--note", default=None, help="add: why (required)")
     s.set_defaults(fn=cmd_pool)
     s = sub.add_parser("team", formatter_class=R, help="(manager) open or close a team's account",
                        description="""open: create a team's account and grant it the seed (team ids are never reused).
@@ -745,7 +816,7 @@ charged for its time) and its unspent minutes go back to the pool.""",
     s.add_argument("action", choices=["open", "close"])
     s.add_argument("team")
     s.add_argument("--type", choices=["explore", "exploit"], default=None, help="open: the team type")
-    s.add_argument("--note", default=None, help="close: why")
+    s.add_argument("--note", default=None, help="close: why (required)")
     s.set_defaults(fn=cmd_team)
     s = sub.add_parser("grant", formatter_class=R, help="(manager) grant GPU-minutes from the pool",
                        description="Move GPU-minutes from the pool to an open account. Refused if the pool "
@@ -756,7 +827,7 @@ charged for its time) and its unspent minutes go back to the pool.""",
     s.add_argument("team")
     s.add_argument("minutes", type=float)
     s.add_argument("--kind", choices=["start", "extension", "last-chance"], required=True)
-    s.add_argument("--note", default=None, help="why (kept in the account's history)")
+    s.add_argument("--note", required=True, help="why (kept in the account's history)")
     s.set_defaults(fn=cmd_grant)
     s = sub.add_parser("wait", formatter_class=R, help="wait until a job ends; print its result",
                        description="""Block until the job ends, then print the last lines of its output and exit with
@@ -787,6 +858,10 @@ examples:
         die("--timeout must be > 0")
     if a.cmd == "team" and a.action == "open" and not a.type:
         p.error("gpu team open: give --type explore|exploit")
+    if a.cmd == "team" and a.action == "close" and not a.note:
+        p.error("gpu team close: give --note \"<why>\"")
+    if a.cmd == "pool" and a.action == "add" and not a.note:
+        p.error("gpu pool add: give --note \"<why>\"")
     a.fn(a)
 
 

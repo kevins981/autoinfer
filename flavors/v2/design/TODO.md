@@ -16,22 +16,18 @@ decided.
 - **Credit for enabling another team's win.**
 
 ## Asynchronous mechanics
-- **Promoting champions.** Suggestion: one candidate at a time through the official eval. A
-  candidate built on an older champion is rebuilt on the current one and re-measured.
-- **Who pays for porting onto the current champion?** Suggestion: the team.
-- **What replaces v1's per-round reports to the human** (e.g. time-based, or one per promotion)?
-- **The run's stopping rule** without `max_rounds`. Suggestion: when the pool is spent, or earlier if
-  the manager sees nothing worth funding.
 - **GPU contention.** There is one GPU pair, and benchmarks need both. Could microbenchmarks run on
   one GPU each? The `gpu` tool currently allocates both.
 
 ## Next (human, 2026-11-08)
-1. **Broadcast contents.** The manager sends these to every agent in real time, with no reply
+1. ~~**Broadcast contents.**~~ Done: `agent announce` and the formats in agents/manager.md.
+   Original note: The manager sends these to every agent in real time, with no reply
    expected. Each one points to a file or folder with the details. Every agent can read every
    other agent's results and implementations; nothing is hidden.
    - **Funding:** "team X received N GPU-min to work on <direction>; details: <proposal file>".
    - **New champion:** "new champion <record> from team X (+Y%); how: <record folder>".
-2. **The reminder system, using hooks.** It periodically re-states each role's key message to
+2. ~~**The reminder system, using hooks.**~~ Done: DESIGN section 12 and infra/announcements_and_reminders.md.
+   Original note: It periodically re-states each role's key message to
    long-running agents, above all the explore leaders' persona: the long-horizon incentive and
    autonomy.
 

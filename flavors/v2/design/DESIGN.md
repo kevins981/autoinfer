@@ -201,6 +201,21 @@ decides whether its work continues and gets resources.**
   problem can be deliberate, as investors sometimes do, because they may reach different
   solutions.
 
+### 12. Manager mechanics ([../agents/manager.md](../agents/manager.md))
+- **`initialize()` is as in v1:** task definition, loopholes and assumption ledger, agreed with the
+  human.
+- **The funding rules live in [funding_policy.md](funding_policy.md).** It is copied into each run,
+  the human can edit it mid-run, and the manager re-reads it before each decision. It replaces
+  v1's `search_policy.md`.
+- **Reports to the human:** on every new champion and every resync, plus whenever asked.
+- **Reminders go only to explore leaders**, once after every resync with that team, and after every
+  context compaction through a hook. Nothing is time-based, and exploit leaders, workers and the
+  manager get none.
+- **Champion:** the best valid official record that beats the current one consistently and passes
+  the gates, as in v1, whatever it started from. Combining wins is the teams' business.
+- **The run ends** when the pool is spent, when nothing is worth funding, or when the human stops
+  it.
+
 ## Considered and not adopted (for now)
 - **Rewarding novelty directly.** It invites reward hacking: new designs that don't work. That's
   the "novel but useless paper" failure.

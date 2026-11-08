@@ -37,13 +37,13 @@ M $A announce -f $BASE/a.txt >/dev/null; c=$(grep -c "^## " $BASE/run/announceme
 M $A announce "" >/dev/null 2>&1; check "empty announcement refused" 1 $?
 
 out=$(M $A remind); check "remind all" 0 $?
-echo "$out" | grep -q "reminded 2 agent(s)"; check "only the 2 leaders reminded" 0 $?
+echo "$out" | grep -q "reminded 1 agent(s)"; check "only the explore leader reminded" 0 $?
 echo "$out" | grep -q "skipped odd: no reminder file for role brainstormer"; check "role without file skipped" 0 $?
 echo "$out" | grep -q "skipped leader-1.w1: no reminder file for role worker"; check "worker not reminded" 0 $?
 inbox leader-1 | grep -q "^\[reminder; no reply needed\]"; check "reminder header" 0 $?
 inbox leader-1 | grep -q "^<system message>: You lead an explore team."; check "explore reminder body" 0 $?
-inbox leader-2 | grep -q "^<system message>: You lead an exploit team."; check "exploit reminder body" 0 $?
-out=$(M $A remind --role leader_exploit); echo "$out" | grep -q "reminded 1 agent(s): leader-2"; check "remind --role" 0 $?
+inbox leader-2 | grep -q "<system message>"; check "exploit leader not reminded" 1 $?
+out=$(M $A remind --role leader_explore); echo "$out" | grep -q "reminded 1 agent(s): leader-1"; check "remind --role" 0 $?
 out=$(M $A remind leader-1 nobody); echo "$out" | grep -q "reminded 1 agent(s): leader-1"; check "remind by name" 0 $?
 echo "$out" | grep -q "skipped nobody: no such agent"; check "unknown name reported" 0 $?
 AUTOINFER_ROLE=leader_explore AUTOINFER_AGENT=leader-1 $A remind >/dev/null 2>&1; check "leader can't remind" 1 $?

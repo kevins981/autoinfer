@@ -5,7 +5,7 @@ Usage: new_run <run name> --task <task> [--no-start]
        new_run <run name> --start
   e.g. flavors/v2/tools/new_run ffn-latency-1 --task qwen38-27b-fp8-2x4090
 
-Creates runs/<run>/ in this flavor (a copy of the task, config.md, search_policy.md, folders), prepares
+Creates runs/<run>/ in this flavor (a copy of the task, config.md, funding_policy.md, folders), prepares
 the task (`ws setup-task`), then starts the manager in the flavor folder with AUTOINFER_RUN set
 and the run's permission settings. Talk to it with `claude attach <id>` (printed at the end).
 The first time, run `claude` once in the flavor folder and accept the trust prompt.
@@ -199,7 +199,7 @@ def main():
         for d in ("agents", "bank", "brainstorm", "reports", "local_kb", "gpu", "workspaces"):
             (run / d).mkdir()
         shutil.copy(flavor / "config_default.md", run / "config.md")
-        shutil.copy(flavor / "design" / "search_policy.md", run / "search_policy.md")
+        shutil.copy(flavor / "design" / "funding_policy.md", run / "funding_policy.md")
         for f in ("graph.md", "ideas.md", "journal.md", "shared_kb.md", "champion.md", "focus.md"):
             (run / f).write_text("")
         seed_base(run, task)

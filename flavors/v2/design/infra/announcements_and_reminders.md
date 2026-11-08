@@ -32,29 +32,28 @@ the whole run folder (bank, workspaces, proposals, reports).
 
 The manager may announce other things too, e.g. a team being shut down and its write-up.
 
-## Reminders: keeping each role's key message alive
+## Reminders: keeping the explore persona alive
 **Why:** agents run for hours to tens of hours, and instructions given only at the start fade,
-above all after context compaction. The explore leaders' persona is what matters most: the
+above all after context compaction. The explore leaders' persona is what matters: the
 long-horizon incentive and their autonomy.
 
-**Reminder files:** `flavors/v2/agents/reminders/<role>.md`, only for the leaders
-(`leader_explore`, `leader_exploit`). Each is a few lines restating the role's core. Workers and
-the manager don't need reminders (human decision, 2026-11-08), so they have no file, and a role
-without a file gets none.
+**Only explore leaders get reminders** (human decision, 2026-11-08). Exploit leaders, workers and
+the manager don't. There is one file, `flavors/v2/agents/reminders/leader_explore.md`: a few lines
+restating the role's core. A role without a file gets nothing.
 
 There are two ways a reminder reaches an agent.
-1. **Periodically, sent by the manager:** `agent remind [--role R] [NAME...]` (manager or human).
-   - It sends every live headless agent (or the named ones, or one role) its role's reminder as an
-     inbox message.
-   - The header is `[reminder; no reply needed]`, and the body starts with `<system message>:`.
-   - The manager decides when. The run's config gives a default interval (`reminder_interval`,
-     e.g. every 2 hours), placed in the manager's prompt.
-   - Not a PostToolUse hook: that would be too frequent and intrusive.
+1. **After every resync, from the manager.** When the manager finishes a resync with an explore
+   team, it runs `agent remind <leader>`.
+   - The leader gets the reminder as an inbox message headed `[reminder; no reply needed]`, with a
+     body starting `<system message>:`.
+   - There is no time-based schedule. (`agent remind` also accepts `--role R`, or no argument for
+     everyone with a reminder file.)
 2. **After every context compaction, through a hook.** A `SessionStart` hook with matcher `compact`
    runs `_remind_hook.py`.
    - It reads `AUTOINFER_ROLE` and prints the role's reminder as `additionalContext`, so the
      agent sees it right after its context is summarized.
-   - `new_run` adds the hook to both `agent_settings.json` and `manager_settings.json`.
+   - `new_run` adds the hook to both settings files. It prints nothing for roles without a
+     reminder file.
 
 ## Robustness
 - `meta.json` writes use a per-process temp file, so concurrent writers can't collide.

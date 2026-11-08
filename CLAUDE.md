@@ -84,6 +84,7 @@ autoinfer/
 - [design/open_questions.md](design/open_questions.md): undecided items and TODOs shared by all
   flavors (infrastructure, tasks). Flavor-specific TODOs are in each flavor's `design/TODO.md`.
 - v1 implementation status, decisions and progress: [flavors/v1/design/STATUS.md](flavors/v1/design/STATUS.md).
+- `flavors/v2/`: draft design (delta from v1: GPU time as currency, manager as investor, explore/exploit teams, asynchronous): [flavors/v2/design/DESIGN.md](flavors/v2/design/DESIGN.md), open items in its TODO.md.
 - `flavors/baseline/`: the single-agent control arm (karpathy/autoresearch loop ported to the task; `program.md`, `tools/new_run`).
 - Each flavor's design lives in its `design/` folder, starting from `DESIGN.md`, e.g.
   [flavors/v1/design/DESIGN.md](flavors/v1/design/DESIGN.md).

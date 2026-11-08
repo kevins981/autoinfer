@@ -1,0 +1,142 @@
+# Flavor v2 (draft)
+
+**Status:** design draft, written with the human on 2026-11-08. Nothing is implemented yet.
+
+v2 is written as a **delta from v1** ([../../v1/design/DESIGN.md](../../v1/design/DESIGN.md)).
+Anything not mentioned here stays as in v1: task definition, trusted official eval, bank and
+records, workspaces, leaders and workers, the shared KB with the manager as its only writer, the
+journal, and "only measurements count".
+
+This file holds only what the human and the designer have agreed. Everything still open is in
+[TODO.md](TODO.md).
+
+## Why v2: what v1 showed
+
+v1 runs: test-3 → test-5 (qwen38-27b-fp8-2x4090, 14 rounds, 631 → 942 tok/s, +49%).
+Judge report: `evals/v1/test-5/judge-a.md`.
+
+- **Progress came from many scattered near-term wins.** Teams grabbed whatever was cheapest to win
+  next: comms, overlap, kernel tweaks, spec-decode tweaks. Every answer-key win was found, and
+  there were 10 novel wins. But each one refined the existing design; none restructured it.
+- **Returns fell off.**
+  - Rounds 1–5 gained +35% (~4–5%/h).
+  - Rounds 6–14 gained +11% (~1%/h).
+  - By the end the run was digging in the same place.
+- **The three wins the run didn't originate came from outside.** They were ported from
+  `prior/`, another run on the same task. The run had not proposed two of them, and had ruled out
+  the third on a wrong estimate.
+- **The structure favours near-term gains.**
+  - Brainstormers and the manager decide each team's direction every round.
+  - A team can leave its direction only with evidence from that round, which in practice means a
+    measured near-term gain.
+  - A genuinely new direction almost always starts out worse than the champion, so under this
+    rule it gets dropped before it can mature.
+  - This is a greedy algorithm.
+- **Synchronous rounds block fast teams.** At each round's barrier, the fastest team waits for
+  the slowest.
+
+## Hypothesis v2 tests
+
+> The main reason agents stay in-distribution is the incentive and selection structure, not only
+> how ideas are generated. If the reward is still speedup but long-horizon directions are judged
+> on their **expected future speedup**, and resources (GPU time) follow results and promise,
+> then long-horizon, assumption-challenging work will emerge without telling agents what to do.
+
+**Inspirations.**
+- **Successful research organisations** (Bell Labs): autonomy, openness, stability, a stimulating
+  environment.
+- **Google's TPU team:** an autonomous team that revived an old idea (systolic arrays) and took a
+  long time to beat GPUs.
+- **Startups and investors:** fund a pitch, renew on traction, advise rather than control.
+
+Human values don't carry over to agents automatically. For an agent, **the incentive is whatever
+decides whether its work continues and gets resources.**
+
+## Key ideas
+
+### 1. GPU time is the currency
+- **The only resource the manager hands out is GPU time** (GPU-minutes). Priority is not used for
+  now.
+- **Every team, explore or exploit, wants more GPU time.** To get it, a team shows results and
+  promise.
+- **This is the incentive.** We don't design a separate reward; competition for GPU time plus each
+  team's track record does the work.
+- **Each team has a track record:**
+  - grants received;
+  - GPU used;
+  - results;
+  - realized gain per GPU-minute, which is the efficiency measure.
+- **The manager funds partly on history.** Example: "historically strong, slowing lately, still
+  worth funding".
+- **The GPU queue needs changes** to account for and enforce grants per team.
+
+### 2. The manager is an investor
+- **It funds teams and advises them.** It does not direct their work, just as good investors let
+  their companies decide what's best.
+- **It shapes behaviour only through resources:** how much GPU time a team gets, whether it gets
+  more, or whether it is shut down.
+- **The manager's funding policy is the central control.** It is plain text. The human can steer
+  it, e.g. "favour long-horizon explore teams more".
+- **For now the manager also checks explore teams' forecasts.** A separate sceptic reviewer may do
+  this later.
+
+### 3. Two team types: explore and exploit
+- **Each team is an explore team or an exploit team.** Teams don't declare individual bets.
+- **The ratio of explore to exploit teams controls the explore/exploit balance.** The human sets
+  it.
+- **Exploit teams** work as in v1: beat the current champion now. Reward: near-term measured gain.
+- **Explore teams** work on longer-horizon directions that may challenge prior wisdom. They are
+  judged on **expected future value**, described next.
+
+### 4. Explore teams: expected future value
+- **The reward is still speedup, with a longer time horizon.** Novelty itself earns nothing.
+  "Novel, but about equal to or slightly worse than the champion" is not worth pursuing. Every
+  direction must aim to beat the champion eventually.
+- **Proposal:** the team first works alone (microbenchmarks, napkin math) and then sends the
+  manager:
+  - a roadmap;
+  - a forecast: "when the roadmap is done, I expect X% speedup", built from its measurements and
+    calculations;
+  - the GPU time it needs.
+- **Bar:** the forecast must beat the current champion by **at least 10%**. The champion keeps
+  moving, so the bar is checked against the current champion at every review.
+- **Review:** the manager checks the forecast is reasonable: neither too optimistic nor too
+  pessimistic. If it's sound, the team gets a grant. If not, the team revises it.
+- **Revising the plan is allowed.** Learning and pivoting along the way is how good ideas develop,
+  so the team doesn't have to stick to its first estimate. The risk is that a team rewrites its
+  forecast endlessly to keep its funding. How to handle that is open ([TODO.md](TODO.md)).
+
+### 5. Updates and the end of a grant
+- **While working, a team sends the manager progress reports**, like a startup's investor
+  updates. The manager decides how often, e.g. after every X GPU-minutes spent.
+- **When a grant is used up, the team and the manager resync.** The team reports what it planned,
+  what it achieved, and any pivots.
+- **Typical outcomes:**
+  - **Beat the champion:** more GPU time.
+  - **Not there yet, but the plan is on track:** e.g. "steps 1–5 done, with some pivots, and the
+    expected future value still looks good". More GPU time.
+  - **Little progress:** the manager decides between another grant, a required pivot, or shutting
+    the team down and launching a new one. The exact policy is open.
+
+### 6. Asynchronous, no rounds
+- **Teams run independently.** v1's synchronous rounds and barrier are gone.
+- **The manager reacts to reports and to grants running out**, not to a round loop.
+- **Exploit teams hear about every new champion.** This is a reminder that the bar has moved.
+  Whether explore teams get the same broadcast is open.
+
+### 7. Brainstormers no longer assign work
+- **Teams own their direction.** Brainstormers don't decide what a team works on.
+- **Their exact role is open**, e.g. advisors that teams or the manager call on when they want
+  ideas.
+
+## Considered and not adopted (for now)
+- **Rewarding novelty directly.** It invites reward hacking: new designs that don't work. That's
+  the "novel but useless paper" failure.
+- **Comparing rates.** The idea: continue an explore direction only if its expected gain per hour
+  beats the exploit teams' recent gain per hour. Too much for a first version, so v2 ignores the
+  time dimension for now.
+- **Scoring forecast accuracy as a reward.** In RL, the gap between predicted and actual outcome
+  trains the predictor; it doesn't reward the actor. Forecast accuracy may still inform how much
+  the manager trusts a team's next forecast. That is undecided.
+- **A separate "bet" mode inside a team.** Rejected in favour of the simpler model: a team is
+  either an explore team or an exploit team.

@@ -25,6 +25,16 @@ decided.
 - **GPU contention.** There is one GPU pair, and benchmarks need both. Could microbenchmarks run on
   one GPU each? The `gpu` tool currently allocates both.
 
+## Next (human, 2026-11-08)
+1. **Broadcast contents.** The manager sends these to every agent in real time, with no reply
+   expected. Each one points to a file or folder with the details. Every agent can read every
+   other agent's results and implementations; nothing is hidden.
+   - **Funding:** "team X received N GPU-min to work on <direction>; details: <proposal file>".
+   - **New champion:** "new champion <record> from team X (+Y%); how: <record folder>".
+2. **The reminder system, using hooks.** It periodically re-states each role's key message to
+   long-running agents, above all the explore leaders' persona: the long-horizon incentive and
+   autonomy.
+
 ## GPU queue changes
 - Charge every job to a team. Enforce the grant. Print the remaining balance on every job, which
   also serves as a built-in reminder.

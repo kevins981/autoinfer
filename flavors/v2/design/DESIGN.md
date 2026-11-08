@@ -103,14 +103,17 @@ decides whether its work continues and gets resources.**
 - **Review:** the manager checks the forecast is reasonable: neither too optimistic nor too
   pessimistic. If it's sound, the team gets a grant. If not, the team revises it.
 - **Revising the plan is allowed.** Learning and pivoting along the way is how good ideas develop,
-  so the team doesn't have to stick to its first estimate. The risk is that a team rewrites its
-  forecast endlessly to keep its funding. How to handle that is open ([TODO.md](TODO.md)).
+  so the team doesn't have to stick to its first estimate.
+- **A pivot doesn't reset the grant.** The team keeps spending from the same grant. The risk is
+  still that a team rewrites its forecast endlessly to keep its funding. How else to handle that
+  is open ([TODO.md](TODO.md)).
 
 ### 5. Updates and the end of a grant
 - **While working, a team sends the manager progress reports**, like a startup's investor
   updates. The manager decides how often, e.g. after every X GPU-minutes spent.
-- **When a grant is used up, the team and the manager resync.** The team reports what it planned,
-  what it achieved, and any pivots.
+- **A team can request a resync at any time.** It doesn't have to wait for the grant to run out.
+  Usually it asks when the grant is nearly used up, keeping a little in reserve. At the resync the
+  team reports what it planned, what it achieved, and any pivots.
 - **Typical outcomes:**
   - **Beat the champion:** more GPU time.
   - **Not there yet, but the plan is on track:** e.g. "steps 1–5 done, with some pivots, and the
@@ -121,8 +124,10 @@ decides whether its work continues and gets resources.**
 ### 6. Asynchronous, no rounds
 - **Teams run independently.** v1's synchronous rounds and barrier are gone.
 - **The manager reacts to reports and to grants running out**, not to a round loop.
-- **Exploit teams hear about every new champion.** This is a reminder that the bar has moved.
-  Whether explore teams get the same broadcast is open.
+- **Every team gets two kinds of notification:**
+  - **A new champion**, from any team. This is a reminder that the bar has moved.
+  - **Other teams' proposals and resync reports**, e.g. an explore team's roadmap and progress.
+    They are for inspiration: every team can see what the others are proposing and learning.
 
 ### 7. Brainstormers no longer assign work
 - **Teams own their direction.** Brainstormers don't decide what a team works on.

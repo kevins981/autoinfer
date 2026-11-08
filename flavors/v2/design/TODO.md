@@ -4,8 +4,8 @@ These are not agreed yet. Where the designer has a suggestion it is labelled; no
 decided.
 
 ## Incentives and funding
-- **Forecast gaming.** A team could keep re-forecasting to stay funded.
-  - Suggestion: pivots don't reset the grant.
+- **Forecast gaming.** A team could keep re-forecasting to stay funded. Agreed so far: a pivot
+  doesn't reset the grant.
   - Suggestion: the manager checks whether the *measured* part of the forecast grows from report
     to report. Shrinking is fine; staying the same height without new measurements is not.
 - **The manager's funding policy, as text:**
@@ -33,8 +33,6 @@ decided.
 - **Promoting champions.** Suggestion: one candidate at a time through the official eval. A
   candidate built on an older champion is rebuilt on the current one and re-measured.
 - **Who pays for porting onto the current champion?** Suggestion: the team.
-- **Do explore teams get the new-champion broadcast?** If so, it is a moving target for their
-  forecast, not pressure.
 - **What replaces v1's per-round reports to the human** (e.g. time-based, or one per promotion)?
 - **The run's stopping rule** without `max_rounds`.
 - **GPU contention.** There is one GPU pair, and benchmarks need both. Could microbenchmarks run on

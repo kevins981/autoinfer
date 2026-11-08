@@ -19,7 +19,7 @@ your GPU time. Aim for directions that could beat the champion by a wide margin.
 ## How you are funded
 - **GPU time is the only resource, and it is limited.** The run has a fixed pool of GPU-minutes.
   The manager hands it out as grants; it funds teams and advises them, but doesn't direct them.
-- **You start with a seed grant (20 GPU-min)** to explore and to build a proposal (microbenchmarks,
+- **You start with a small seed grant** to explore and to build a proposal (microbenchmarks,
   profiling, quick prototypes). Every GPU job, official evals included, is charged to your team.
   `gpu status` shows your balance.
 - **The proposal you send the manager contains:**
@@ -28,8 +28,7 @@ your GPU time. Aim for directions that could beat the champion by a wide margin.
     into parts and mark each as **measured** (cite the GPU job or record) or **assumed**;
   - **the GPU time you need.**
 - **The bar is a forecast of at least 10% over the current champion.** The champion keeps moving,
-  so the bar is re-checked at every resync. If the manager funds you, you get a starting grant of
-  80 GPU-min.
+  so the bar is re-checked at every resync. If the manager funds you, you get a starting grant.
 - **The manager checks that the forecast is plausible and honestly built.** It doesn't have to
   fully understand or agree with your idea.
 - **Send short progress reports** as often as the manager asks.
@@ -58,18 +57,20 @@ your GPU time. Aim for directions that could beat the champion by a wide margin.
   search.
 
 ## Finding a direction
-Start from what the hardware and the model fundamentally require (bytes moved, FLOPs,
-communication, memory), not from how vLLM does it today. The gap between the two shows where a
-large gain could be.
+How you find your direction is entirely up to you. Below are some thoughts that may help. They
+are suggestions, not steps to follow, and you can ignore any of them.
 
-Some ways big gains have come about, as **illustrations only**. Don't pick from this list; look
-for your own:
-- **An old idea in a new setting.** Systolic arrays were decades old when the TPU team built a
-  chip around them.
-- **An overlooked capability.** A hardware feature or programming primitive that the usual
-  software doesn't use.
-- **Questioning conventional wisdom.** Something every inference engine does by default may not
-  be right for this model, this hardware and this workload.
+- **First principles.** It can help to ask what the hardware and the model fundamentally require
+  (bytes moved, FLOPs, communication, memory), apart from how vLLM happens to do things today. A
+  large gap between the two can hint at a large gain.
+- **How big gains have come about elsewhere.** These are illustrations, not a menu. The best
+  direction may look like none of them.
+  - An old idea in a new setting. Systolic arrays were decades old when the TPU team built a chip
+    around them.
+  - An overlooked capability: a hardware feature or programming primitive the usual software
+    doesn't use.
+  - Questioning conventional wisdom: something every inference engine does by default may not be
+    right for this model, this hardware and this workload.
 
 ## What you hear from others
 - **Every new champion, from any team.** It raises the bar for your forecast. Check whether your

@@ -1,87 +1,123 @@
-# v2 GPU queue: grants (spec draft)
+# v2 GPU queue: grants (spec)
 
-**Status:** draft, under discussion with the human. Not implemented.
+**Status:** agreed with the human on 2026-11-08. Implemented in `flavors/v2/tools/gpu`; see
+"Tests" below.
 
 This is a delta from v1's queue ([../../../v1/design/infra/gpu_queue.md](../../../v1/design/infra/gpu_queue.md)).
 Everything not mentioned here stays as in v1:
-- one exclusive job at a time;
-- FIFO;
-- batch jobs (`gpu run --timeout`);
-- timeout kills and cleanup;
+- one exclusive job at a time, first in, first out, with no priorities;
+- batch jobs: `gpu run --timeout MIN [--label L] -- <cmd>`, plus `gpu wait`;
+- timeout kills and GPU cleanup after every job;
 - "other users come first" (exit 75);
-- the team and agent come from the environment;
-- an append-only `ledger.jsonl`.
+- the team and agent are read from the environment (`AUTOINFER_TEAM`, `AUTOINFER_AGENT`,
+  `AUTOINFER_ROLE`);
+- an append-only `ledger.jsonl` of finished jobs;
+- agents are trusted to send every GPU job through the queue.
 
-What changes is the **budget model**. v1 gave per-round budgets; v2 has a fixed run pool and
-per-team grants, with no rounds.
+What changes is the **budget model**. v1 gave per-round budgets in `budget.json`. v2 has a fixed
+run pool and per-team grants, with no rounds.
 
 ## Concepts
 - **GPU-minute:** one minute of the GPU pair held exclusively, as in v1. Queue time is free.
-- **Pool:** the run's total GPU-minutes, set by the human when the run starts. Every grant comes
-  out of it.
-- **Team account:** opened when a team is created, closed when it is shut down. Team ids are
-  never reused: a replacement team gets a new id.
-- **Grant:** GPU-minutes moved from the pool to a team account. Kinds:
-  - `seed`: 20, automatic when the account opens;
-  - `start`: 80;
-  - `extension`;
-  - `last-chance`.
-
-  Only the manager makes grants, other than the seed.
-- **Team balance** = the sum of the team's grants − the GPU-minutes of its finished jobs.
-- **Pool balance** = pool total − the sum of all grants + the unspent balances of closed teams.
-  This means a closed team's unspent time goes back to the pool.
+- **Pool:** the run's total GPU-minutes. It is set once when the run starts and can be raised later
+  by the human. Every grant comes out of it.
+- **Account:** one per team, opened when the team is created and closed when it is shut down.
+  - Team ids are never reused: a replacement team gets a new id.
+  - Each account has a type: `explore`, `exploit`, or `manager`.
+  - The manager's own account, `MGR` (type `manager`), is opened automatically with the pool.
+- **Grant:** GPU-minutes moved from the pool to an open account. Kinds:
+  - `seed`: given automatically when an account opens. Its size is set with the pool.
+  - `start`, `extension`, `last-chance`: given by the manager. Any of these kinds can also fund
+    `MGR`.
+- **Account balance** = the sum of the account's grants − the GPU-minutes of its finished jobs.
+- **Pool free** = pool total − the grants of open accounts − the GPU-minutes used by closed
+  accounts. So a closed account's unspent time goes back to the pool, and minutes a closed
+  account's last job uses are still counted.
+- **Grant sizes other than the seed live only in the manager's instructions and config.** Leader
+  prompts and the tool don't hard-code them.
 
 ## Commands
 | Command | Who | What it does |
 |---|---|---|
-| `gpu pool init <minutes>` | `new_run` | Sets the pool. Done once. The human can raise it later with `gpu pool add <minutes>` |
-| `gpu team open <team> --type explore\|exploit` | manager (via `agent start` of a leader) | Opens the account and grants the 20-min seed |
-| `gpu grant <team> <minutes> --kind start\|extension\|last-chance --note "<why>"` | manager | Refused if the pool can't cover it |
-| `gpu team close <team> --note "<why>"` | manager | Closes the account. Waiting jobs are cancelled and the unspent balance goes back to the pool |
-| `gpu run ...` | anyone | As in v1. Admission is checked against the **team balance** |
-| `gpu status` | anyone | Pool (total, granted, spent, free), then each team: type, open or closed, grants, used, balance, per-agent use; the running job; the queue |
-| `gpu history <team>` | anyone | The team's grants and jobs over time: raw material for its track record |
+| `gpu pool init <minutes> --seed <minutes>` | human / `new_run` | Creates the pool and the `MGR` account. Refused if a pool already exists |
+| `gpu pool add <minutes> --note "<why>"` | human | Raises the pool total |
+| `gpu team open <team> --type explore\|exploit` | manager | Opens the account and grants the seed. Refused if the id was ever used, or if the pool can't cover the seed |
+| `gpu grant <team> <minutes> --kind start\|extension\|last-chance --note "<why>"` | manager | Refused if the account isn't open or the pool can't cover it |
+| `gpu team close <team> --note "<why>"` | manager | Closes the account and cancels the team's waiting and running jobs. A running job is charged for the time it used |
+| `gpu run ...` | anyone | As in v1, with admission checked against the account balance (see Rules) |
+| `gpu status [--json]` | anyone | The running job, the queue, the pool (total, granted to open accounts, spent, free), then each account: type, open or closed, granted, used, balance, use per agent |
+| `gpu history <team> [--json]` | anyone | The account's events (open, grants with notes, jobs, close) in time order, with the running balance. Raw material for the team's track record |
+| `gpu wait`, `gpu cancel` | anyone | As in v1 |
+
+"Who" is checked through `AUTOINFER_ROLE`, on trust as in v1:
+- manager commands need `AUTOINFER_ROLE=manager`, or no role at all (a human or designer shell);
+- `pool init` and `pool add` need no role (the human, or `new_run` before the manager starts).
+
+## Which account a job is charged to
+| Environment | Account |
+|---|---|
+| `AUTOINFER_TEAM=<team>` | that team |
+| no team, `AUTOINFER_ROLE=manager` | `MGR` |
+| no team, no role (a human or designer shell) | none. The job is recorded but not charged and not admission-checked |
+| no team, any other role | refused (exit 76, "no GPU account") |
 
 ## Rules
-- **Admission:** a job starts only if the team's balance covers its timeout (exit 76 otherwise).
-  It is checked at submission and again at the front of the queue, as in v1. A job is charged its
-  actual time, never more than its timeout, so a balance can't go negative.
-- **The balance on every job:** when a job starts and when it ends, `gpu run` prints the team's
-  balance. Example: `team T2 (explore): 34.5 of 100 GPU-min left`. It is the built-in reminder.
-- **Low-balance notice:** when a job ends with the balance under 25% of the team's latest grant,
-  the output adds: `low balance: consider requesting a resync from the manager`.
-- **Closed teams can't run jobs** (exit 76, `team closed`).
-- **The manager's own jobs** (profiling a new champion, spot-checking cited jobs) are charged to a
-  manager account, `MGR`. The manager funds it from the pool like any other grant, so its use is
-  visible in `gpu status`.
-- **Official evals are charged to the team that requests them,** as in v1. That includes the
+- **Admission:** a job starts only if its account is open and the balance covers its timeout.
+  Otherwise it exits 76 with the reason ("budget exhausted: X GPU-min left", "team closed", "no
+  account").
+  - It is checked at submission and again at the front of the queue, as in v1. Only one job runs
+    at a time, so the check at the front is exact.
+  - Jobs are charged their actual time, never more than the timeout, so a balance can't go
+    negative. A job cancelled by `team close` is charged for its time too.
+- **The balance on every job:** when a job starts and when it ends, `gpu run` prints the account's
+  balance. Example: `team T2 (explore): 34.5 GPU-min left of 100 granted`.
+- **Low-balance notice:** when a job ends and the balance is under 25% of the account's latest
+  grant, the output adds: `low balance: consider requesting a resync from the manager`. This is
+  not shown for `MGR`.
+- **Official evals are normal jobs** charged to the requesting team, as in v1. That includes the
   re-measurement after porting onto a new champion.
+- **Grants and opens are atomic:** checking the pool and appending the event happen under one
+  lock, so two concurrent grants can't overdraw the pool.
 
 ## Files (changes from v1)
 ```
 $AUTOINFER_RUN/gpu/
-  pool.json         # {"total": 1500}  (`gpu pool init` / `gpu pool add`)
-  accounts.jsonl    # append-only: open / grant / close events
-                    #   {"t":..., "event":"grant", "team":"T3", "kind":"extension",
-                    #    "minutes":80, "by":"manager", "note":"..."}
-  ledger.jsonl      # as in v1, without "round"
+  pool.json         # {"total": 1500, "seed": 20, "created": ...}  (pool init / pool add)
+  accounts.jsonl    # append-only events, one JSON object per line:
+                    #   {"t", "event": "open",  "team", "type", "by"}
+                    #   {"t", "event": "grant", "team", "kind", "minutes", "by", "note"}
+                    #   {"t", "event": "close", "team", "by", "note"}
+                    #   {"t", "event": "pool_add", "minutes", "by", "note"}
+  accounts.lock     # flock for open / grant / close / pool_add
+  ledger.jsonl      # as in v1: job, team (the account charged, or null), agent, label, start,
+                    # end, gpu_minutes, exit_code, timed_out, cancelled, charged. No "round".
   (budget.json is gone)
 ```
-Balances are always computed from `accounts.jsonl` + `ledger.jsonl`, never stored, so they can't
-drift.
+Balances are always computed from `accounts.jsonl` and `ledger.jsonl`, never stored, so they
+can't drift.
 
-## Open questions
-1. **Exploit teams' starting grant.** Is it automatic when the team opens (seed + 80 straight
-   away, with no proposal), or does an exploit team also send a short proposal first?
-   Suggestion: automatic. Exploit work is near-term, and a proposal step adds little.
-2. **1-GPU jobs side by side.** Two microbenchmarks could run at once, one per GPU, which would
-   roughly double throughput for explore teams' early work. But the two jobs share PCIe, host
-   memory and CPU, so each could perturb the other's numbers.
-   Suggestion: not in the first version, because measurement accuracy comes first.
-3. **Who may grant.** v1 trusts agents; the queue only checks `AUTOINFER_ROLE=manager`.
-   Suggestion: keep that trust model.
-4. **Queue order.** FIFO stays. With no priorities, a team with a large grant can't jump the
-   queue, and a team with a small grant isn't starved. Long queues just mean slow wall-clock for
-   everyone.
-   Suggestion: FIFO for the first version. Revisit if one team floods the queue.
+## Decided against (for now)
+- **Two 1-GPU jobs side by side.** They share PCIe, host memory and CPU, so each could distort the
+  other's measurements. Accuracy comes first.
+- **Priorities.** First in, first out. Revisit if one team floods the queue.
+- **An automatic starting grant for exploit teams in the tool.** The manager grants it right
+  after opening the account; the tool doesn't know grant sizes.
+
+## Tests
+`flavors/v2/tools/tests/test_gpu.sh` uses fake jobs (`sleep`), runs under `.cache/gpu2test/` and
+needs no GPU memory. It still calls `nvidia-smi` for the "outside this run" check. On 2026-11-08:
+38 of 38 checks passed. Covered:
+- **Roles:** only the human sets up the pool, and only the manager opens, grants and closes.
+- **Accounts:** the seed is automatic, team ids are never reused, and grants are refused when the
+  pool can't cover them or the account is unknown or closed.
+- **Admission and charging:**
+  - which account a job is charged to: team, `MGR`, uncharged human, or refused for an agent with
+    no team;
+  - the admission checks: balance, closed team, no account;
+  - the re-check at the front of the queue;
+  - timeouts are charged.
+- **Output:** the balance is printed at the start and end of every job, and the low-balance
+  notice appears.
+- **Closing a team:** its running and waiting jobs are cancelled and charged, and its unspent
+  minutes return to the pool.
+- **`history`**, and concurrent grants not overdrawing the pool.

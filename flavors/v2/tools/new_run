@@ -155,6 +155,31 @@ def seed_base(run, task):
         "validity:     the task baseline by definition\n\n" + line + "\n")
 
 
+def config_minutes(run, label):
+    """A '- <label>: <number>' line of the run's config.md (e.g. GPU pool, seed grant)."""
+    m = re.search(rf"^\s*-\s*{re.escape(label)}\s*:\s*([0-9.]+)", (run / "config.md").read_text(),
+                  re.M | re.I)
+    if not m:
+        die(f"config.md has no '- {label}: <minutes>' line")
+    return float(m.group(1))
+
+
+def init_pool(run):
+    """Set up the run's GPU pool from config.md (once; the human may edit config.md before --start).
+    Runs `gpu pool init` as the human (no AUTOINFER_ROLE), which also opens the MGR account."""
+    if (run / "gpu" / "pool.json").exists():
+        print("GPU pool: already set up (gpu status)")
+        return
+    total, seed = config_minutes(run, "GPU pool"), config_minutes(run, "seed grant")
+    env = {k: v for k, v in os.environ.items() if k not in ("AUTOINFER_ROLE", "AUTOINFER_TEAM", "AUTOINFER_AGENT")}
+    env["AUTOINFER_RUN"] = str(run)
+    r = subprocess.run([str(TOOLS / "gpu"), "pool", "init", f"{total:g}", "--seed", f"{seed:g}"],
+                       env=env, capture_output=True, text=True)
+    if r.returncode != 0:
+        die(f"gpu pool init failed: {r.stderr.strip()}")
+    print(f"GPU pool: {r.stdout.strip()}")
+
+
 def record_flavor_commit(run, flavor):
     """The autoinfer commit the run started from (+ uncommitted changes in the flavor), so every
     result traces back to the exact flavor code even after the flavor is edited."""
@@ -196,11 +221,11 @@ def main():
             die(f"{run} already exists")
         run.mkdir(parents=True)
         copy_task(run, task)
-        for d in ("agents", "bank", "brainstorm", "reports", "local_kb", "gpu", "workspaces"):
+        for d in ("agents", "bank", "reports", "local_kb", "gpu", "workspaces", "teams", "proposals"):
             (run / d).mkdir()
         shutil.copy(flavor / "config_default.md", run / "config.md")
         shutil.copy(flavor / "design" / "funding_policy.md", run / "funding_policy.md")
-        for f in ("graph.md", "ideas.md", "journal.md", "shared_kb.md", "champion.md", "focus.md"):
+        for f in ("graph.md", "journal.md", "shared_kb.md", "champion.md", "focus.md", "announcements.md"):
             (run / f).write_text("")
         seed_base(run, task)
         env = dict(os.environ, AUTOINFER_RUN=str(run))
@@ -213,11 +238,13 @@ def main():
         if a.no_start:
             print(f"edit {run / 'config.md'} if needed, then: {TOOLS / 'new_run'} {a.run} --start")
             return
+    init_pool(run)
     write_settings(run, flavor)
     record_flavor_commit(run, flavor)
     first = Path(a.message_file).read_text() if a.message_file else (f"You are the manager of a new run. Run folder: {run} (AUTOINFER_RUN is set). "
-             f"Task: {task_name}. Start with `agent register manager --role manager`, then begin "
-             f"initialize(): greet the human and start defining the task with them.")
+             f"Task: {task_name}. The GPU pool is set up (`gpu status`). Start with `agent register manager "
+             f"--role manager`, then begin initialize(): greet the human and start defining the task "
+             f"with them.")
 
     env = dict(os.environ, AUTOINFER_RUN=str(run), AUTOINFER_AGENT="manager",
                AUTOINFER_ROLE="manager", PATH=f"{TOOLS}:{os.environ.get('PATH', '')}")

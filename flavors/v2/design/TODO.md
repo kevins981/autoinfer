@@ -36,8 +36,8 @@ decided.
   also serves as a built-in reminder.
 
 ## Agent settings
-- **Add WebSearch and WebFetch to the v2 agents' allow list.** v1's allow list doesn't have them;
-  in auto mode the classifier decides. Keep v1's deny rule on fetching the autoinfer repository.
+- Done: WebSearch and WebFetch are in the v2 allow list. v1's deny rule on fetching the autoinfer
+  repository stays (in `confine()`).
 
 ## Other
 - **Reminder prompts via hooks**, so long-running agents keep their instructions.

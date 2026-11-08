@@ -35,15 +35,18 @@ Agents get the essentials in `agents/common.md`; every tool's `--help` (and `<to
 ## `gpu`: the GPU queue (all GPU work goes through it)
 - `gpu run --timeout <min> [--label L] -- <command>`: runs your command with exclusive use of the
   GPUs, one job at a time for the whole run, first come first served. **Run it as a background
-  command** (you are notified when it ends; waiting in the queue can take a while). Your team is
-  charged the actual minutes, if its remaining budget covers `--timeout`.
+  command** (you are notified when it ends; waiting in the queue can take a while). Your team's account
+  is charged the actual minutes (at most `--timeout`), if its balance covers `--timeout`. The
+  balance is printed when the job starts and ends.
 - **One job = one script**: e.g. start the server, smoke test, bench, profile, stop the server.
   Everything the job started is killed when it ends or times out, so batch several tests per
   server start, and don't detach processes from the job (`setsid`, daemons).
-- Exit codes: the command's own; 124 = timed out; 76 = your team's budget is exhausted (do GPU-free
-  work); **75 = the GPUs are used by someone outside this run: stop GPU work and report it to the
+- Exit codes: the command's own; 124 = timed out; 76 = not admitted: your team's balance can't cover
+  `--timeout`, or the team is closed (do GPU-free work; leaders may request a resync); **75 = the GPUs are used by someone outside this run: stop GPU work and report it to the
   manager** (other people use these GPUs; we must not compete).
-- `gpu status`: the running job, the queue, and each team's budget, used and remaining this round.
+- `gpu status`: the running job, the queue, the run's pool, and every team's account (granted,
+  used, balance). `gpu history <team>`: a team's grants and jobs over time.
+- Manager only: `gpu team open/close`, `gpu grant`. Human only: `gpu pool init/add`.
 - `gpu cancel <job id>`: cancel a waiting job or kill a running one.
 - Startup of a model server is a big share of every job (~1.5-4 min); a full job output log is
   in `$AUTOINFER_RUN/gpu/jobs/<id>/output.log`.

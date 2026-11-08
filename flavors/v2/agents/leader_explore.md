@@ -22,7 +22,7 @@ your GPU time. Aim for directions that could beat the champion by a wide margin.
 - **You start with a small seed grant** to explore and to build a proposal (microbenchmarks,
   profiling, quick prototypes). Every GPU job, official evals included, is charged to your team.
   `gpu status` shows your balance.
-- **The proposal you send the manager contains:**
+- **The proposal** (write it to `proposals/<team>-<n>.md`, then message the manager the path) contains:
   - **a roadmap:** the steps from here to the finished direction;
   - **a forecast:** "when the roadmap is done, I expect X% over the current champion". Break it
     into parts and mark each as **measured** (cite the GPU job or record) or **assumed**;

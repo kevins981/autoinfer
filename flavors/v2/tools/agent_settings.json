@@ -9,7 +9,9 @@
       "Bash(agent *)",
       "Bash(ws *)",
       "Bash(gpu *)",
-      "Bash(official_eval *)"
+      "Bash(official_eval *)",
+      "WebSearch",
+      "WebFetch"
     ],
     "deny": [
       "Bash(sudo *)",

@@ -584,18 +584,16 @@ parent), and --task / --task-file as its first message. Model and effort come fr
 line in the run's config.md. You are its parent: it reports back to you with SendMessage.
 Returns immediately; talk to it with SendMessage (its name), check it with `agent list`.""",
                        epilog="""examples:
-  agent start leader-1 --role leader --team T1 --task-file $AUTOINFER_RUN/brainstorm/r1/task_leader-1.md
+  agent start leader-1 --role leader_explore --team T1 --task-file $AUTOINFER_RUN/teams/T1_task.md
   agent start leader-1.w1 --role worker --team T1 --cwd $AUTOINFER_RUN/workspaces/leader-1.fused-ar \\
       --task-file $AUTOINFER_RUN/workspaces/leader-1.fused-ar/task.md
-  agent start bs-r2-systematic --role brainstormer --persona systematic_engineer \\
-      --task "Briefing: $AUTOINFER_RUN/brainstorm/r2/briefing.md. Send your ideas to manager."
 """)
-    s.add_argument("name", help="unique in the run, e.g. leader-1, leader-1.w2, bs-r3-systematic")
+    s.add_argument("name", help="unique in the run, e.g. leader-1, leader-1.w2")
     s.add_argument("--role", required=True, help="manager, leader_explore, leader_exploit or worker (picks the prompt agents/<role>.md and the reminder agents/reminders/<role>.md)")
     s.add_argument("--team", help="team id (e.g. T1): GPU jobs are charged to it. Workers: the leader's team")
     s.add_argument("--cwd", help="working directory (workers: their workspace; default: the run folder)")
-    s.add_argument("--persona", help="brainstormers: a persona name from the flavor's agents/personas/ "
-                                     "(or a file), appended to the prompt")
+    s.add_argument("--persona", help="optional: a persona file (or a name in the flavor's agents/personas/), "
+                                     "appended to the prompt (v2 has no personas by default)")
     s.add_argument("--prompt-file", action="append",
                    help="replace the default prompts (repeatable, in order); rarely needed")
     s.add_argument("--model", help="default: the role's model in the run's config.md, else claude-opus-5-5")

@@ -73,7 +73,7 @@ start_server_bench() {   # start_server_bench <num_prompts> <concurrency> <out_d
   _launch_server "$@"
   _bench_client "$n" "$c" "$d" --ready-check-timeout-sec 1000 &
   local bp=$!
-  _wait_server || { kill $bp 2>/dev/null; return 1; }
+  _wait_server || { pkill -P $bp 2>/dev/null; kill $bp 2>/dev/null; wait $bp 2>/dev/null; return 1; }   # pkill: the client runs as a child of the subshell
   curl -s "localhost:$PORT/metrics" > "$d/metrics_before.txt"
   wait $bp; local rc=$?
   _bench_done "$d"

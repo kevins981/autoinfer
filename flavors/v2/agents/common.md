@@ -137,6 +137,9 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   leader may request a resync from the manager.
 - `official_eval <record id>` (leaders): the only way a number becomes official.
 - `agent`: start, list and stop agents (the manager also uses `agent announce` and `agent remind`).
+- **Run these tools as commands on their own** (`gpu cancel 12`, not `cd … && gpu cancel 12 && …`).
+  A tool command on its own is pre-approved. A chained command goes through the permission check,
+  which may block it, e.g. cancelling another agent's job.
 
 ## GPU time
 - GPUs are the scarce resource. A **GPU-minute** = one minute of a job holding the GPUs (all of

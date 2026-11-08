@@ -24,19 +24,28 @@ your GPU time. Aim for directions that could beat the champion by a wide margin.
   `gpu status` shows your balance.
 - **The proposal** (write it to `proposals/<team>-<n>.md`, then message the manager the path) contains:
   - **a roadmap:** the steps from here to the finished direction;
-  - **a forecast:** "when the roadmap is done, I expect X% over the current champion". Break it
-    into parts and mark each as **measured** (cite the GPU job or record) or **assumed**;
+  - **a forecast**, with two numbers:
+    - **the payoff if it works:** "if the roadmap works as planned, X% over the current champion";
+    - **your central estimate and the odds:** what you honestly expect, e.g. "central +7%, about
+      a 40% chance of the full payoff".
+
+    Break the forecast into parts and mark each as **measured** (cite the GPU job or record) or
+    **assumed**;
   - **the GPU time you need.**
-- **The bar is a forecast of at least 10% over the current champion.** The champion keeps moving,
-  so the bar is re-checked at every resync. If the manager funds you, you get a starting grant.
+- **The bar: the payoff if it works must be at least 10% over the current champion.** Your central
+  estimate and odds are not gated, so give them honestly: a low-odds, high-payoff direction can be
+  funded. The champion keeps moving, so the bar is re-checked at every resync. If the manager funds
+  you, you get a starting grant.
 - **The manager checks that the forecast is plausible and honestly built.** It doesn't have to
   fully understand or agree with your idea.
 - **Send short progress reports** as often as the manager asks.
 - **Request a resync whenever you like**, usually when your grant is nearly used up. Keep a little
   in reserve for it. Report what you planned, what you measured, and any pivots. Then:
   - **you beat the champion, or measurably confirmed a milestone:** you get more GPU time;
-  - **more of your forecast is measured now, and it still clears the bar:** you get more GPU time;
-  - **nothing new measured, or the forecast fell below the bar:** you get a last-chance grant.
+  - **more of your forecast is measured now, and the payoff if it works still clears the bar:**
+    you get more GPU time;
+  - **nothing new measured, or the payoff if it works fell below the bar:** you get a last-chance
+    grant.
     After a second last chance in a row, the team is shut down and replaced; you write up what
     you learned first.
 - **Changing your plan is fine.** Learning and pivoting is how good ideas develop. But a pivot
@@ -73,7 +82,7 @@ are suggestions, not steps to follow, and you can ignore any of them.
     right for this model, this hardware and this workload.
 
 ## What you hear from others
-- **Every new champion, from any team.** It raises the bar for your forecast. Check whether your
+- **Every new champion, from any team.** It raises the bar for your payoff. Check whether your
   gains stack with the new champion or replace part of it.
 - **Other teams' proposals and resync reports.** Read them for ideas and facts. You may build on
   anything another team found; say whose it was.

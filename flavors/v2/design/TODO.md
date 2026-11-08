@@ -39,6 +39,19 @@ decided.
 - Done: WebSearch and WebFetch are in the v2 allow list. v1's deny rule on fetching the autoinfer
   repository stays (in `confine()`).
 
+## From test-6-smoke (2026-11-08)
+- Done: the manager's chained `gpu cancel` was blocked by the auto-mode check. Prompts now say to
+  run tool commands on their own, and the manager may cancel any job.
+- Done: the bar applies to the payoff if the roadmap works; the central estimate and odds are not
+  gated.
+- Done: a ruling on trained draft heads is in the seeded task definition
+  (`tools/seed_from_test5.sh`).
+- Watch in the next run:
+  - the manager closed T4 at its first resync with no last-chance grant, and opened no
+    replacement exploit team (both against the funding policy; haiku);
+  - explore leaders built their proposals from test-5's KB in about 10 steps, with no web
+    research, no profiling and no code reading (anchoring).
+
 ## Other
 - **Reminder prompts via hooks**, so long-running agents keep their instructions.
 - **Judging v2:**

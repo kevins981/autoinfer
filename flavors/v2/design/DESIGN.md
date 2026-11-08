@@ -99,14 +99,18 @@ decides whether its work continues and gets resources.**
 - **Proposal:** the team first works alone (microbenchmarks, napkin math) and then sends the
   manager:
   - a roadmap;
-  - a forecast: "when the roadmap is done, I expect X% speedup", built from its measurements and
-    calculations;
+  - a forecast built from its measurements and calculations, with two numbers: the **payoff if
+    the roadmap works** ("X% over the champion"), and its honest **central estimate and odds**;
   - the GPU time it needs.
-- **Bar:** the forecast must beat the current champion by **at least 10%**. The champion keeps
-  moving, so the bar is checked against the current champion at every review.
+- **Bar:** the **payoff if it works** must beat the current champion by **at least 10%**. The
+  champion keeps moving, so the bar is checked against the current champion at every review.
+- **The central estimate and odds are reported but not gated** (human decision, 2026-11-08, after
+  test-6-smoke). In the smoke run, a hard bar on the central forecast held back T3's honest +7%
+  central estimate and funded T2's +10%, which rested mostly on one assumed number. So the bar
+  rewarded optimism. The manager weighs the odds when sizing grants instead.
 - **Review:** the manager checks three things:
   1. the forecast is broken into parts, each marked as measured (citing the job) or assumed;
-  2. the total clears the current champion by at least 10%;
+  2. the payoff if it works clears the current champion by at least 10%;
   3. the GPU time asked for is within limits.
 
   If they pass, the team gets a grant. If not, it revises.
@@ -132,8 +136,8 @@ decides whether its work continues and gets resources.**
   | What the team shows | Decision |
   |---|---|
   | Beat the champion, or a milestone measurably confirmed | Extend, possibly with a bigger grant |
-  | The measured part of the forecast grew, and the forecast still clears the bar | Extend |
-  | Nothing new measured, or the forecast fell below the bar | **Last chance:** a smaller grant. The team says what it will measure with it |
+  | The measured part of the forecast grew, and the payoff if it works still clears the bar | Extend |
+  | Nothing new measured, or the payoff if it works fell below the bar | **Last chance:** a smaller grant. The team says what it will measure with it |
   | A second last chance in a row | **Shut the team down** and launch a new team of the same type, so the ratio holds. The closing team first writes up what it learned |
 
 - **Re-forecasting isn't progress.** Rewriting the forecast is fine, but a forecast that stays as

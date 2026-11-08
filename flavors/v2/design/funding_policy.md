@@ -16,10 +16,15 @@ The highest total speedup the run achieves from its fixed GPU pool, across all t
   than a normal extension.
 
 ## Explore proposals
-A proposal has a roadmap, a forecast and the GPU time requested. Fund it if:
+A proposal has a roadmap, a forecast and the GPU time requested. The forecast gives the
+**payoff if the roadmap works** and the team's honest **central estimate and odds**. Fund it if:
 1. the forecast is broken into parts, each marked measured (citing a job or record) or assumed;
-2. the forecast clears the **current** champion by at least **10%**;
+2. the **payoff if it works** clears the **current** champion by at least **10%**;
 3. the GPU time requested is within reason for the roadmap.
+
+**The central estimate and odds are not gated.** A hard bar on the central estimate would reward
+optimistic forecasts and penalise honest ones. Weigh the odds when sizing grants instead: a
+low-odds, high-payoff direction is worth funding in small steps.
 
 **The manager is not a gate.** It checks that the forecast is plausible and honestly built, not
 that it agrees with the idea. When in doubt, fund it and let the measurements decide.
@@ -34,8 +39,8 @@ A team can request a resync at any time.
 | What the team shows | Decision |
 |---|---|
 | Beat the champion, or a milestone measurably confirmed | Extend, possibly with a bigger grant |
-| The measured part of the forecast grew, and the forecast still clears the bar | Extend |
-| Nothing new measured, or the forecast fell below the bar | Last chance: a smaller grant. The team says what it will measure with it |
+| The measured part of the forecast grew, and the payoff if it works still clears the bar | Extend |
+| Nothing new measured, or the payoff if it works fell below the bar | Last chance: a smaller grant. The team says what it will measure with it |
 | A second last chance in a row | Close the team and open a new one of the same type. The closing team writes up what it learned first |
 
 - **For exploit teams, progress means a win.**

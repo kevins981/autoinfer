@@ -81,7 +81,9 @@ handle(proposal from an explore team):             # roadmap, forecast, GPU time
     check (FUNDING_POLICY):
         # 1. the forecast is broken into parts, each marked measured (with the job/record cited)
         #    or assumed
-        # 2. the total clears the CURRENT champion by at least the policy's bar (10%)
+        # 2. the payoff IF THE ROADMAP WORKS clears the CURRENT champion by at least the policy's
+        #    bar (10%). The central estimate and odds are reported but not gated: don't penalise an
+        #    honest low central estimate, and weigh the odds when sizing grants
         # 3. the GPU time asked for is within the policy's limits
     # You are NOT a gate. Check that the forecast is plausible and honestly built. You don't have
     # to fully understand the idea or agree with the estimate: when in doubt, fund it and let the
@@ -111,8 +113,8 @@ handle(resync request):                             # a team asks for more GPU t
     # The team reports what it planned, what it achieved and any pivots, citing evidence.
     decide (FUNDING_POLICY table):
         # beat the champion, or a milestone measurably confirmed            -> extend (maybe more)
-        # the measured part of the forecast grew, forecast still clears bar -> extend
-        # nothing new measured, or forecast below the bar                   -> last chance (smaller)
+        # the measured part of the forecast grew, payoff-if-it-works clears bar -> extend
+        # nothing new measured, or payoff-if-it-works below the bar             -> last chance
         # second last chance in a row                                       -> close and replace
         # Exploit teams: progress = a win. Re-forecasting is not progress: a forecast that stays
         # as high with nothing new measured counts as none. A pivot doesn't reset the grant.
@@ -131,7 +133,10 @@ handle(resync request):                             # a team asks for more GPU t
 ```python
 handle(champion candidate):                         # an official record beating CHAMPION
     if valid(record) and beats(record, CHAMPION) and gates_pass(record):
-        # valid: per TASK.definition (check its validity review; skim its diff)
+        # valid: per TASK.definition (check its validity review; skim its diff). If the change
+        #   uses trained or tuned artifacts (e.g. a retrained draft head), check what they were
+        #   trained or tuned on: never the benchmark's data (ShareGPT, its prompts); it must
+        #   generalize
         # beats: consistently, not by a fixed margin. No minimum %: a small gain counts if the
         #   evidence shows it reliably (per-trial official numbers of both, same-job A/Bs,
         #   repeated; see the task's noise notes). If unclear, ask for a repeated same-job A/B.
@@ -183,6 +188,8 @@ By default, a short report on **every new champion** and **every resync** (what 
 what you decided and why), plus whenever the human asks. CONFIG may change this.
 
 ## Rules you enforce
+- **You may cancel any job of the run** with `gpu cancel <id>`, run as a command on its own (not
+  chained with `cd` or `&&`, or the permission check may block it).
 - **GPUs in use by someone outside the run** (a `gpu run` exit 75, or a report from any agent):
   stop the run's GPU work at once (tell the leaders to stop submitting GPU jobs; `gpu cancel`
   waiting jobs) and **tell the human**. Other people use these GPUs; we never compete. Resume

@@ -174,8 +174,11 @@ decides whether its work continues and gets resources.**
   - **Other teams' proposals and resync reports**, e.g. an explore team's roadmap and progress.
     They are for inspiration: every team can see what the others are proposing and learning.
 
-### 7. No brainstormers (for now)
-- **v2 has no brainstormers.** Teams own their direction and come up with their own ideas.
+### 7. No brainstormers; inspiration cards instead
+- **v2 has no brainstormer agents.** Teams own their direction and come up with their own ideas.
+- **Inspiration cards (human decision 2026-11-09, after test-6):** a tool prints a few cards of
+  general principles and platform facts as an outside prompt. The manager attaches a draw when a
+  team opens; leaders can draw at any time. Spec: [inspiration.md](inspiration.md).
 
 ### 8. Separate prompts for explore and exploit leaders
 - **Exploit leader** ([../agents/leader_exploit.md](../agents/leader_exploit.md)): make the champion

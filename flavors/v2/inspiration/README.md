@@ -4,6 +4,7 @@ Short cards that give leaders a different angle to think from. The `inspire` too
 prints a few of them; the manager attaches a draw when a team opens, a leader can draw at any
 time, and the manager may offer a draw at a last chance.
 
+- Spec: [../design/inspiration.md](../design/inspiration.md).
 - `principles/`: general principles of where systems lose time. One card per file. Nothing in
   them is specific to inference, to a task, or to an earlier run.
 

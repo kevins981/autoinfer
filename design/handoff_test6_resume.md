@@ -1,6 +1,6 @@
 # Handoff: resuming v2 test-6 after the measurement-cost changes (2026-11-09)
 
-For the designer session that resumes test-6. Two changes made today should show up in the
+For the designer session that resumes test-6. Three changes made today should show up in the
 resumed run; this says what they are, how test-6 gets them, and what to check. Background and
 decisions: [measurement_cost.md](measurement_cost.md). Commits: `efd99c3`, `5d76701` (+ the sync
 of test-6's task copy, uncommitted run state).
@@ -50,6 +50,47 @@ of test-6's task copy, uncommitted run state).
 - Known gaps: `abba.sh` compares two *workspaces*; a flag-only or env-only change needs two
   workspaces or `--env-b`/`--args-b` (documented in the script header). It has not yet been used
   by an agent; the first use may surface rough edges (report them to the designer).
+
+## Change 3: inspiration cards (`inspire`)
+- What: `flavors/v2/tools/inspire` prints 5 principle + 5 hardware + 5 software cards (about
+  15,500 characters), with fixed framing text. Spec: `flavors/v2/design/inspiration.md`. The
+  manager attaches one draw, unchanged, to each new team's first task; a leader can draw again at
+  any time; the manager may offer a draw at a last chance. Each draw asks the leader for 2-3 lines
+  in its notes.
+- How test-6 gets it: done by hand 2026-11-09 (uncommitted run state): the three `inspiration`
+  lines in `runs/test-6/config.md`, and `inspire` allowed in `agent_settings.json` and
+  `manager_settings.json`. Leaders started after the resume get the new prompts. A manager
+  session that is **resumed with its old context** has the old `open_teams()`: tell it in the
+  resume message, e.g.:
+  > When you open a team, first run `inspire --team <team>` and append the saved file
+  > (`inspiration/<team>-<n>.md`) to the leader's first task, unchanged. Re-read
+  > `flavors/v2/agents/manager.md` (`open_teams()` and the resync section).
+- Tested: one throwaway run with one leader (Sonnet); all commands worked with test-6's settings.
+  Not yet used in a real run.
+- Check that it works as built:
+  - `runs/test-6/inspiration/draws.jsonl`: one draw `by` the manager for every team opened after
+    the resume, made before the leader started; later draws `by` leaders.
+  - Each new leader's first task (first line of `agents/<leader>/inbox.jsonl`) ends with the
+    saved draw, identical to `inspiration/<team>-1.md`: nothing picked, dropped, reordered or
+    commented on by the manager, and no direction added.
+  - Each draw has all three sections (a missing one means a config line is wrong; the tool
+    warns on stderr). No `inspire` call blocked by permissions (`events.jsonl`, `err.log`).
+- Check whether it helps (the real question):
+  - **Notes:** does each leader write its 2-3 lines in `local_kb/<leader>.md`? Are they specific
+    to this system and a named card, or generic, or "nothing"? Collect them per team.
+  - **Use:** does any proposal or experiment trace back to a card (leader's reasoning in
+    `events.jsonl`, the proposal text)? Which cards, and which kind (principle, hardware,
+    software)? An idea counts only once it is measured.
+  - **Verification:** when a leader builds on a hardware or software card, does it check the
+    detail itself (web, docs, a probe) before relying on it?
+  - **Order:** does the leader look at the system first (task, profiles), as the cards ask, or
+    go straight from a card to a proposal (anchoring)?
+  - **Voluntary draws:** does any leader run `inspire` again, and when (stuck, after a failed
+    test, at a last chance)? Does it use `--list` / `--show`?
+  - **Diversity:** are the new teams' directions more varied than those of test-6's earlier
+    teams, or do they converge on the same few as before?
+  - **Cost:** do leaders spend long on the cards without getting anywhere, or ignore them?
+- Don't steer: if the cards go unused, record it; don't prompt the agents about them mid-run.
 
 ## Not in test-6 (by decision)
 - The step-replay / `vllm bench forward` tier is being evaluated separately (measurement_cost.md,

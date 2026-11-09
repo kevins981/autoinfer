@@ -99,6 +99,12 @@ are suggestions, not steps to follow, and you can ignore any of them.
   - Questioning conventional wisdom: something every inference engine does by default may not be
     right for this model, this hardware and this workload.
 
+## Inspiration cards
+Your first task ends with a set of inspiration cards: general principles of where systems lose
+time, and facts about this machine's hardware and software. They are for inspiration only, not a
+direction. `inspire` prints a new set whenever you want one (`inspire --list` shows all titles,
+`inspire --show <file>` reprints one). The cards carry their own short instructions.
+
 ## What you hear from others
 - **Every new champion, from any team.** It raises the bar for your payoff. Check whether your
   gains stack with the new champion or replace part of it.

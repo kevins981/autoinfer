@@ -2,8 +2,9 @@
 
 **Status:** behavior agreed with the human on 2026-11-09, after test-6. The principle cards are
 written ([../inspiration/principles/](../inspiration/principles/)), and so are the hardware and
-software cards for the 2x RTX 4090 machine. **Not implemented yet:** the `inspire` tool, and the
-changes to the manager and leader prompts.
+software cards for the 2x RTX 4090 machine. The `inspire` tool (`tools/inspire`, tests in
+`tools/tests/test_inspire.sh`) and the manager and leader prompt changes are implemented; not yet
+used in a run.
 
 This file is the source of truth for how the mechanism should behave.
 
@@ -71,14 +72,23 @@ clear which machine the cards belong to. A run on another machine needs its own 
   from the principles.
 
 ## The tool: `inspire`
-- **It draws a few cards at random and prints them** in full.
-- **It logs every draw:** the team, the time and the cards drawn. The log shows later whether the
-  cards had any effect.
+- **It draws a few cards of each kind at random and prints them** in full: by default 3
+  principle, 3 hardware and 3 software cards. The counts and the platform folders are set in the
+  run's `config.md` (0 turns a kind off).
+- **A team sees every card of a kind before it sees one twice.**
+- **It saves each draw** to `inspiration/<team>-<n>.md` in the run folder, so the manager can
+  attach it unchanged.
+- **It logs every draw** in `inspiration/draws.jsonl`: the team, the time, who ran it and the
+  cards drawn. The log shows later whether the cards had any effect.
+- **`inspire --list` and `inspire --show <file>`** list all titles and reprint one card.
 - **The framing text comes from the tool,** so every draw reads the same. It says:
   - these are general principles and facts about the platform, offered for inspiration only; nobody chose them for this team,
     and they are not a direction or an assignment;
   - look at the system yourself first (read the task, profile, find where the time goes), then
     come back to the cards; using none of them is fine;
+  - the hardware and software cards are high-level pointers, not a reference: they may be
+    incomplete, out of date or wrong for the case at hand, so do your own research and verify any
+    detail before relying on it;
   - you can draw again at any time;
   - you can always do your own web research to develop an idea or find more;
   - after you have considered a draw, write 2-3 lines in your notes on what it made you think
@@ -111,5 +121,4 @@ clear which machine the cards belong to. A run on another machine needs its own 
 ## Open
 - Whether the model is worth cards of its own.
 - How the tool picks the platform folders for a run (the task names the machine).
-- The number of cards per draw and the mix.
-- Where the draw log lives in the run folder.
+- Whether 3 + 3 + 3 is the right size and mix (set after seeing a run use it).

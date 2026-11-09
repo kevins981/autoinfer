@@ -39,6 +39,15 @@ Agents get the essentials in `agents/common.md`; every tool's `--help` (and `<to
   up in the diff.
 - Workspaces are kept after an experiment; delete one (`ws rm`) only if it is broken or useless.
 
+## `inspire`: inspiration cards
+- `inspire`: prints a set of cards for your team (general principles, and facts about this
+  machine's hardware and software) and saves the same text to
+  `$AUTOINFER_RUN/inspiration/<team>-<n>.md`. For inspiration only; the cards say how to use them.
+- `inspire --list` / `inspire --show <file>`: all titles / one card again.
+- Manager: `inspire --team <team>` when a team opens (attach the saved file to the first task,
+  unchanged), and optionally at a last chance.
+- How many cards of each kind: the `inspiration` lines of the run's `config.md`.
+
 ## `gpu`: the GPU queue (all GPU work goes through it)
 - `gpu run --timeout <min> [--label L] -- <command>`: runs your command with exclusive use of the
   GPUs, one job at a time for the whole run, first come first served. **Run it as a background

@@ -67,11 +67,15 @@ open_teams():                                       # from CONFIG: number of tea
     for each team in CONFIG (ids T1, T2, ...; never reuse an id):
         gpu team open <team> --type explore|exploit         # grants the seed automatically
         if exploit: gpu grant <team> <start size> --kind start --note "exploit team start"
+        inspire --team <team>                               # prints a set of inspiration cards and
+            # saves it to inspiration/<team>-<n>.md. Append that file to the first task UNCHANGED:
+            # don't pick, drop, reorder or comment on cards. It carries its own instructions.
         agent start leader-<k> --role leader_explore|leader_exploit --team <team> --task-file <f>
             # the first task is short: team id and type, the current CHAMPION (record id +
             # official numbers), its grant status (exploit: seed + start; explore: seed only,
             # send a proposal to get a start grant), and where things are (bank/, shared_kb.md,
-            # announcements.md, task/). NO direction: the team chooses its own.
+            # announcements.md, task/), then the inspiration cards. NO direction: the team
+            # chooses its own, and the cards are not one.
             # Point to earlier teams' write-ups as what was tried and what is still open, not as
             # a list of dead ends; don't lead with "replaces <team>, which closed".
         teams/<team>.md = new track record          # see "Track records"
@@ -130,6 +134,8 @@ handle(resync request):                             # a team asks for more GPU t
         # Exploit teams: progress = a win. Re-forecasting is not progress: a forecast that stays
         # as high with nothing new measured counts as none. A pivot doesn't reset the grant.
     extend / last chance: gpu grant <team> <N> --kind extension|last-chance --note "<why>"
+                          # at a last chance you MAY also offer the team a new set of cards
+                          # (`inspire --team <team>`, sent unchanged). Optional: your call.
                           agent announce "team <team> (<type>) received <N> GPU-min to continue
                                           <direction>; resync report: reports/<file>"
     close and replace:    ask the leader for a write-up of what it learned (into reports/), then

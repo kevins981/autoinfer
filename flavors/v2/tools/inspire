@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""inspire: prints a set of inspiration cards for a team.
+
+The cards are short: general principles of where systems lose time, and facts about this
+machine's hardware and software. They are prompts to think with, not directions.
+
+Usage:
+  inspire                      # a set for your own team ($AUTOINFER_TEAM)
+  inspire --team T3            # manager: a set for team T3 (e.g. when the team opens)
+  inspire --list               # the titles of all cards
+  inspire --show <file name>   # print one card again, e.g. --show 14-imbalance.md
+
+Each call prints the cards and also saves the same text to
+$AUTOINFER_RUN/inspiration/<team>-<n>.md (the path is printed on the last line, to stderr), so the
+manager can attach it to a task file unchanged. Each call is logged in
+$AUTOINFER_RUN/inspiration/draws.jsonl. A team sees every card of a kind before it sees one twice.
+
+How many cards of each kind, and which platform folders, come from the run's config.md:
+  - inspiration cards per draw: principles 3, hardware 3, software 3
+  - inspiration hardware cards: <folder under flavors/v2/inspiration/>
+  - inspiration software cards: <folder under flavors/v2/inspiration/>
+Spec: flavors/v2/design/inspiration.md.
+"""
+import argparse, fcntl, json, os, random, re, sys, time
+from datetime import datetime, timezone
+from pathlib import Path
+
+FLAVOR = Path(__file__).resolve().parent.parent
+CARDS = FLAVOR / "inspiration"
+KINDS = ("principles", "hardware", "software")
+HEAD = {"principles": "General principles", "hardware": "This machine: hardware",
+        "software": "This machine: software"}
+
+INTRO = """# Inspiration cards
+
+These cards are offered for inspiration only. Nobody chose them for your team, and they are not a
+direction or an assignment.
+
+- **Look at the system yourself first:** read the task, profile, find where the time goes. Then
+  come back to the cards. Using none of them is fine.
+- **The principle cards are general.** They say nothing about this system; applying them is your
+  work.
+- **The hardware and software cards are high-level pointers, not a reference.** They may be
+  incomplete, out of date or wrong for your case, and each says how it was checked. Do your own
+  research and verify any detail before you rely on it.
+"""
+
+OUTRO = """---
+- You can get another set at any time: `inspire`.
+- You can always do your own web research, to develop an idea or to find more.
+- After you have considered these cards, write 2-3 lines in your notes (LOCAL_KB) on what they
+  made you think about, even if the answer is "nothing".
+"""
+
+
+def die(msg, code=1):
+    print(f"inspire: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def config(run):
+    """Counts per kind and the platform folders, from the run's config.md (else the flavor's default)."""
+    p = run / "config.md" if run and (run / "config.md").exists() else FLAVOR / "config_default.md"
+    text = p.read_text()
+    counts, folders = {k: 3 for k in KINDS}, {"principles": "principles"}
+    m = re.search(r"^\s*-\s*inspiration cards per draw\s*:(.*)$", text, re.M)
+    if m:
+        for k in KINDS:
+            n = re.search(rf"{k}\s+(\d+)", m.group(1))
+            if n:
+                counts[k] = int(n.group(1))
+    for k in ("hardware", "software"):
+        m = re.search(rf"^\s*-\s*inspiration {k} cards\s*:\s*(\S+)", text, re.M)
+        folders[k] = m.group(1) if m else None
+    return counts, folders
+
+
+def pool(folder):
+    d = CARDS / folder if folder else None
+    return sorted(d.glob("[0-9]*.md")) if d and d.is_dir() else []
+
+
+def title(path):
+    return path.read_text().splitlines()[0].lstrip("# ").strip()
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--team", help="the team the cards are for (default: $AUTOINFER_TEAM)")
+    ap.add_argument("--list", action="store_true", help="list the titles of all cards")
+    ap.add_argument("--show", metavar="FILE", help="print one card by file name")
+    a = ap.parse_args()
+
+    run = Path(os.environ["AUTOINFER_RUN"]).resolve() if os.environ.get("AUTOINFER_RUN") else None
+    counts, folders = config(run)
+    pools = {k: pool(folders.get(k)) for k in KINDS}
+
+    if a.list:
+        for k in KINDS:
+            print(f"## {HEAD[k]} ({folders.get(k) or 'none configured'})")
+            for p in pools[k]:
+                print(f"  {p.name}: {title(p)}")
+        return
+    if a.show:
+        hits = [p for k in KINDS for p in pools[k] if p.name == a.show]
+        if not hits:
+            die(f"no card named {a.show} (see `inspire --list`)")
+        print("\n\n".join(p.read_text().rstrip() for p in hits))
+        return
+
+    if not run:
+        die("AUTOINFER_RUN is not set (the run folder)")
+    team = a.team or os.environ.get("AUTOINFER_TEAM")
+    if not team:
+        die("which team? Pass --team <team> (AUTOINFER_TEAM is not set)", 2)
+    if a.team and os.environ.get("AUTOINFER_TEAM") and a.team != os.environ["AUTOINFER_TEAM"]:
+        die("--team is for the manager; leave it out to get cards for your own team", 2)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", team):
+        die(f"bad team name: {team}", 2)
+
+    d = run / "inspiration"
+    d.mkdir(parents=True, exist_ok=True)
+    with open(d / ".lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        log = d / "draws.jsonl"
+        past = [json.loads(l) for l in log.read_text().splitlines() if l.strip()] if log.exists() else []
+        mine = [r for r in past if r["team"] == team]
+        seed = random.SystemRandom().randrange(2**32)
+        rng = random.Random(seed)
+        drawn, parts = {}, [INTRO]
+        for k in KINDS:
+            names = [p.name for p in pools[k]]
+            n = min(counts[k], len(names))
+            if n == 0:
+                continue
+            # A team sees every card of a kind before it sees one twice: take cards it has not
+            # had since its last full pass, and start a new pass when those run out.
+            seen = []
+            for r in mine:
+                for c in r["cards"].get(k, []):
+                    seen.append(c)
+                    if set(seen) >= set(names):
+                        seen = []
+            fresh = [c for c in names if c not in seen]
+            pick = rng.sample(fresh, min(n, len(fresh)))
+            if len(pick) < n:
+                pick += rng.sample([c for c in names if c not in pick], n - len(pick))
+            drawn[k] = pick
+            parts.append(f"## {HEAD[k]}\n")
+            for c in pick:
+                body = (CARDS / folders[k] / c).read_text().rstrip()
+                parts.append("#" * 2 + body + f"\n\n(card: `{c}`)\n")   # card titles become ###
+        if not drawn:
+            die("no cards found (check the inspiration lines in config.md)")
+        parts.append(OUTRO)
+        text = "\n".join(parts)
+        num = len(mine) + 1
+        out = d / f"{team}-{num}.md"
+        out.write_text(text)
+        rec = {"time": datetime.fromtimestamp(time.time(), timezone.utc).astimezone().isoformat(timespec="seconds"),
+               "team": team, "n": num, "by": os.environ.get("AUTOINFER_AGENT") or "human",
+               "cards": drawn, "folders": {k: folders.get(k) for k in drawn}, "seed": seed,
+               "file": str(out.relative_to(run))}
+        with open(log, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+    print(text)
+    print(f"inspire: saved to {out}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

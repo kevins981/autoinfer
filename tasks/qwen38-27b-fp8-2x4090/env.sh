@@ -37,13 +37,17 @@ export FLASHINFER_WORKSPACE_BASE=$RUN_CACHE/flashinfer
 export CUDA_CACHE_PATH=$RUN_CACHE/nv-compute
 export XDG_CACHE_HOME=$RUN_CACHE/xdg
 export TORCH_EXTENSIONS_DIR=$RUN_CACHE/torch_extensions   # torch cpp_extension load()/load_inline JIT builds
+# JIT extension compiles go through ccache via nvcc_jit.sh (sources copied to a content-addressed
+# path first, so a new workspace path does not recompile a known source: see that script)
+export AUTOINFER_JIT_SRC=$RUN_CACHE/jit_src
+export PYTORCH_NVCC=$AUTOINFER_ROOT/tasks/qwen38-27b-fp8-2x4090/nvcc_jit.sh
 export PYTHONNOUSERSITE=1
 
 # Build settings: RTX 4090 = sm_89; moderate parallelism (shared server)
 export TORCH_CUDA_ARCH_LIST="8.9" MAX_JOBS=16 NVCC_THREADS=2
 
 mkdir -p $CCACHE_DIR $TMPDIR $HF_HOME $TRITON_CACHE_DIR $TORCHINDUCTOR_CACHE_DIR $VLLM_CACHE_ROOT \
-         $FLASHINFER_WORKSPACE_BASE $CUDA_CACHE_PATH $XDG_CACHE_HOME $TORCH_EXTENSIONS_DIR
+         $FLASHINFER_WORKSPACE_BASE $CUDA_CACHE_PATH $XDG_CACHE_HOME $TORCH_EXTENSIONS_DIR $AUTOINFER_JIT_SRC
 
 # Activate the env + its CUDA toolkit (overrides /usr/local/cuda 12.6). See qwen38_opt/env.sh.
 _autoinfer_flags=$-; set +u                   # conda's activate scripts break under set -u

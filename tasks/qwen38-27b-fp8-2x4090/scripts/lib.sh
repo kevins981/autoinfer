@@ -21,6 +21,10 @@
 # compare a change against BASE measured the same way, ideally in the same job.
 # Measure performance on a freshly started server each time (start_server_bench), not with repeated
 # benches on one server: state left by earlier requests (caches) can skew later numbers.
+# For a same-job A/B of two workspaces (interleaved fresh starts, same prompts, early stop on a
+# clear loss, verdict line) use scripts/abba.sh instead of writing your own loop:
+#   abba.sh <out_dir> --a <ws of the reference> --b <ws of the change> [--prompts 300] [--order ABBA]
+#           [--args "$(cat $AUTOINFER_RUN/bank/<champion>/serve_args.txt)"] [--env-b "FLAG=1"]
 TASK_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$TASK_DIR/harness/serve_args.sh"           # MODEL, SERVE_ARGS
 PORT=${PORT:-8000}

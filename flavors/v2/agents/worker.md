@@ -40,6 +40,11 @@ worker.run(task) -> report:
 - Unofficial numbers (smoke tests, microbenchmarks, short benches, profiles) are for deciding
   what to do next; they never count. Say how sure a measurement is (the task's noise notes;
   same-job A/B and repeats settle small gains) or when it is shaky. Don't oversell.
+- **Don't spend GPU minutes on a comparison the first pair already settled.** For a same-job A/B
+  use the task's `scripts/abba.sh` (fresh interleaved starts, same prompts): it stops after the
+  first A,B pair when B clearly loses (the task's stop-loss rule) and prints a verdict line. A
+  stopped run is a *screen negative (1 pair)*: say so in your report, not "B is slower".
+  Only losses stop early; a win needs every planned start.
 - **Don't edit a workspace while a GPU job uses it.** Each inference server loads the workspace's
   code when it starts (Python reads the files then), not when you submitted the job: an edit made
   mid-job silently changes what the later inference servers in that job run. To keep working in

@@ -81,6 +81,8 @@ autoinfer/
   LLM judges, resources used, single-agent control).
 - [design/principles.md](design/principles.md): agreed design principles. Respect them; propose
   changes to the human explicitly instead of silently deviating.
+- [design/measurement_cost.md](design/measurement_cost.md): where a run's GPU minutes go and how
+  we make each experiment cheaper (JIT compile cache, early stopping, the planned step-replay tier).
 - [design/open_questions.md](design/open_questions.md): undecided items and TODOs shared by all
   flavors (infrastructure, tasks). Flavor-specific TODOs are in each flavor's `design/TODO.md`.
 - v1 implementation status, decisions and progress: [flavors/v1/design/STATUS.md](flavors/v1/design/STATUS.md).

@@ -95,7 +95,10 @@ behavior on symlinked paths is untested.
 ## Task: qwen38-27b-fp8-2x4090
 - Done 2026-11-06: qwen task ported (TASK.md, harness, scripts/, baseline/ raw profiles, PROFILING.md).
 - Cheap-funnel tools, built once: a microbenchmark harness with real shapes, and a "load once, run
-  one batched forward pass, profile" script.
+  one batched forward pass, profile" script. 2026-11-09: superseded by the step-replay tier in
+  [measurement_cost.md](measurement_cost.md) (record a trial's schedule, replay the full step on
+  both ranks); `scripts/abba.sh` (fresh-start A/B with early stopping) and the JIT compile cache
+  (`nvcc_jit.sh`) are done.
 - The task requires FP8 KV, so the baseline must be re-measured with
   `--kv-cache-dtype fp8 --kv-cache-memory 5368709120`, and the GSM8K reference re-measured too.
 - Write the correctness criteria (what a validity review checks) (forbidden: precision changes beyond the task's,

@@ -21,6 +21,15 @@ the model computes.
   running all of one first, so drift during the job can't pass for a gain. There is no minimum gain: a change counts if its gain shows up
   consistently (e.g. every trial above the reference's), however small. The larger the gain,
   the less repetition it needs to be convincing.
+  **Fresh-start noise, measured** (42 official trials, pairs on the same code in the same job,
+  400 prompts): per-start sigma ~0.3-0.5%, median pair difference 0.3%, one 2.6% outlier in 20
+  pairs. So the difference of one A,B pair has sigma ~0.5-0.7%. **Stop early on a clear loss:**
+  if after the first A,B pair B trails A by more than 1.5% (~2.5 sigma), the rest of the A/B is
+  not worth its GPU minutes; record the result as a *screen negative (1 pair)*, not as a measured
+  fact (a single pair can be the outlier, and weak negatives recorded as facts deter later work
+  wrongly). Wins get no shortcut: a win needs every planned start, all B above all A.
+  `scripts/abba.sh` runs this protocol (fresh starts, same prompts, interleaved, early stop,
+  verdict line) for two workspaces.
 - **Score**: output tok/s. **Baseline (record BASE): 635.9 tok/s** (its official result ships with
   the task: `baseline/official/`, `results.json`; runs don't re-measure it).
 - **Latency guard**: a result is invalid if TTFT p99 or TPOT p99 is more than 20% worse than

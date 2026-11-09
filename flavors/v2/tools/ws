@@ -191,6 +191,15 @@ def unbuilt(src_tree, base):
 
 
 def write_env(w, src_tree):
+    g = w / ".unbuilt_guard"
+    g.mkdir(exist_ok=True)
+    (g / "sitecustomize.py").write_text(
+        "# Put first on PYTHONPATH by env.sh only when the workspace's compiled code is unbuilt or stale.\n"
+        "import os, sys\n"
+        "sys.stderr.write('ERROR (workspace guard): ' + os.environ.get('AUTOINFER_WS_GUARD_MSG', "
+        "'unbuilt workspace') + '\\n')\n"
+        "sys.stderr.flush()\n"
+        "os._exit(1)\n")
     cfg = task_cfg()
     env = task_dir() / cfg["env_script"]
     lib = src_tree / cfg["build"]["target_outputs"][cfg["build"]["default_targets"][0]]
@@ -217,6 +226,10 @@ def write_env(w, src_tree):
         f"  fi\n"
         f"  if [ -n \"$_ws_err\" ]; then\n"
         f"    echo \"ws {w.name}: ERROR: $_ws_err. Run: ws build {w.name}\" >&2\n"
+        f"    # A sourced script can't stop its caller, so also make every Python started from this\n"
+        f"    # shell exit at once (the guard folder's sitecustomize.py), even without `set -e`.\n"
+        f"    export AUTOINFER_WS_GUARD_MSG=\"ws {w.name}: $_ws_err. Run: ws build {w.name}\"\n"
+        f"    export PYTHONPATH={w}/.unbuilt_guard:$PYTHONPATH\n"
         f"    unset _ws_lib _ws_ch _ws_err _f\n"
         f"    return 1 2>/dev/null || exit 1\n"
         f"  fi\n"

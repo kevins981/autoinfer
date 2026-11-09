@@ -31,7 +31,9 @@ Agents get the essentials in `agents/common.md`; every tool's `--help` (and `<to
   (`csrc/`, `CMakeLists.txt`, `cmake/`) differs from the baseline and was never built, or changed
   after the last build. Otherwise the workspace would silently run the baseline's compiled kernels
   (found in test-6, KB61). `ws create` says when a copy needs a build, and `ws list` shows
-  `BUILT: NEEDED`. Override only on purpose: `AUTOINFER_ALLOW_UNBUILT=1`.
+  `BUILT: NEEDED`. Because a sourced script can't stop its caller, any Python started from that
+  shell then exits at once with the same message, even without `set -e`. Override only on
+  purpose: `AUTOINFER_ALLOW_UNBUILT=1`.
 - `ws diff <name>`: the change vs the baseline; this is what a record's `change.diff` is. Keep logs,
   results and scratch files **outside the code tree** (e.g. in the workspace folder), or they end
   up in the diff.

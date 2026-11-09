@@ -1,9 +1,9 @@
 # v2 inspiration cards (spec)
 
 **Status:** behavior agreed with the human on 2026-11-09, after test-6. The principle cards are
-written ([../inspiration/principles/](../inspiration/principles/)). **Not implemented yet:** the
-`inspire` tool, and the changes to the manager and leader prompts. Platform cards are still under
-discussion (see "Open").
+written ([../inspiration/principles/](../inspiration/principles/)), and so are the hardware and
+software cards for the 2x RTX 4090 machine. **Not implemented yet:** the `inspire` tool, and the
+changes to the manager and leader prompts.
 
 This file is the source of truth for how the mechanism should behave.
 
@@ -41,10 +41,30 @@ General principles of where systems lose time. Each card is one kind of waste, e
 - **Sources:** the kinds of waste in lean manufacturing; Park et al., "Principles and
   Methodologies for Serial Performance Optimization" (OSDI 2025); TRIZ for the trade-offs card.
 
-### Platform cards (not written yet)
-Features of a specific hardware and software platform: things the teams can't change. They live
-in the flavor in a folder named for the exact platform (server model, GPUs), so it is clear which
-machine they describe.
+### Platform cards (written for one machine)
+Facts and capabilities of a specific machine and software stack: things the teams can't change,
+or tools that are already there. Each folder is named for exactly what it describes, so it is
+clear which machine the cards belong to. A run on another machine needs its own folders.
+
+- **`platform-supermicro-741ge-2x-rtx4090/` (28 cards):** hardware. 19 on the GPU, 6 on
+  communication (PCIe, no direct GPU-to-GPU path), 3 on the host. The GPU gets the most weight,
+  the host the least.
+- **`software-cuda13.0-torch2.14-linux5.15/` (13 cards):** software. Ways to produce GPU code,
+  ready-made libraries, communication software, the Python and framework runtime, and the
+  operating system as an ordinary user sees it.
+- **Format:**
+  - **What it is:** the fact or capability, with numbers;
+  - **What it makes possible:** stated generally. A card never proposes a use in the engine;
+  - **How this was checked:** queried from the device, assembled for the chip, read from
+    documentation, or not checked. Agents should know how far to trust a card;
+  - **Where to read more:** the name of the documentation.
+- **Coverage is wide rather than complete,** and leans towards capabilities that are easy to
+  overlook. What the platform lacks is a card too.
+- **Field terms are fine here** (unlike in the principle cards), but nothing from a task or an
+  earlier run: no measurements of the engine, no findings.
+- **Software is only partly a given.** The version limits, the operating system and the lack of
+  administrator rights are fixed. The compilers and libraries are a toolbox: teams may ignore
+  them or install others in user scope.
 
 ### Not included
 - **ML techniques** such as speculative decoding. They are choices, not givens, and they follow
@@ -55,7 +75,7 @@ machine they describe.
 - **It logs every draw:** the team, the time and the cards drawn. The log shows later whether the
   cards had any effect.
 - **The framing text comes from the tool,** so every draw reads the same. It says:
-  - these are general principles, offered for inspiration only; nobody chose them for this team,
+  - these are general principles and facts about the platform, offered for inspiration only; nobody chose them for this team,
     and they are not a direction or an assignment;
   - look at the system yourself first (read the task, profile, find where the time goes), then
     come back to the cards; using none of them is fine;
@@ -89,7 +109,7 @@ machine they describe.
 - how often draws happen.
 
 ## Open
-- The platform cards: which platform facts and features, and their format.
-- Whether there are other kinds of givens worth cards (the software platform, the model).
+- Whether the model is worth cards of its own.
+- How the tool picks the platform folders for a run (the task names the machine).
 - The number of cards per draw and the mix.
 - Where the draw log lives in the run folder.

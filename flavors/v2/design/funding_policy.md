@@ -42,6 +42,7 @@ A team can request a resync at any time.
 | The measured part of the forecast grew, and the payoff if it works still clears the bar | Extend |
 | Nothing new measured, or the payoff if it works fell below the bar | Last chance: a smaller grant. The team says what it will measure with it |
 | A second last chance in a row | Close the team and open a new one of the same type. The closing team writes up what it learned first |
+| The team recommends closing itself | Close it and open a new one of the same type, as above |
 
 - **For exploit teams, progress means a win.**
 - **Re-forecasting isn't progress.** A forecast that stays as high with nothing new measured

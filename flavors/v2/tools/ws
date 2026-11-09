@@ -172,13 +172,56 @@ def install_prebuilt(src_tree):
             os.chmod(d, 0o644)
 
 
+COMPILED_PATHS = ["csrc", "CMakeLists.txt", "cmake"]   # changes here need `ws build`
+
+
+def compiled_changes(src_tree, base):
+    """Files under COMPILED_PATHS that differ from the baseline (tracked or new)."""
+    a = git(src_tree, "diff", "--name-only", base, "--", *COMPILED_PATHS,
+            capture_output=True, text=True, check=False).stdout.split()
+    b = git(src_tree, "ls-files", "--others", "--exclude-standard", "--", *COMPILED_PATHS,
+            capture_output=True, text=True, check=False).stdout.split()
+    return sorted(set(a + b))
+
+
+def unbuilt(src_tree, base):
+    """True if compiled code changed but the main library is still the prebuilt baseline symlink."""
+    lib = src_tree / task_cfg()["build"]["target_outputs"][task_cfg()["build"]["default_targets"][0]]
+    return bool(compiled_changes(src_tree, base)) and lib.is_symlink()
+
+
 def write_env(w, src_tree):
-    env = task_dir() / task_cfg()["env_script"]
+    cfg = task_cfg()
+    env = task_dir() / cfg["env_script"]
+    lib = src_tree / cfg["build"]["target_outputs"][cfg["build"]["default_targets"][0]]
+    paths = " ".join(COMPILED_PATHS)
     (w / "env.sh").write_text(
         f"# Source this to work in workspace {w.name}: the task env + this workspace's code first.\n"
         f"source {env}\n"
         f"export AUTOINFER_WS={w}\n"
-        f"export PYTHONPATH={src_tree}${{PYTHONPATH:+:$PYTHONPATH}}\n")
+        f"export PYTHONPATH={src_tree}${{PYTHONPATH:+:$PYTHONPATH}}\n"
+        f"# Guard: refuse to run this workspace's Python on compiled code that doesn't match its C++/CUDA\n"
+        f"# source (an unbuilt workspace silently runs the baseline kernels). Override, only on purpose:\n"
+        f"# AUTOINFER_ALLOW_UNBUILT=1.\n"
+        f"if [ -z \"${{AUTOINFER_ALLOW_UNBUILT:-}}\" ]; then\n"
+        f"  _ws_lib={lib}\n"
+        f"  _ws_ch=$( (git -C {src_tree} diff --name-only {baseline_commit()} -- {paths}; "
+        f"git -C {src_tree} ls-files --others --exclude-standard -- {paths}) 2>/dev/null | sort -u)\n"
+        f"  _ws_err=\n"
+        f"  if [ -n \"$_ws_ch\" ] && [ -L \"$_ws_lib\" ]; then\n"
+        f"    _ws_err=\"this workspace changes compiled code but was never built: it would run the BASELINE kernels\"\n"
+        f"  elif [ -n \"$_ws_ch\" ]; then\n"
+        f"    for _f in $_ws_ch; do\n"
+        f"      if [ {src_tree}/$_f -nt \"$_ws_lib\" ]; then _ws_err=\"$_f changed after the last ws build: the build is stale\"; break; fi\n"
+        f"    done\n"
+        f"  fi\n"
+        f"  if [ -n \"$_ws_err\" ]; then\n"
+        f"    echo \"ws {w.name}: ERROR: $_ws_err. Run: ws build {w.name}\" >&2\n"
+        f"    unset _ws_lib _ws_ch _ws_err _f\n"
+        f"    return 1 2>/dev/null || exit 1\n"
+        f"  fi\n"
+        f"  unset _ws_lib _ws_ch _ws_err _f\n"
+        f"fi\n")
 
 
 def cmd_create(a):
@@ -227,9 +270,11 @@ def cmd_create(a):
     (w / "ws.json").write_text(json.dumps(meta, indent=2) + "\n")
     print(f"created workspace {a.name} from {meta['from']}: {w}\n"
           f"  code: {src_tree}\n  use:  source {w / 'env.sh'}")
-    if a.from_ws and (ws_dir(a.from_ws) / "build" / "build.ninja").exists():
-        print(f"  note: {a.from_ws} has its own C++/CUDA build; if its change touches compiled code, "
-              f"run `ws build {a.name}` (background) before using this copy")
+    ch = compiled_changes(src_tree, base)
+    if ch:
+        print(f"  NEEDS A BUILD: this code changes compiled files ({', '.join(ch[:4])}"
+              f"{', ...' if len(ch) > 4 else ''}). Until `ws build {a.name}` runs, it still has the\n"
+              f"  baseline's compiled kernels, and sourcing its env.sh fails.")
 
 
 def need_ws(name):
@@ -249,7 +294,7 @@ def cmd_build(a):
     python = "$ENV_PREFIX/bin/python"
     cmake = " ".join(cfg["build"]["cmake_args"] + [cfg["build"]["python_arg"].format(python=python)])
     script = f"""set -eo pipefail
-source {env_sh}
+AUTOINFER_ALLOW_UNBUILT=1 source {env_sh}
 [ -f {task_dir() / 'build_env.sh'} ] && source {task_dir() / 'build_env.sh'}
 mkdir -p {bdir}
 cd {bdir}
@@ -324,7 +369,8 @@ def cmd_list(a):
         head = git(src_tree, "rev-parse", "HEAD", capture_output=True, text=True, check=False).stdout.strip()
         changed = bool(st.strip()) or head != meta["baseline_commit"]
         rows.append((meta["name"], meta["from"], meta.get("created_by", "-"),
-                     "yes" if (w / "build" / "build.ninja").exists() else "no",
+                     "NEEDED" if unbuilt(src_tree, meta["baseline_commit"])
+                     else "yes" if (w / "build" / "build.ninja").exists() else "no",
                      "changed" if changed else "clean", meta["created"]))
     if not rows:
         print("no workspaces")

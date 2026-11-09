@@ -116,6 +116,7 @@ handle(resync request):                             # a team asks for more GPU t
         # the measured part of the forecast grew, payoff-if-it-works clears bar -> extend
         # nothing new measured, or payoff-if-it-works below the bar             -> last chance
         # second last chance in a row                                       -> close and replace
+        # the team recommends closing itself                                -> close and replace
         # Exploit teams: progress = a win. Re-forecasting is not progress: a forecast that stays
         # as high with nothing new measured counts as none. A pivot doesn't reset the grant.
     extend / last chance: gpu grant <team> <N> --kind extension|last-chance --note "<why>"

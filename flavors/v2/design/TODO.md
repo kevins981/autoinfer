@@ -46,6 +46,8 @@ decided.
   gated.
 - Done: a ruling on trained draft heads is in the seeded task definition
   (`tools/seed_from_test5.sh`).
+- Done (test-6): `ws` guard against unbuilt or stale workspaces (env.sh refuses); voluntary
+  closure row in the funding policy.
 - Watch in the next run:
   - the manager closed T4 at its first resync with no last-chance grant, and opened no
     replacement exploit team (both against the funding policy; haiku);

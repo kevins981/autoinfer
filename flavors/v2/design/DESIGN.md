@@ -137,6 +137,7 @@ decides whether its work continues and gets resources.**
   |---|---|
   | Beat the champion, or a milestone measurably confirmed | Extend, possibly with a bigger grant |
   | The measured part of the forecast grew, and the payoff if it works still clears the bar | Extend |
+  | The team recommends closing itself (human decision, 2026-11-09) | Close and replace, after its write-up |
   | Nothing new measured, or the payoff if it works fell below the bar | **Last chance:** a smaller grant. The team says what it will measure with it |
   | A second last chance in a row | **Shut the team down** and launch a new team of the same type, so the ratio holds. The closing team first writes up what it learned |
 

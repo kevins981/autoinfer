@@ -72,8 +72,8 @@ clear which machine the cards belong to. A run on another machine needs its own 
   from the principles.
 
 ## The tool: `inspire`
-- **It draws a few cards of each kind at random and prints them** in full: by default 3
-  principle, 3 hardware and 3 software cards. The counts and the platform folders are set in the
+- **It draws a few cards of each kind at random and prints them** in full: by default 5
+  principle, 5 hardware and 5 software cards. The counts and the platform folders are set in the
   run's `config.md` (0 turns a kind off).
 - **A team sees every card of a kind before it sees one twice.**
 - **It saves each draw** to `inspiration/<team>-<n>.md` in the run folder, so the manager can
@@ -120,4 +120,4 @@ clear which machine the cards belong to. A run on another machine needs its own 
 
 ## Open
 - Whether the model is worth cards of its own.
-- Whether 3 + 3 + 3 is the right size and mix (set after seeing a run use it).
+- Whether 5 + 5 + 5 is the right size and mix (set after seeing a run use it).

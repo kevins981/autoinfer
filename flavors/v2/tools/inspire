@@ -16,7 +16,7 @@ manager can attach it to a task file unchanged. Each call is logged in
 $AUTOINFER_RUN/inspiration/draws.jsonl. A team sees every card of a kind before it sees one twice.
 
 How many cards of each kind, and which platform folders, come from the run's config.md:
-  - inspiration cards per draw: principles 3, hardware 3, software 3
+  - inspiration cards per draw: principles 5, hardware 5, software 5
   - inspiration hardware cards: <folder under flavors/v2/inspiration/>
   - inspiration software cards: <folder under flavors/v2/inspiration/>
 Spec: flavors/v2/design/inspiration.md.
@@ -62,7 +62,7 @@ def config(run):
     """Counts per kind and the platform folders, from the run's config.md (else the flavor's default)."""
     p = run / "config.md" if run and (run / "config.md").exists() else FLAVOR / "config_default.md"
     text = p.read_text()
-    counts, folders = {k: 3 for k in KINDS}, {"principles": "principles"}
+    counts, folders = {k: 5 for k in KINDS}, {"principles": "principles"}
     m = re.search(r"^\s*-\s*inspiration cards per draw\s*:(.*)$", text, re.M)
     if m:
         for k in KINDS:

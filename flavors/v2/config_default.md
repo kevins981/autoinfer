@@ -16,7 +16,7 @@ Mostly free text: the manager reads it. The `models` lines are also read by `age
   - leader_explore: claude-opus-5-5 / medium
   - leader_exploit: claude-opus-5-5 / medium
   - worker: claude-opus-5-5 / medium
-- inspiration cards per draw: principles 3, hardware 3, software 3 (the `inspire` tool; 0 turns a
+- inspiration cards per draw: principles 5, hardware 5, software 5 (the `inspire` tool; 0 turns a
   kind off)
   - inspiration hardware cards: platform-supermicro-741ge-2x-rtx4090
   - inspiration software cards: software-cuda13.0-torch2.14-linux5.15

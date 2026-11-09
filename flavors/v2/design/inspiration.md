@@ -120,5 +120,4 @@ clear which machine the cards belong to. A run on another machine needs its own 
 
 ## Open
 - Whether the model is worth cards of its own.
-- How the tool picks the platform folders for a run (the task names the machine).
 - Whether 3 + 3 + 3 is the right size and mix (set after seeing a run use it).

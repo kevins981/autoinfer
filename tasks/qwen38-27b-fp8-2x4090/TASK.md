@@ -51,6 +51,10 @@ weights run through Marlin (weight-only FP8, bf16 compute; vLLM's default on sm_
 - The **model**: Qwen/Qwen3.8-27B-FP8, its weights and architecture.
 - **FP8 weights** and an **FP8 KV cache**: nothing lower precision (no INT4/FP4, no pruning or
   distillation), no higher-precision copies that change the memory picture unfairly.
+- **Activations**: bf16 (the baseline), or the checkpoint's own FP8 scheme and nothing coarser:
+  W8A8 with dynamic per-token-group FP8 (e4m3) activations, group size 128, against the
+  checkpoint's 128x128 block-scaled weights (`quantization_config`: activation_scheme dynamic,
+  weight_block_size [128, 128]). See Correctness for the conditions.
 - **Sampling**: what the benchmark requests (temperature 0, max tokens, chat template, thinking
   as the request says) must be served as requested. Outputs must not be cut short or altered.
 - The **benchmark, dataset, harness and accuracy gate** (agents never modify `tasks/`).
@@ -71,6 +75,16 @@ eval gives up after 15 min per server start).
   floating-point operations or change kernels, but not approximate (no lossy quantization,
   skipped layers, truncated vocabularies, early exits). Speculative decoding must remain exact
   (verification against the target model, so the output is what the target model would produce).
+- **One exception: the checkpoint's own FP8 activation scheme** (see Fixed). It is what the
+  model was published for and how it runs on GPUs with block-scaled FP8 kernels, so it is not
+  counted as lossy quantization. It may be used per layer or per batch size (e.g. only for
+  prefill/mixed steps). Conditions: no per-tensor, larger-group or static (calibrated) activation
+  scales and no lower formats; partial sums are scaled and accumulated in fp32 across 128-element
+  K-blocks (the FP8 tensor cores' own accumulator is fine within a block); communication, norms,
+  attention/GDN, the KV cache and the target's lm_head stay as in the baseline. Accuracy: besides
+  the GSM8K gate, a record using FP8 activations runs the full GSM8K test set (`gsm8k.py --n
+  1319`) in the same job as a bf16-activation reference of the same code and must be within 2.0
+  points of it.
 - **Identical output text is not the test.** Even at temperature 0, floating-point results depend
   on batch composition and kernel choice, so the same code at concurrency 16 can produce different
   text run to run, and a valid change that reorders floating-point math will sometimes flip a

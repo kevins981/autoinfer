@@ -13,7 +13,7 @@ Every agent is a folder $AUTOINFER_RUN/agents/<name>/ and a headless `claude -p`
   err.log       its stderr
 
 Usage:
-  agent start <name> --role R [--team T] [--cwd DIR] [--persona P] [--task TEXT | --task-file F]
+  agent start <name> --role R [--team T [--slot S]] [--cwd DIR] [--persona P] [--task TEXT | --task-file F]
               [--model M] [--effort E] [--autocompact TOKENS] [--prompt-file F]... [--settings FILE]
   agent register <name> --role R [--team T]   # an already running session (e.g. the manager)
   agent list [--all] [--json]
@@ -171,7 +171,26 @@ def cmd_start(a):
         die(f"{a.name} is already running")
     if d.exists() and any(d.iterdir()):
         die(f"{d} already exists (agent names are unique in a run; pick another name)")
+    slots = config_slots()
+    if a.slot:
+        if not a.team:
+            die("--slot needs --team")
+        if a.slot not in slots:
+            die(f"no 'slot {a.slot}' line in config.md (slots: {', '.join(slots) or 'none'})")
+        known = team_slot(a.team)
+        if known and known != a.slot:
+            die(f"team {a.team} is already in slot {known}")
+    elif slots and a.role.startswith("leader") and a.team and not team_slot(a.team):
+        die(f"config.md defines model slots ({', '.join(slots)}): start the team's first leader "
+            f"with --slot (a replacement team takes the slot of the team it replaces)")
+    if (a.slot or team_slot(a.team)) and (a.model or a.effort) and os.environ.get("AUTOINFER_AGENT"):
+        die(f"team {a.team} is in model slot {a.slot or team_slot(a.team)} (config.md): its models are "
+            f"fixed; don't pass --model/--effort")
     d.mkdir(parents=True, exist_ok=True)
+    if a.slot and not team_slot(a.team):
+        m = json.loads(slots_file().read_text()) if slots_file().exists() else {}
+        m[a.team] = a.slot
+        slots_file().write_text(json.dumps(m, indent=1) + "\n")
 
     parts = []
     prompt_files = a.prompt_file
@@ -215,7 +234,7 @@ def cmd_start(a):
         die(f"settings file {settings} not found (permissions for headless agents)")
     session_id = str(uuid.uuid4())
 
-    cfg_model, cfg_effort = role_model(a.role)
+    cfg_model, cfg_effort = agent_model(a.role, a.team)
     a.model = a.model or cfg_model
     a.effort = a.effort or cfg_effort
     proc = launch(d, a.name, a.role, a.team, cwd, settings, a.permission_mode, a.autocompact,
@@ -524,7 +543,10 @@ def cmd_restart(a):
         if extras:
             die(f"{a.name} has background commands that a restart would kill:\n  "
                 + "\n  ".join(extras) + "\nwait for them, or --force")
-    cfg_model, cfg_effort = role_model(meta["role"])
+    cfg_model, cfg_effort = agent_model(meta["role"], meta.get("team"))
+    if team_slot(meta.get("team")) and (a.model or a.effort) and os.environ.get("AUTOINFER_AGENT"):
+        die(f"team {meta.get('team')} is in a model slot (config.md): its models are fixed; "
+            f"only the human may override them")
     model, effort = a.model or cfg_model, a.effort or cfg_effort
     kill_group(meta)
     settings = meta.get("settings") or str(run_dir() / "agent_settings.json")
@@ -554,6 +576,46 @@ def cmd_stop(a):
     meta["stopped"] = now()
     write_meta(d, meta)
     print(f"stopped {a.name}")
+
+
+def config_slots(run=None):
+    """{slot: {"leader": (model, effort), "worker": (model, effort)}} from config.md lines
+    "  - slot <S>: leader <model> / <effort>, worker <model> / <effort>"."""
+    import re
+    cfg = Path(run or os.environ.get("AUTOINFER_RUN", ".")) / "config.md"
+    slots = {}
+    if not cfg.exists():
+        return slots
+    for m in re.finditer(r"^\s*-\s*slot\s+(\w+)\s*:\s*(.+)$", cfg.read_text(), re.M):
+        roles = {}
+        for part in m.group(2).split(","):
+            r = re.match(r"\s*(leader|worker)\s+([\w.\[\]-]+)\s*(?:/\s*(\w+))?", part)
+            if r:
+                roles[r.group(1)] = (r.group(2), r.group(3) or "medium")
+        slots[m.group(1)] = roles
+    return slots
+
+
+def slots_file():
+    return run_dir() / "team_slots.json"
+
+
+def team_slot(team):
+    """The model slot a team was opened in (team_slots.json, written by `agent start --slot`)."""
+    if not team or not slots_file().exists():
+        return None
+    return json.loads(slots_file().read_text()).get(team)
+
+
+def agent_model(role, team):
+    """(model, effort): the team's slot in config.md if it has one, else the role's line."""
+    slot = team_slot(team)
+    if slot:
+        key = "leader" if role.startswith("leader") else role
+        got = config_slots().get(slot, {}).get(key)
+        if got:
+            return got
+    return role_model(role)
 
 
 def role_model(role, run=None):
@@ -596,7 +658,11 @@ Returns immediately; talk to it with SendMessage (its name), check it with `agen
                                      "appended to the prompt (v2 has no personas by default)")
     s.add_argument("--prompt-file", action="append",
                    help="replace the default prompts (repeatable, in order); rarely needed")
-    s.add_argument("--model", help="default: the role's model in the run's config.md, else claude-opus-5-5")
+    s.add_argument("--slot", help="the team's model slot (a 'slot <S>' line in config.md), given when "
+                                  "starting a team's first leader; the team's leaders and workers then "
+                                  "get that slot's models. A replacement team takes its old team's slot")
+    s.add_argument("--model", help="default: the team's slot in config.md, else the role's model there, "
+                                   "else claude-opus-5-5")
     s.add_argument("--effort", help="default: the role's effort in config.md, else medium")
     s.add_argument("--autocompact", default=os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),
                    help="context size (tokens) at which the agent auto-compacts, or 'auto' "

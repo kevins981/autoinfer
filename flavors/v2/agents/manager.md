@@ -71,6 +71,9 @@ open_teams():                                       # from CONFIG: number of tea
             # saves it to inspiration/<team>-<n>.md. Append that file to the first task UNCHANGED:
             # don't pick, drop, reorder or comment on cards. It carries its own instructions.
         agent start leader-<k> --role leader_explore|leader_exploit --team <team> --task-file <f>
+            # if CONFIG has model slots: add --slot <S> (a new team takes a free slot; a
+            # replacement team takes the slot of the team it replaces). The tool then picks the
+            # team's leader and worker models; don't pass --model.
             # the first task is short: team id and type, the current CHAMPION (record id +
             # official numbers), its grant status (exploit: seed + start; explore: seed only,
             # send a proposal to get a start grant), and where things are (bank/, shared_kb.md,

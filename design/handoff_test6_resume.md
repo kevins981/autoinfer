@@ -1,6 +1,6 @@
 # Handoff: resuming v2 test-6 after the measurement-cost changes (2026-11-09)
 
-For the designer session that resumes test-6. Three changes made today should show up in the
+For the designer session that resumes test-6. Several changes made today should show up in the
 resumed run; this says what they are, how test-6 gets them, and what to check. Background and
 decisions: [measurement_cost.md](measurement_cost.md). Commits: `efd99c3`, `5d76701` (+ the sync
 of test-6's task copy, uncommitted run state).
@@ -91,6 +91,49 @@ of test-6's task copy, uncommitted run state).
     teams, or do they converge on the same few as before?
   - **Cost:** do leaders spend long on the cards without getting anywhere, or ignore them?
 - Don't steer: if the cards go unused, record it; don't prompt the agents about them mid-run.
+
+## How test-6 resumes (decided 2026-11-09)
+- **A fresh manager session** (`new_run test-6 --start --message-file ...`; the old session had
+  ended, its id moved to `manager_session_1.json`). It reads the current `manager.md`, so the
+  resume messages suggested under Changes 2 and 3 are not needed; its kickoff mentions abba.sh,
+  the JIT cache and the FP8-activation ruling. `--start` also regenerates the run's settings from
+  the flavor (adds `inspire` and denies direct reads of `flavors/v2/inspiration/`; `inspire
+  --list/--show` still work, checked with a headless agent) and rewrites `flavor_commit.txt`
+  (the old one is in `flavor_commit_1.txt`).
+- **New leaders only**: 2 explore teams, no exploit team. Pool left: ~1000 of 1500 GPU-min.
+
+## Change 4: up to 2 workers per leader
+- Why: before the pause (2 teams, 1 worker each) the GPU was busy only ~50% of 16.6 h; the
+  queue was almost never the limit (median wait 0; 17 of 189 jobs waited >5 min). Agents were
+  the bottleneck, and Changes 1-2 shorten jobs further.
+- Check: GPU busy share per hour (`gpu/ledger.jsonl`) vs ~50% before; queue waits (`job.json`
+  submitted vs started); whether leaders actually run 2 workers, and whether review quality
+  drops (diffs reviewed before official evals, records filed).
+
+## Change 5: a model comparison (per-team model slots)
+- What: `config.md` has two model slots; the manager opens each team with `agent start ...
+  --slot A|B`, and `agent` gives that team's leaders and workers the slot's models (recorded in
+  `team_slots.json`; agents can't override it; a replacement team keeps its slot):
+  - **slot A: Fable 5.1 leader + Sonnet 5.5 workers** (changes the leader vs. before)
+  - **slot B: Opus 5.5 leader + Opus 5.5 workers** (changes the workers vs. before)
+  Before the pause every team was Opus 5.5 leader + Sonnet 5.5 workers (all medium effort), so
+  each slot changes one factor.
+- Check: `agent list --all` / `agents/*/meta.json` models match the slot for every agent of
+  each team; `team_slots.json` covers every new team.
+- Reading it: one team per slot, different directions, luck matters a lot, and funding follows
+  results (the stronger team will likely get more GPU). Compare per slot, against the earlier
+  test-6 teams: speedup per GPU-minute; proposal quality (measured vs assumed parts, forecasts
+  against outcomes); failure diagnosis (cause found? variant tried?); worker output (bugs,
+  reruns, review findings); token cost per team. Treat it as anecdote, not a verdict.
+
+## Confound: FP8 activations are newly allowed
+- The checkpoint's own W8A8 FP8 scheme was allowed during the pause (task_definition.md,
+  journal 2026-11-09); no team has used it yet. The engine runs bf16 compute on FP8 weights
+  (Marlin), so FP8 tensor cores for prefill/mixed steps are an obvious new lever, and an early
+  win may come from the rule change, not from the cards or the models.
+- Check: tag every record and win by whether it uses FP8 activations; credit inspiration only
+  where a non-FP8 direction traces to a card. Check FP8 records meet the conditions (group 128,
+  dynamic, fp32 across K-blocks, GSM8K-1319 within 2.0 of a same-job bf16 reference).
 
 ## Not in test-6 (by decision)
 - The step-replay / `vllm bench forward` tier is being evaluated separately (measurement_cost.md,

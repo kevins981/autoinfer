@@ -1,5 +1,5 @@
 # CONFIG (v2 defaults; copied into each run as config.md, where the human may edit it)
-Mostly free text: the manager reads it. The `models` lines are also read by `agent start` and
+Mostly free text: the manager reads it. The `models` and `slot` lines are also read by `agent start` and
 `new_run`, the `GPU pool` and `seed grant` lines by `new_run`, and the `inspiration` lines by
 `inspire`. Keep their format.
 
@@ -16,6 +16,9 @@ Mostly free text: the manager reads it. The `models` lines are also read by `age
   - leader_explore: claude-opus-5-5 / medium
   - leader_exploit: claude-opus-5-5 / medium
   - worker: claude-opus-5-5 / medium
+- model slots: none (optional: per-team models for comparing models. One line per slot,
+  "  - slot <S>: leader <model> / <effort>, worker <model> / <effort>"; the manager opens each
+  team with `agent start ... --slot <S>`, and a replacement team keeps its slot)
 - inspiration cards per draw: principles 5, hardware 5, software 5 (the `inspire` tool; 0 turns a
   kind off)
   - inspiration hardware cards: platform-supermicro-741ge-2x-rtx4090

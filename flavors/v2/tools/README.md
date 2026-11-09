@@ -8,11 +8,13 @@ Agents get the essentials in `agents/common.md`; every tool's `--help` (and `<to
 ## `agent`: who is who
 - `agent list`: the run's agents (name, role, team, parent, busy/idle, current task, last activity).
   Use it to find who to talk to; then talk with `SendMessage` to the run-scoped name in its SENDMESSAGE TO column (e.g. `test-4-leader-1`).
-- `agent start <name> --role R [--team T] [--cwd DIR] [--persona P] [--task-file F]`: start a new agent
+- `agent start <name> --role R [--team T [--slot S]] [--cwd DIR] [--persona P] [--task-file F]`: start a new agent
   (manager and leaders). It gets the flavor's `agents/common.md` + `agents/<role>.md` as its
   instructions (override with `--prompt-file`), and the task file as its first message.
   Model and effort come from the role's line in the run's `config.md` (override with
-  `--model`/`--effort`); context auto-compacts at 400K tokens (`--autocompact`). `agent stop <name>` when it is no longer needed: agents never
+  `--model`/`--effort`). If `config.md` has model slots, the manager starts a team's first leader
+  with `--slot <S>` (recorded in `team_slots.json`); every agent of that team then gets the
+  slot's leader or worker model, and agents can't override it; context auto-compacts at 400K tokens (`--autocompact`). `agent stop <name>` when it is no longer needed: agents never
   exit on their own.
 - Start every `SendMessage` with your name and role, e.g. `[leader-1, leader of team T1]`.
 

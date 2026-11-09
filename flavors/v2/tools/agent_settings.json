@@ -10,6 +10,8 @@
       "Bash(ws *)",
       "Bash(gpu *)",
       "Bash(official_eval *)",
+      "Bash(inspire)",
+      "Bash(inspire *)",
       "WebSearch",
       "WebFetch"
     ],

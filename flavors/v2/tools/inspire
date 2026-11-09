@@ -152,6 +152,10 @@ def main():
                 parts.append("#" * 2 + body + f"\n\n(card: `{c}`)\n")   # card titles become ###
         if not drawn:
             die("no cards found (check the inspiration lines in config.md)")
+        for k in KINDS:
+            if counts[k] and k not in drawn:
+                print(f"inspire: no {k} cards printed: config.md has no valid 'inspiration {k} cards' "
+                      f"line (see flavors/v2/config_default.md)", file=sys.stderr)
         parts.append(OUTRO)
         text = "\n".join(parts)
         num = len(mine) + 1

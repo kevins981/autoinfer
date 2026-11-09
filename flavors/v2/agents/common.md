@@ -169,9 +169,12 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   deciding what to do next; only official ones count. Know the task's noise (TASK): a small
   difference is neither a result nor noise until a same-job comparison, repeated, settles it.
   "Below noise" means measure more carefully, not give up: small gains count, and they stack.
-  The reverse also holds: a clear loss in the first A,B pair settles that comparison (TASK's
-  stop-loss rule; `scripts/abba.sh` applies it). Don't finish an A/B/B/A to confirm a loss; do
-  record it as a screen result, not a fact, so a later team can revisit it.
+  The reverse also holds: **don't spend GPU minutes on a comparison the first pair already
+  settled.** For a same-job A/B use the task's `scripts/abba.sh` (fresh interleaved starts, same
+  prompts): it stops after the first A,B pair when B clearly loses (TASK's stop-loss rule) and
+  prints a verdict line. Only losses stop early; a win needs every planned start. A stopped run
+  is a *screen negative (1 pair)*: report and record it as that, not as "B is slower", so a
+  later team can revisit it (one pair can be the outlier).
 - Keep logs, results and scratch files outside a workspace's code tree.
 
 ## Hard rules (shared server)

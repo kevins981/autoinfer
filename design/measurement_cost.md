@@ -70,6 +70,17 @@ session that watched test-6, and the decisions. Task-level where possible (all f
    test-6's microbenchmarks disagreed with the server repeatedly (T2 3x interference, T8, T9,
    T22/KB78 L2 coupling). Calibration before agents rely on it: A/A spread, then T14-002,
    T27-002 (~0.44 ms/decode step), T22-002 (-0.9%), T16.
+   **Status 2026-11-09, paused:** we don't build this; upstream vLLM already has it as
+   `vllm bench forward` (exact recorded batch shapes, real `execute_model` incl. drafter, TP via
+   torchrun, one-shot CUDA graphs). Evaluation in progress in `.cache/fwd_eval/` (not in git;
+   its `README.md` has the full state and how to resume): the champion's step shapes are recorded
+   (2706 steps -> 39 weighted cases), but no forward-bench run has completed yet: five attempts
+   failed on 24 GB memory (the tool's per-replay state snapshots are huge with this model's
+   8192-token attention blocks); a wrapper that skips those snapshots is written but untested.
+   Still to do: A/A spread, three known-answer pairs, then keep/drop by applicability (draft
+   tally: ~70-75% of test-5/test-6 experiment types measurable; not: graph grid, sampler,
+   acceptance/speculation depth, scheduler, prefix caching, KV budget, CPU-side plumbing).
+   Paused so the GPUs can run experiments.
 5. Smaller items, not done: shortest-job-first with aging in the GPU queue (micro jobs waited
    behind 10-14 min A/Bs; costs no GPU minutes); a CPU-side pre-flight for servers that die at
    startup; official evals stay as they are (6% of spend, the trust anchor).

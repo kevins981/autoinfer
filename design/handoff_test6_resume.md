@@ -97,6 +97,8 @@ of test-6's task copy, uncommitted run state).
   decision 4). Don't expect or introduce it in test-6.
 
 ## Housekeeping
-- test-6-smoke jobs 3-7 (human, uncharged) are the designer's verification jobs for the above;
-  ignore them when reading that run.
-- Scratch for the forward-bench evaluation: `.cache/fwd_eval/` (not in git).
+- test-6-smoke jobs 3-9 (human, uncharged) are the designer's verification jobs for the above
+  and for the forward-bench evaluation; ignore them when reading that run.
+- Scratch for the forward-bench evaluation: `.cache/fwd_eval/` (not in git; paused 2026-11-09,
+  state and resume steps in its `README.md`). It submits nothing to the GPU unless a designer
+  resumes it by hand.

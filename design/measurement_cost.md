@@ -79,7 +79,7 @@ session that watched test-6, and the decisions. Task-level where possible (all f
 |---|---|---|---|
 | napkin / roofline | 0 | - | everything |
 | kernel microbench (1 GPU) | <1 | kernel-level, often disagrees with the server | screening |
-| step replay (to build) | ~3-4 per A/B | ~0.2% | kernel/comm changes with an unchanged schedule |
+| step replay (`vllm bench forward`, evaluation paused) | ~3-4 per A/B | ~0.2% (to measure) | kernel/comm changes with an unchanged schedule |
 | fresh-start A/B, early stop (`abba.sh`) | ~5 (loss) / ~9 (win) | ~0.5% per pair | anything |
 | official eval | ~9 (after item 1) | - | promotion |
 

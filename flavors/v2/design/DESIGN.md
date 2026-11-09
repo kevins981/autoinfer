@@ -121,6 +121,15 @@ decides whether its work continues and gets resources.**
   the manager: it can't fund small, safe directions as "exploration".
 - **Revising the plan is allowed.** Learning and pivoting along the way is how good ideas develop,
   so the team doesn't have to stick to its first estimate.
+- **Persistence (human decision, 2026-11-09, after test-6).** In test-6, 12 explore teams in a
+  row closed on their seed, several after one failed implementation. A failed attempt isn't a
+  dead direction: leaders say whether a failure hit a hard limit or was this attempt, and try a
+  variant aimed at a fixable cause before recommending closing. The manager encourages teams that
+  have budget and a fixable cause, and may give a second seed. No penalty for closing; the 5% bar
+  stays.
+- **Pivots stay related (same decision).** Before the first funded proposal, a team chooses
+  freely. After it, a pivot shares the direction's bottleneck or mechanism, or follows the cause
+  the last test found. A completely different idea is a new team.
 - **A pivot doesn't reset the grant.** The team keeps spending from the same grant. The risk is
   still that a team rewrites its forecast endlessly to keep its funding. How else to handle that
   is open ([TODO.md](TODO.md)).
@@ -137,7 +146,8 @@ decides whether its work continues and gets resources.**
   |---|---|
   | Beat the champion, or a milestone measurably confirmed | Extend, possibly with a bigger grant |
   | The measured part of the forecast grew, and the payoff if it works still clears the bar | Extend |
-  | The team recommends closing itself (human decision, 2026-11-09) | Close and replace, after its write-up |
+  | The team recommends closing itself (human decision, 2026-11-09), and its failure hit a hard limit or it already tried a variant aimed at the cause | Close and replace, after its write-up |
+  | The team recommends closing itself after one failed attempt with a fixable cause (human decision, 2026-11-09, after test-6) | The manager encourages a variant first (a second seed if the seed is spent). If the team still wants to close, close and replace |
   | Nothing new measured, or the payoff if it works fell below the bar | **Last chance:** a smaller grant. The team says what it will measure with it |
   | A second last chance in a row | **Shut the team down** and launch a new team of the same type, so the ratio holds. The closing team first writes up what it learned |
 
@@ -151,7 +161,8 @@ decides whether its work continues and gets resources.**
 - **There is a fixed total pool of GPU-minutes for the run,** set by the human. Every grant comes
   out of it. Time a closed team didn't use goes back into the pool.
 - **Every new team gets a seed grant of 20 GPU-min,** e.g. for the microbenchmarks behind a
-  proposal.
+  proposal. An explore team whose seed went into a test that failed for a fixable reason may get
+  one second seed to test a variant.
 - **Every team starts with an 80 GPU-min grant,** explore and exploit alike.
 - **Extensions are up to the manager,** including the size of last-chance grants.
 

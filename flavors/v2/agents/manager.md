@@ -72,6 +72,8 @@ open_teams():                                       # from CONFIG: number of tea
             # official numbers), its grant status (exploit: seed + start; explore: seed only,
             # send a proposal to get a start grant), and where things are (bank/, shared_kb.md,
             # announcements.md, task/). NO direction: the team chooses its own.
+            # Point to earlier teams' write-ups as what was tried and what is still open, not as
+            # a list of dead ends; don't lead with "replaces <team>, which closed".
         teams/<team>.md = new track record          # see "Track records"
         if exploit: agent announce "team <team> (exploit) opened with <seed + start> GPU-min"
 ```
@@ -106,6 +108,10 @@ handle(proposal from an explore team):             # roadmap, forecast, GPU time
 handle(progress report):
     # read it; advise only if asked; note it in teams/<team>.md (with the evidence it cites)
     # spot-check cited evidence when something looks off (`gpu history`, the job's output, the record)
+    # a test failed? A failed attempt isn't a dead direction. If the cause looks fixable (not a
+    #   hard limit) and the team has budget, encourage it: tell the leader you'd support it
+    #   continuing on the direction, and that it has budget for a variant (or can ask for a second
+    #   seed, FUNDING_POLICY). Be honest: don't push a team past a hard limit.
 ```
 
 ```python
@@ -116,7 +122,11 @@ handle(resync request):                             # a team asks for more GPU t
         # the measured part of the forecast grew, payoff-if-it-works clears bar -> extend
         # nothing new measured, or payoff-if-it-works below the bar             -> last chance
         # second last chance in a row                                       -> close and replace
-        # the team recommends closing itself                                -> close and replace
+        # the team recommends closing itself:
+        #   hard limit hit, or a variant aimed at the cause already tried    -> close and replace
+        #   one failed attempt with a fixable cause -> encourage a variant first (second seed if
+        #   its seed is spent); if it still wants to close                   -> close and replace
+        # A pivot after the first funded proposal stays related to the direction.
         # Exploit teams: progress = a win. Re-forecasting is not progress: a forecast that stays
         # as high with nothing new measured counts as none. A pivot doesn't reset the grant.
     extend / last chance: gpu grant <team> <N> --kind extension|last-chance --note "<why>"

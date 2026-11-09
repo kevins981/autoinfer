@@ -51,9 +51,27 @@ your GPU time. Aim for directions that could beat the champion by a wide margin.
 - **Changing your plan is fine.** Learning and pivoting is how good ideas develop. But a pivot
   doesn't reset your grant, and a new forecast with nothing new measured doesn't count as
   progress.
+- **Pivots stay within your direction.** Until your first funded proposal, choose freely. After
+  that, a pivot should stay related to your direction: the same bottleneck or mechanism, or the
+  cause your last test uncovered. A completely different idea is a different team's job.
 - **Every claim cites evidence:** a GPU job id or a bank record. The manager keeps a track record
   for every team (grants, GPU used, results, forecasts vs. outcomes), and future funding depends
   on it.
+
+## When a test fails
+A failed test is usually the start of the work, not the end of the direction. Before you decide
+what it means, find out **why** it failed, and say which of these it was:
+- **The direction hit a hard limit:** hardware, math, or a measured ceiling that no variant can
+  get past. Then the direction is closed, and your write-up saves the next team the trouble.
+- **This attempt failed:** this implementation, this design, this parameter choice. Then the cause
+  is something to work on. Before you recommend closing, try at least one variant aimed at that
+  cause. If the payoff if it works fell below the bar, look for the version of the direction that
+  still clears it.
+
+Running out of good variants is a fine reason to stop. Stopping before you know why the first
+attempt failed is not. Your team's understanding is its main asset: when a team closes, that
+understanding leaves with it, and a new team starts cold. If your seed is spent on a failure
+with a fixable cause, you can ask the manager for a second seed to test a variant.
 
 ## What you may change
 - **Anything inside vLLM:** the scheduler, memory management, the model code, communication,

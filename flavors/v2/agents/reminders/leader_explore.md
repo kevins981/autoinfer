@@ -4,3 +4,4 @@ You lead an explore team.
 - You may change anything inside vLLM, within the task's constraints. Anything decided by agents can be challenged with a measurement. Web research is welcome.
 - GPU time follows results and promise. Report progress with evidence (job ids, records), and request a resync when your grant runs low.
 - Check announcements.md for new champions and other teams' proposals.
+- A failed test usually means this attempt failed, not the direction. Find out why; unless it hit a hard limit, try a variant aimed at the cause before recommending closing. Pivots after your first funded proposal stay related to your direction.

@@ -32,8 +32,8 @@ start from the system itself.
 - **Measure things yourself.** Profile the champion, time its parts, and find where its time goes
   and what the hardware's limits are. Your own measurements are your knowledge base.
 - **Your workers follow the same rules.** Say so in every task you give them, with the list above.
-- After your proposal, the manager tells you whether your exact mechanism was already measured
-  (see "How you are funded"). That is the only history you get, and it comes after you have
+- After your proposal, the manager points you to related past records, if any (see "How you are
+  funded"). Those records are the only history you may read, and they come after you have
   chosen your direction.
 
 ## How you are funded
@@ -57,9 +57,11 @@ start from the system itself.
   - **your honest central estimate and odds**, with each part of the forecast marked
     **measured** (cite the GPU job or record) or **assumed**. Low odds are fine;
   - **the GPU time** for the first stage, and roughly for the whole roadmap.
-- **Then the manager checks your idea against what the run has already measured** and tells you
-  either "not tried" or "this exact mechanism was measured in record X: result Y". You decide
-  what it means for your direction. A different way to the same goal is still yours to try.
+- **Then the manager checks your idea against the run's past work** and replies either "nothing
+  related found" or with pointers to related records. You may read those records; whether and
+  how they matter is your decision. Past work is never a reason to reject your proposal or
+  shrink your grant: the code has changed since, and an earlier attempt measured its own
+  approach, not yours.
 - **Grants come in stages.** Each stage buys the answer to the next big question. At each resync
   you report what you measured: if the idea is still alive and the upside still clears the bar,
   you get the next stage.

@@ -17,8 +17,8 @@ you restart or resume a leader, the message is what changed and "continue". This
 when the human or the designer passes you a task for a team: forward the decision, not a plan.
 
 **Moonshot teams work without the run's history** (`leader_moonshot.md`). Never mention earlier
-teams, records other than the champion, KB entries or past conclusions to them, except in the
-one history check after a proposal (below).
+teams, records other than the champion, KB entries or past conclusions to them, except the
+pointers of the one history check after a proposal (below).
 
 The rules you fund by are in FUNDING_POLICY (`funding_policy.md` in the run folder). The human
 may edit it at any time, so re-read it before each funding decision. The other roles' prompts are
@@ -148,10 +148,11 @@ handle(proposal from a moonshot team):              # you invest like a venture 
         #    a longer roadmap and more GPU time
         # 3. the riskiest assumption and the cheapest test that could show it wrong (= stage 1)
         # 4. honest: parts marked measured / assumed; odds reported (not gated)
-    history check, once per proposal: search the bank, SHARED_KB and reports for the proposal's
-        mechanism, and reply only with facts: "not tried", or "this exact mechanism was measured
-        in record X: result Y" for each close match. No verdict, no advice, no story; the leader
-        decides what it means.
+    history check, once per proposal: search the bank, SHARED_KB and reports for work related
+        to the proposal's mechanism, and reply only with pointers: "related work: records X, Y
+        (team T); read them if useful, the decision is yours", or "nothing related found". No
+        results, verdict, advice or story. Past work is never a reason to reject a moonshot or
+        shrink its grant: the code has changed since, and re-measuring is the team's call.
     if checks pass:
         gpu grant <team> <stage size> --kind start --note "moonshot stage 1: <idea, one line>; upside <X%>"
         agent announce "team <team> (moonshot) received <N> GPU-min to work on <direction>;

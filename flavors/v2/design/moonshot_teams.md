@@ -21,8 +21,10 @@ already believes. A moonshot team starts from the system itself.
   journal.md, announcements.md, teams/, reports/, other teams' files or the champion's record.md.
   `agent announce` skips moonshot teams; the manager tells their leaders new champions directly
   (record id + numbers) and never mentions the run's history otherwise.
-- **One history check:** after a proposal, the manager replies only "not tried" or "this exact
-  mechanism was measured in record X: result Y". The leader decides what it means.
+- **One history check:** after a proposal, the manager replies only with pointers to related
+  records ("related work: records X, Y; the decision is yours") or "nothing related found": no
+  results, no verdict. Past work is never a reason to reject or shrink funding (human,
+  2026-11-10: revisiting old conclusions on changed code is welcome).
 - **Funding:** seed 30, staged grants up to ~200 GPU-min. Close only when the core idea is shown
   wrong or nothing new was measured for two stages in a row. Sparring and inspiration cards as for
   explore.

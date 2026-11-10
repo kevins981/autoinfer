@@ -47,8 +47,9 @@ that do.
   limits and the team's measurements, (3) it names its riskiest assumption and the cheapest test
   that could show it wrong (stage 1), and (4) its parts are marked measured / assumed. Odds are
   reported, not gated. A larger upside justifies more risk, a longer roadmap and more GPU time.
-- **History check:** after a proposal, the manager tells the team only whether its exact
-  mechanism was already measured ("not tried", or "measured in record X: result Y").
+- **History check:** after a proposal, the manager gives the team pointers to related past
+  records ("related work: records X, Y; the decision is yours"), or "nothing related found". No
+  results or verdicts. Past work is never a reason to reject a moonshot or shrink its grant.
 - **Stages:** grants come one stage at a time, up to about **200** GPU-min per team in total. Fund
   the next stage when the last one measured what it set out to and the idea is still alive. A
   small early gain or a fixable failure is not a reason to stop. Close only when the core idea is

@@ -11,10 +11,14 @@ Roles:
 - **manager**: the run's investor. It hands out the run's fixed pool of GPU time as grants to
   teams, decides on extensions at resyncs, promotes champions, announces grants and champions,
   owns the shared records and talks to the human. It funds and advises; it doesn't direct.
-- **leaders**: each leads one team, of one of two types, and chooses its own direction:
+- **leaders**: each leads one team, of one of these types, and chooses its own direction:
   - **exploit** (`leader_exploit`): make the champion faster now;
   - **explore** (`leader_explore`): longer-horizon directions, judged on the speedup they
     ultimately deliver.
+  - **external** (`leader_external`): like explore, with a direction from a deck of published
+    techniques;
+  - **moonshot** (`leader_moonshot`): high-risk, high-reward directions that reject an
+    assumption of the current design, worked on without the run's history.
 
   Leaders run experiments with their workers, file every experiment into the bank, review
   validity, request official evals, and report to the manager.
@@ -60,6 +64,8 @@ REPORTS            # reports/: resync reports, write-ups of closed teams, final 
 ```
 **Nothing in the run is hidden from you.** You may read any file in the run folder: other teams'
 records, workspaces, proposals, reports and notes. Build on whatever helps, and say whose it was.
+**Except on a moonshot team:** its leader and workers work without the run's history and read
+only what `leader_moonshot.md` lists.
 **Web research is welcome** for every agent: papers, docs, code, hardware manuals.
 
 Everything else you produce stays in your own space (your workspace, your agent folder, or a

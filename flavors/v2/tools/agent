@@ -439,12 +439,32 @@ def message_text(a):
     return " ".join(a.text)
 
 
+def moonshot_teams():
+    """Teams opened as moonshot (gpu/accounts.jsonl). They work without the run's history, so
+    announcements skip them; the manager tells their leaders about new champions directly."""
+    f = run_dir() / "gpu" / "accounts.jsonl"
+    out = set()
+    if f.exists():
+        for line in f.read_text().splitlines():
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("event") == "open" and e.get("type") == "moonshot":
+                out.add(e.get("team"))
+    return out
+
+
 def cmd_announce(a):
     require_manager("announce")
     text = message_text(a)
     if not text.strip():
         die("empty announcement")
     targets, skipped = live_headless()
+    moon = moonshot_teams()
+    skipped += [(m["name"], "moonshot team (no announcements; tell its leader directly if needed)")
+                for _, m in targets if m.get("team") in moon]
+    targets = [t for t in targets if t[1].get("team") not in moon]
     with open(run_dir() / "announcements.md", "a") as f:
         f.write(f"## {now()} ({me()})\n{text.strip()}\n\n")
     failed = []
@@ -651,7 +671,7 @@ Returns immediately; talk to it with SendMessage (its name), check it with `agen
       --task-file $AUTOINFER_RUN/workspaces/leader-1.fused-ar/task.md
 """)
     s.add_argument("name", help="unique in the run, e.g. leader-1, leader-1.w2")
-    s.add_argument("--role", required=True, help="manager, leader_explore, leader_exploit or worker (picks the prompt agents/<role>.md and the reminder agents/reminders/<role>.md)")
+    s.add_argument("--role", required=True, help="manager, leader_explore, leader_exploit, leader_external, leader_moonshot or worker (picks the prompt agents/<role>.md and the reminder agents/reminders/<role>.md)")
     s.add_argument("--team", help="team id (e.g. T1): GPU jobs are charged to it. Workers: the leader's team")
     s.add_argument("--cwd", help="working directory (workers: their workspace; default: the run folder)")
     s.add_argument("--persona", help="optional: a persona file (or a name in the flavor's agents/personas/), "

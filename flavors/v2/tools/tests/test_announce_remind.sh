@@ -74,5 +74,13 @@ out=$(M $A remind --role nosuchrole); echo "$out" | grep -q "no running agent ha
 pids=""; for i in 1 2 3 4 5 6; do M $A announce -f $BASE/a.txt >/dev/null 2>&1 & pids="$pids $!"; AUTOINFER_AGENT=human $A send leader-2 hello >/dev/null 2>&1 & pids="$pids $!"; done
 wait $pids; n=$(grep -c "received 80" $BASE/run/announcements.md); check "concurrent announces all logged" 7 $n
 n=$(inbox leader-1.w1 | grep -c "received 80"); check "concurrent announces all delivered" 7 $n
+# moonshot teams get no announcements (history-free); their leader gets the moonshot reminder
+mkdir -p $BASE/run/gpu $BASE/run/agents/leader-9
+echo '{"event": "open", "team": "T9", "type": "moonshot", "by": "manager"}' > $BASE/run/gpu/accounts.jsonl
+python3 -c "import json;json.dump({'name':'leader-9','role':'leader_moonshot','team':'T9','pid':$LIVE},open('$BASE/run/agents/leader-9/meta.json','w'))"
+out=$(M $A announce "team T4 (explore) closed"); echo "$out" | grep -q "skipped leader-9: moonshot team"; check "announce skips moonshot team" 0 $?
+inbox leader-9 | grep -q "T4 (explore) closed"; check "moonshot leader not written" 1 $?
+grep -q "T4 (explore) closed" $BASE/run/announcements.md; check "still logged in announcements.md" 0 $?
+out=$(M $A remind leader-9); inbox leader-9 | grep -q "You lead a moonshot team."; check "moonshot reminder" 0 $?
 kill $LIVE
 echo "== $pass passed, $fail failed"

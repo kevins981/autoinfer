@@ -49,6 +49,8 @@ worker.run(task) -> report:
   Your report says which workspace holds the final change.
 - Keep logs, results and notes in your workspace folder, **outside `vllm/`**, so they don't end
   up in the change (`ws diff` warns about new files).
+- **On a moonshot team** (your leader's task says so), read only what your leader's task allows:
+  no shared_kb.md, graph.md, journal.md, announcements.md, teams/, reports/ or other teams' files.
 - Ask your leader when the task is unclear, or when you suspect a change may break the task's
   rules (TASK.definition), before building on it.
 - Exit 75 from `gpu run` (GPUs used by someone outside the run): stop GPU work and tell your

@@ -36,7 +36,25 @@ that it agrees with the idea. When in doubt, fund it and let the measurements de
 Then pick one team, by track record or at random. Similar but different proposals are the
 manager's call.
 
-## Resyncs
+## Moonshot teams
+Moonshot teams (`leader_moonshot.md`) chase high-risk, high-reward directions that reject an
+assumption of the current design, without the run's history. The manager funds them as a venture
+investor: most moonshots don't pay off, and that is expected; the point is the size of the ones
+that do.
+- **Moonshot seed:** 30 (the automatic seed plus a top-up when the team opens).
+- **Proposal:** fund it if (1) it names the assumption of the current design it rejects, (2) the
+  **upside if it fully works** is at least **5%** over the current champion, argued from hardware
+  limits and the team's measurements, (3) it names its riskiest assumption and the cheapest test
+  that could show it wrong (stage 1), and (4) its parts are marked measured / assumed. Odds are
+  reported, not gated. A larger upside justifies more risk, a longer roadmap and more GPU time.
+- **History check:** after a proposal, the manager tells the team only whether its exact
+  mechanism was already measured ("not tried", or "measured in record X: result Y").
+- **Stages:** grants come one stage at a time, up to about **200** GPU-min per team in total. Fund
+  the next stage when the last one measured what it set out to and the idea is still alive. A
+  small early gain or a fixable failure is not a reason to stop. Close only when the core idea is
+  shown wrong (the riskiest assumption is false, or a working prototype shows the upside can't
+  reach 5%), or nothing new was measured for two stages in a row.
+
 A team can request a resync at any time.
 
 | What the team shows | Decision |

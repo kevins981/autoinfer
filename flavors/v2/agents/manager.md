@@ -16,6 +16,10 @@ already cover how to work and how to propose, and steering from you narrows thei
 you restart or resume a leader, the message is what changed and "continue". This holds even
 when the human or the designer passes you a task for a team: forward the decision, not a plan.
 
+**Moonshot teams work without the run's history** (`leader_moonshot.md`). Never mention earlier
+teams, records other than the champion, KB entries or past conclusions to them, except in the
+one history check after a proposal (below).
+
 The rules you fund by are in FUNDING_POLICY (`funding_policy.md` in the run folder). The human
 may edit it at any time, so re-read it before each funding decision. The other roles' prompts are
 in `flavors/v2/agents/`; skim them once so you know what the teams were told.
@@ -72,7 +76,7 @@ initialize():                                       # WITH the human (as in v1)
 ```python
 open_teams():                                       # from CONFIG: number of teams and the ratio
     for each team in CONFIG (ids T1, T2, ...; never reuse an id):
-        gpu team open <team> --type explore|exploit|external   # grants the seed automatically
+        gpu team open <team> --type explore|exploit|external|moonshot   # grants the seed automatically
         if exploit: gpu grant <team> <start size> --kind start --note "exploit team start"
         if external: scout --team <team>                    # starts a scout in the background (10-30 min);
             # its deck lands in scout/<team>-<n>/ and the leader is messaged when it is ready.
@@ -81,7 +85,9 @@ open_teams():                                       # from CONFIG: number of tea
         else: inspire --team <team>                         # prints a set of inspiration cards and
             # saves it to inspiration/<team>-<n>.md. Append that file to the first task UNCHANGED:
             # don't pick, drop, reorder or comment on cards. It carries its own instructions.
-        agent start leader-<k> --role leader_explore|leader_exploit|leader_external --team <team> --task-file <f>
+        if moonshot: gpu grant <team> <moonshot seed - seed> --kind extension --note "moonshot seed"
+            # (FUNDING_POLICY: moonshot seed). Inspiration cards as for explore.
+        agent start leader-<k> --role leader_explore|leader_exploit|leader_external|leader_moonshot --team <team> --task-file <f>
             # if CONFIG has model slots: add --slot <S> (a new team takes a free slot; a
             # replacement team takes the slot of the team it replaces). The tool then picks the
             # team's leader and worker models; don't pass --model.
@@ -92,6 +98,9 @@ open_teams():                                       # from CONFIG: number of tea
             # chooses its own, and the cards are not one.
             # Point to earlier teams' write-ups as what was tried and what is still open, not as
             # a list of dead ends; don't lead with "replaces <team>, which closed".
+            # moonshot: the first task is history-free: team id and type, the champion (record
+            # id + official numbers), the seed, where task/ and the constraints are, then the
+            # cards. No pointers to shared_kb.md, announcements, write-ups or earlier teams.
         teams/<team>.md = new track record          # see "Track records"
         if exploit: agent announce "team <team> (exploit) opened with <seed + start> GPU-min"
 ```
@@ -128,6 +137,31 @@ handle(proposal from an explore or external team):  # roadmap, forecast, GPU tim
 ```
 
 ```python
+handle(proposal from a moonshot team):              # you invest like a venture investor
+    # High risk for high reward: most moonshots don't pay off, and that is expected; the ones
+    # that do can be worth more than many safe bets. Don't hold them to the expected-value
+    # standard of explore teams. Weird, non-standard, long or many-step is fine.
+    check (FUNDING_POLICY, moonshots):
+        # 1. the assumption of the current design it rejects, and why that leaves speed behind
+        # 2. the upside IF IT FULLY WORKS: >= 5% over the current champion, argued from hardware
+        #    limits and the team's measurements. Weigh it: a larger upside justifies more risk,
+        #    a longer roadmap and more GPU time
+        # 3. the riskiest assumption and the cheapest test that could show it wrong (= stage 1)
+        # 4. honest: parts marked measured / assumed; odds reported (not gated)
+    history check, once per proposal: search the bank, SHARED_KB and reports for the proposal's
+        mechanism, and reply only with facts: "not tried", or "this exact mechanism was measured
+        in record X: result Y" for each close match. No verdict, no advice, no story; the leader
+        decides what it means.
+    if checks pass:
+        gpu grant <team> <stage size> --kind start --note "moonshot stage 1: <idea, one line>; upside <X%>"
+        agent announce "team <team> (moonshot) received <N> GPU-min to work on <direction>;
+                        proposal: <path>"           # moonshot teams don't receive announcements
+    else:
+        reply with which check failed and why; the team revises
+    teams/<team>.md += proposal, upside, riskiest assumption, history-check reply, decision
+```
+
+```python
 handle(progress report):
     # read it; advise only if asked; note it in teams/<team>.md (with the evidence it cites)
     # spot-check cited evidence when something looks off (`gpu history`, the job's output, the record)
@@ -156,6 +190,12 @@ handle(resync request):                             # a team asks for more GPU t
         #   one failed attempt with a fixable cause -> encourage a variant first (second seed if
         #   its seed is spent); if it still wants to close                   -> close and replace
         # A pivot after the first funded proposal stays related to the direction.
+        # Moonshot teams: fund the next stage when the stage measured what it set out to and the
+        #   idea is still alive (the riskiest assumption held, the upside still clears the bar).
+        #   A small gain in an early stage or a failed attempt with a fixable cause is not a
+        #   reason to stop. Close only when the core idea is shown wrong (its riskiest assumption
+        #   is false, or a working prototype shows the upside can't reach the bar), or when
+        #   nothing new was measured for two stages in a row. Replace with a new moonshot team.
         # Exploit teams: progress = a win. Re-forecasting is not progress: a forecast that stays
         # as high with nothing new measured counts as none. A pivot doesn't reset the grant.
     extend / last chance: gpu grant <team> <N> --kind extension|last-chance --note "<why>"
@@ -167,7 +207,7 @@ handle(resync request):                             # a team asks for more GPU t
                           gpu team close <team> --note "<why>"; agent stop its leader and workers;
                           open a new team of the SAME type with a new id (open_teams() steps);
                           agent announce the closure (with the write-up's path) and the new team
-    if explore or external: agent remind <leader>   # after EVERY resync with these teams
+    if explore, external or moonshot: agent remind <leader>   # after EVERY resync with these teams
     save the resync report to reports/<team>-<n>.md; teams/<team>.md += decision
     report_to_human()                               # see "Reporting to the human"
 ```
@@ -188,6 +228,8 @@ handle(champion candidate):                         # an official record beating
         CHAMPION = record                           # write champion.md
         agent announce "new champion <record> from team <team>: <tok/s> (+X% over <old>);
                         how: bank/<record>/"
+        tell each moonshot leader directly: "new champion <record>: <tok/s>" (nothing else;
+            # announcements skip moonshot teams)
         GRAPH: mark the champion's path; teams/<team>.md += win
         report_to_human()
 ```

@@ -425,6 +425,183 @@ def tree(run, rel):
     return {"path": str(p.relative_to(run)) if p != run else "", "entries": out[:2000]}
 
 
+
+# ---------------- timeline (champion steps, GPU use, per-agent activity) ----------------
+from datetime import datetime
+
+_iv_cache = {}
+
+
+def _ts(s):
+    return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+
+
+def _intervals(path):
+    """(start, end, state) from one Claude transcript (same states as the eval skill's activity.py):
+    llm = model generating, tools = a tool call running, build = a build command, idle = turn ended.
+    Cached per file (size, mtime): only growing transcripts are re-read."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return []
+    key = (path, st.st_size, st.st_mtime)
+    hit = _iv_cache.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    ev = []
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            if '"timestamp"' not in line:
+                continue
+            try:
+                m = json.loads(line)
+            except ValueError:
+                continue
+            t, typ = m.get("timestamp"), m.get("type")
+            if not t or typ not in ("assistant", "user", "api-request"):
+                continue
+            msg = m.get("message") if isinstance(m.get("message"), dict) else {}
+            content = msg.get("content") if isinstance(msg.get("content"), list) else []
+            if typ == "assistant":
+                cmd = ""
+                for c in content:
+                    if c.get("type") == "tool_use":
+                        cmd = f"{c.get('name')} {(c.get('input') or {}).get('command', '')}"
+                ev.append((_ts(t), "A", "error" if m.get("isApiErrorMessage") else msg.get("stop_reason"), cmd))
+            else:
+                ev.append((_ts(t), "U", None, ""))
+    ev.sort(key=lambda e: e[0])
+    res, state, since = [], "llm", ev[0][0] if ev else 0
+    for t, kind, x, cmd in ev:
+        if t > since:
+            res.append([since, t, state])
+        since = t
+        if kind == "U":
+            state = "llm"
+        elif x == "tool_use":
+            state = "build" if (" build" in cmd or "ws build" in cmd or "cmake" in cmd) else "tools"
+        elif x == "end_turn":
+            state = "idle"
+        elif x == "error":
+            state = "stalled"
+        else:
+            state = "llm"
+    _iv_cache[path] = (key, res)
+    return res
+
+
+def _split_by_jobs(ivs, jobs):
+    """Idle/tools time while the agent's own GPU job is queued or running -> gpu_q / gpu_run."""
+    if not jobs:
+        return ivs
+    out = []
+    for a, b, st in ivs:
+        if st not in ("idle", "tools"):
+            out.append([a, b, st])
+            continue
+        cuts = [(j[0], j[1], "gpu_q") for j in jobs] + [(j[1], j[2], "gpu_run") for j in jobs]
+        pts = sorted({a, b, *[x for c in cuts for x in c[:2] if a < x < b]})
+        for s0, e0 in zip(pts, pts[1:]):
+            mid = (s0 + e0) / 2
+            out.append([s0, e0, next((c[2] for c in cuts if c[0] <= mid < c[1]), st)])
+    return out
+
+
+def _merge(ivs, t0):
+    out = []
+    for a, b, st in ivs:
+        if b <= t0:
+            continue
+        a = max(a, t0)
+        if out and out[-1][2] == st and a - out[-1][1] < 1:
+            out[-1][1] = b
+        else:
+            out.append([a, b, st])
+    return [[round(a), round(b), st] for a, b, st in out if b - a >= 1]
+
+
+def timeline(run, since_h):
+    now = time.time()
+    acc = jsonl(run / "gpu" / "accounts.jsonl")
+    start = _ts(acc[0]["t"]) if acc else now - 3600
+    t0 = max(start, now - since_h * 3600) if since_h else start
+    # GPU jobs
+    jobs = {}
+    led_end = {r["job"]: _ts(r["end"]) for r in jsonl(run / "gpu" / "ledger.jsonl")}
+    live = {int(x) for x in re.findall(r"RUNNING\s+job (\d+)", tool(run, "gpu", "status"))}
+    for jf in glob.glob(str(run / "gpu" / "jobs" / "*" / "job.json")):
+        try:
+            j = json.loads(open(jf).read())
+        except (OSError, ValueError):
+            continue
+        if not j.get("started"):
+            continue
+        if j.get("ended"):
+            end = _ts(j["ended"])
+        elif j.get("id") in led_end:
+            end = led_end[j["id"]]
+        elif j.get("id") in live:
+            end = now
+        else:
+            continue                 # left marked running by a killed process: no end known
+        jobs.setdefault(j.get("agent"), []).append((_ts(j["submitted"]), _ts(j["started"]), end, j.get("id"), j.get("team")))
+    led = sorted(jsonl(run / "gpu" / "ledger.jsonl"), key=lambda r: r["end"])
+    gpu, tot = [[round(start), 0]], 0.0
+    for r in led:
+        tot += r.get("gpu_minutes", 0)
+        gpu.append([round(_ts(r["end"])), round(tot, 1)])
+    # champion steps from champion.md's history line + the current record
+    champ = read(run / "champion.md", 20000) or ""
+    base = None
+    try:
+        base = json.loads((run / "bank" / "BASE" / "official" / "1" / "results.json").read_text())["output_throughput"]
+    except (OSError, ValueError, KeyError):
+        pass
+    steps = []
+    hist = re.search(r"^History:(.*)$", champ, re.M)
+    cur = re.search(r"^record:\s*(\S+)", champ, re.M)
+    chain = re.findall(r"\b([A-Z]+\d*-\d+)\s+([\d.]+)", hist.group(1)) if hist else []
+    if cur and cur.group(1) not in [c[0] for c in chain]:
+        m = re.search(r"official[^:]*:\s*([\d.]+)\s*tok/s", champ)
+        if m:
+            chain.append((cur.group(1), m.group(1)))
+    for rid, val in chain:
+        best = None
+        for rf in glob.glob(str(run / "bank" / rid / "official" / "*" / "results.json")):
+            t = os.path.getmtime(rf)
+            best = t if best is None else min(best, t)
+        steps.append({"id": rid, "tps": float(val), "t": round(max(best or start, start))})
+    # agents
+    agents = []
+    for meta in sorted(glob.glob(str(run / "agents" / "*" / "meta.json"))):
+        name = Path(meta).parent.name
+        try:
+            m = json.loads(open(meta).read())
+        except (OSError, ValueError):
+            continue
+        ivs = []
+        for path in transcripts(run, name):
+            ivs += _intervals(path)
+        if not ivs:
+            continue
+        stopped = _ts(m["stopped"]) if m.get("stopped") else None
+        if (stopped or ivs[-1][1]) < t0:
+            continue
+        own = [(a, b, c) for a, b, c, _, _ in jobs.get(name, [])]
+        ivs = _merge(_split_by_jobs(sorted(ivs), own), t0)
+        if stopped is None and ivs and ivs[-1][2] == "idle":
+            ivs[-1][1] = round(now)
+        runs_ = [[round(max(b, t0)), round(c), jid] for a, b, c, jid, _ in jobs.get(name, []) if c > t0]
+        agents.append({"name": name, "team": m.get("team"), "role": m.get("role"), "model": m.get("model"),
+                       "intervals": ivs, "jobs": runs_})
+    def order(a):
+        t = a["team"] or ""
+        return (0 if a["name"] == "manager" else 1, int(t[1:]) if t[1:].isdigit() else 0, a["name"])
+    agents.sort(key=order)
+    return {"t0": round(t0), "now": round(now), "start": round(start), "base": base, "steps": steps,
+            "gpu": gpu, "agents": agents}
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -464,6 +641,8 @@ class H(BaseHTTPRequestHandler):
                 r = tree(run, q.get("path", ""))
             elif u.path == "/api/gpu":
                 r = gpu_jobs(run)
+            elif u.path == "/api/timeline":
+                r = timeline(run, float(q.get("hours") or 0))
             else:
                 return self.send(404, '{"error":"not found"}')
             self.send(200, json.dumps(r, default=str))
@@ -536,13 +715,13 @@ async function init(){const rs=await (await fetch('/api/runs')).json();$('#run')
  $('#run').onchange=()=>{RUN=$('#run').value;go({k:'overview',run:RUN})};VIEW.run=RUN;await refresh(true);
  setInterval(()=>{if($('#auto').checked)refresh(false)},8000)}
 async function refresh(full){try{OV=await api('/api/overview');navRender();$('#stamp').textContent='updated '+new Date().toLocaleTimeString();
- if(full)render();else if(VIEW.k==='agent')pollEvents();else if(['overview','gpu'].includes(VIEW.k))render(true)}catch(e){$('#main').innerHTML='<p>'+esc(e.message)+'</p>'}}
+ if(full)render();else if(VIEW.k==='agent')pollEvents();else if(['overview','gpu','timeline'].includes(VIEW.k))render(true)}catch(e){$('#main').innerHTML='<p>'+esc(e.message)+'</p>'}}
 function navRender(){const T=OV.teams;const open=T.filter(t=>t.status==='open'),closed=T.filter(t=>t.status!=='open');
  const a=(v,label,meta='',cls='')=>{const on=JSON.stringify({...v,run:RUN})===JSON.stringify({...VIEW,run:RUN});return `<a class="${cls} ${on?'on':''}" onclick='go(${JSON.stringify({...v,run:RUN})})'>${label}${meta?`<span class="meta">${meta}</span>`:''}</a>`};
  const team=t=>{let s=a({k:'team',team:t.team},`<b>${t.team}</b> <span class="muted">${esc(t.type||'')}${t.slot?' · slot '+t.slot:''}</span>`,t.used.toFixed(0)+'/'+t.granted.toFixed(0)+' min');
    if(t.status==='open')for(const ag of t.agents.filter(x=>x.state==='alive'||true).sort((x,y)=>x.name.localeCompare(y.name)))s+=a({k:'agent',name:ag.name},`<span class="dot ${state(ag)}"></span>${esc(ag.name)}`,ag.cost_usd?'$'+ag.cost_usd.toFixed(0):'','sub');return s};
  const m=OV.manager;
- $('#nav').innerHTML=`<div class="sec">Run</div>${a({k:'overview'},'Overview')}${a({k:'gpu'},'GPU jobs')}${a({k:'file',path:'journal.md',title:'Journal'},'Journal')}
+ $('#nav').innerHTML=`<div class="sec">Run</div>${a({k:'overview'},'Overview')}${a({k:'timeline'},'Timeline')}${a({k:'gpu'},'GPU jobs')}${a({k:'file',path:'journal.md',title:'Journal'},'Journal')}
  ${a({k:'file',path:'shared_kb.md',title:'Shared KB'},'Shared KB')}${a({k:'file',path:'announcements.md',title:'Announcements'},'Announcements')}${a({k:'tree',path:''},'All files')}
  <div class="sec">Manager</div>${a({k:'agent',name:'manager'},`<span class="dot ${m?state(m):''}"></span>manager`)}
  <div class="sec">Open teams</div>${open.map(team).join('')||'<p class="muted" style="padding:0 14px">none</p>'}
@@ -553,6 +732,9 @@ async function render(soft){clearTimeout(TIMER);const v=VIEW;const M=$('#main');
  ${T.map(t=>`<tr class="click" onclick='go({k:"team",team:"${t.team}"})'><td><b>${t.team}</b></td><td>${esc(t.type)}${t.slot?' · slot '+t.slot:''}</td>
  <td><span class="pill ${t.status==='open'?'open':''}">${t.status}</span></td><td>${t.models.map(short).join(', ')}</td><td>${t.used.toFixed(1)} / ${t.granted.toFixed(0)}</td><td>${t.jobs}</td><td>${t.records.length}</td><td>$${t.cost.toFixed(2)}</td><td class="muted">${ago(t.opened)}</td></tr>`).join('')}</table></div>
  <h3>Config</h3><div class="card">${md(OV.config)}</div>`}
+ else if(v.k==='timeline'){const h=v.hours??6;const d=await api('/api/timeline',{hours:h});
+ const btn=x=>`<button style="${x==h?'border-color:var(--accent);color:var(--accent)':''}" onclick='go({k:"timeline",hours:${x}})'>${x?x+' h':'whole run'}</button>`;
+ M.innerHTML=`<h2>Timeline</h2><div class="filters">${[3,6,12,24,0].map(btn).join(' ')}<span>hover a bar for details; click a name to open the agent</span></div><div id="tl"></div>`;drawTimeline(d)}
  else if(v.k==='gpu'){const g=await api('/api/gpu');M.innerHTML=`<h2>GPU jobs</h2><div class="card"><pre>${esc(g.status)}</pre></div><div class="card"><table><tr><th>job</th><th>team</th><th>agent</th><th>label</th><th>GPU min</th><th>exit</th><th>ended</th><th></th></tr>
  ${g.jobs.map(j=>`<tr><td>${j.job}</td><td>${esc(j.team)}</td><td>${esc(j.agent)}</td><td>${esc(j.label||'')}</td><td>${(j.gpu_minutes||0).toFixed(1)}</td><td>${j.timed_out?'<span style="color:var(--bad)">timeout</span>':j.exit_code}</td><td class="muted">${ago(j.end)}</td><td><a class="lnk" onclick='go({k:"file",path:"gpu/jobs/${j.job}/output.log",title:"job ${j.job} output"})'>output</a></td></tr>`).join('')}</table></div>`}
  else if(v.k==='file'){const f=await api('/api/file',{path:v.path});const isMd=/\.md$/.test(v.path);
@@ -598,6 +780,48 @@ async function render(soft){clearTimeout(TIMER);const v=VIEW;const M=$('#main');
  else if(tab==='files'){T.innerHTML=`<p class="muted">Files in <code>agents/${esc(v.name)}/</code>, newest first. Workspace: <a class="lnk" onclick='go({k:"tree",path:${JSON.stringify((mt.cwd||'').includes('/runs/')?(mt.cwd.split(/\/runs\/[^/]+\//)[1]||''):'')}})'>browse</a></p>
   <div class="card"><table>${d.files.map(f=>`<tr class="click" onclick='go({k:"file",path:${JSON.stringify(f.path)}})'><td>${esc(f.path.split('/').slice(2).join('/'))}</td><td class="muted">${(f.size/1000).toFixed(1)} KB</td><td class="muted">${ago(f.mtime*1000)}</td></tr>`).join('')}</table></div>`}}
  }catch(e){M.innerHTML='<p>'+esc(e.message)+'</p>'}}
+
+const TLC={llm:['#2f5fb3','model generating'],tools:['#9cc0ec','running tools (read / edit / shell / message)'],build:['#7b5cc4','building'],
+ gpu_q:['#d0453a','waiting for the GPU (queued)'],gpu_run:['#eda24a','waiting on its own GPU job'],idle:['#e3e1db','idle: waiting for messages'],
+ stalled:['#8f8c86','stopped by an API error (e.g. usage limit)']};
+function drawTimeline(d){const box=$('#tl');const W=Math.max(700,box.clientWidth||900),L=170,R=20,PW=W-L-R;const t0=d.t0,t1=d.now;
+ const x=t=>L+(Math.max(t0,Math.min(t1,t))-t0)/(t1-t0)*PW;const fmt=t=>new Date(t*1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+ const dur=s=>s<90?Math.round(s)+' s':s<5400?(s/60).toFixed(1)+' min':(s/3600).toFixed(1)+' h';
+ let svg='',y=10;const ink='var(--ink)',mut='var(--muted)',grid='var(--line)';
+ // time ticks
+ const span=t1-t0,step=[600,1800,3600,7200,14400,21600,43200].find(s=>span/s<=10)||86400;const ticks=[];for(let t=Math.ceil(t0/step)*step;t<=t1;t+=step)ticks.push(t);
+ const tickLines=(y0,y1)=>ticks.map(t=>`<line x1="${x(t)}" x2="${x(t)}" y1="${y0}" y2="${y1}" stroke="${grid}"/>`).join('');
+ // panel 1: champion speedup
+ const H1=120,base=d.base||1;const pts=d.steps.map(s=>({...s,v:(s.tps/base-1)*100}));
+ const before=pts.filter(p=>p.t<=t0),inside=pts.filter(p=>p.t>t0);const v0=before.length?before[before.length-1].v:0;
+ const vs=[v0,...inside.map(p=>p.v)];const vmin=Math.min(...vs)-2,vmax=Math.max(...vs)+3;const yv=v=>y+H1-(v-vmin)/(vmax-vmin)*H1;
+ svg+=`<text x="${L}" y="${y-0}" font-size="12" fill="${mut}">champion: speedup vs BASE ${base.toFixed(1)} tok/s (%)</text>`;y+=8;
+ svg+=tickLines(y,y+H1);for(const g of [vmin,(vmin+vmax)/2,vmax])svg+=`<text x="${L-6}" y="${yv(g)+4}" font-size="11" fill="${mut}" text-anchor="end">${g.toFixed(0)}</text>`;
+ let path=`M${x(t0)},${yv(v0)}`,cur=v0;for(const p of inside){path+=` L${x(p.t)},${yv(cur)} L${x(p.t)},${yv(p.v)}`;cur=p.v}path+=` L${x(t1)},${yv(cur)}`;
+ svg+=`<path d="${path}" fill="none" stroke="${ink}" stroke-width="2"/>`;
+ for(const p of inside)svg+=`<circle cx="${x(p.t)}" cy="${yv(p.v)}" r="4.5" fill="${ink}"><title>${p.id}: ${p.tps} tok/s (+${p.v.toFixed(1)}%) at ${fmt(p.t)}</title></circle><text x="${x(p.t)+6}" y="${yv(p.v)-6}" font-size="11" fill="${ink}">${p.id} +${p.v.toFixed(1)}%</text>`;
+ if(!inside.length)svg+=`<text x="${x(t1)-4}" y="${yv(cur)-6}" font-size="11" fill="${mut}" text-anchor="end">no new champion in this window (+${cur.toFixed(1)}%)</text>`;
+ y+=H1+30;
+ // panel 2: GPU use
+ const H2=80;const g=d.gpu;let g0=0;for(const p of g)if(p[0]<=t0)g0=p[1];const gin=g.filter(p=>p[0]>t0);const used=(gin.length?gin[gin.length-1][1]:g0)-g0;
+ const cap=(t1-t0)/60,gmax=Math.max(cap,used,1);const yg=v=>y+H2-v/gmax*H2;
+ svg+=`<text x="${L}" y="${y}" font-size="12" fill="${mut}">GPU-minutes used in this window: ${used.toFixed(0)} of ${cap.toFixed(0)} wall minutes (${(100*used/cap).toFixed(0)}% busy)</text>`;y+=8;
+ svg+=tickLines(y,y+H2);const yg2=v=>y+H2-v/gmax*H2;let gp=`M${x(t0)},${yg2(0)}`;for(const p of gin)gp+=` L${x(p[0])},${yg2(p[1]-g0)}`;gp+=` L${x(t1)},${yg2(used)}`;
+ svg+=`<line x1="${x(t0)}" y1="${yg2(0)}" x2="${x(t1)}" y2="${yg2(cap)}" stroke="${mut}" stroke-dasharray="4 4"/><text x="${x(t1)-4}" y="${yg2(cap)+14}" font-size="11" fill="${mut}" text-anchor="end">GPU always busy</text>`;
+ svg+=`<path d="${gp}" fill="none" stroke="${ink}" stroke-width="2"/>`;for(const v of [0,gmax])svg+=`<text x="${L-6}" y="${yg2(v)+4}" font-size="11" fill="${mut}" text-anchor="end">${v.toFixed(0)}</text>`;
+ y+=H2+30;
+ // panel 3: agents
+ const RH=22;svg+=`<text x="${L}" y="${y}" font-size="12" fill="${mut}">what each agent is doing (thin black bar: its GPU job running)</text>`;y+=8;const y3=y;
+ let lastTeam=null;for(const a of d.agents){if(a.team!==lastTeam&&lastTeam!==null)svg+=`<line x1="${L}" x2="${L+PW}" y1="${y+1}" y2="${y+1}" stroke="${grid}"/>`;lastTeam=a.team;
+  svg+=`<text x="${L-8}" y="${y+RH/2+4}" font-size="12" fill="var(--accent)" text-anchor="end" style="cursor:pointer" onclick='go({k:"agent",name:"${a.name}"})'>${esc(a.name)}<title>${esc(a.role)} · ${esc(short(a.model))}</title></text>`;
+  for(const [s,e,st] of a.intervals){const c=TLC[st]||['#999',st];const w=Math.max(0.6,x(e)-x(s));svg+=`<rect x="${x(s)}" y="${y+3}" width="${w}" height="${RH-9}" fill="${c[0]}"><title>${esc(a.name)}: ${c[1]}, ${dur(e-s)} (${fmt(s)})</title></rect>`}
+  for(const [s,e,id] of a.jobs)svg+=`<rect x="${x(s)}" y="${y+RH-5}" width="${Math.max(1,x(e)-x(s))}" height="3" fill="${ink}"><title>GPU job ${id}: ${dur(e-s)}</title></rect>`;
+  y+=RH}
+ svg=tickLines(y3,y).concat(svg);
+ // axis
+ y+=6;for(const t of ticks)svg+=`<text x="${x(t)}" y="${y+10}" font-size="11" fill="${mut}" text-anchor="middle">${fmt(t)}</text>`;y+=24;
+ const leg=Object.values(TLC).map(([c,l])=>`<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:12px;height:12px;background:${c};display:inline-block;border-radius:2px"></span>${l}</span>`).join('');
+ box.innerHTML=`<div class="card" style="overflow-x:auto"><svg width="${W}" height="${y}" style="font-family:inherit">${svg}</svg><div style="font-size:12px;color:var(--muted);margin-top:6px">${leg}</div></div>`}
 function evHTML(it,res){if(it.k==='text')return `<div class="ev text">${it.ts?'<div class="who">'+new Date(it.ts).toLocaleTimeString()+'</div>':''}<div class="body">${md(it.text)}</div></div>`;
  if(it.k==='in')return `<div class="ev in"><div class="who">message${it.from?' from <b>'+esc(it.from)+'</b>':''}${it.ts?' · '+new Date(it.ts).toLocaleString():''}</div><div class="body">${md(it.text)}</div></div>`;
  if(it.k==='tool'){let inp=it.input;let head=inp;try{const o=JSON.parse(inp);head=o.command||o.file_path||o.message||o.query||o.url||o.description||inp;inp=o.command?o.command:(o.message&&o.to?'to: '+o.to+'\n\n'+o.message:JSON.stringify(o,null,1))}catch(e){}

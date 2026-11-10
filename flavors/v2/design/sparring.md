@@ -41,8 +41,8 @@ sparring/<team>-<n>.md (+ .json state).
 - **Its prompt:** agents/sparring.md (persona: a principled researcher who wants the leader to
   win and so doesn't let hand-waving pass; every step of an argument must be justified, keep
   asking "why?" until evidence or an admitted assumption; being convinced is fine; load-bearing beliefs; evidence, necessity,
-  counterfactual, decomposition, alternative, falsification; measurement vs conclusion; one to
-  three questions per message; accept good answers; the leader decides; say when nothing
+  counterfactual, decomposition, alternative, falsification; measurement vs conclusion; one question
+  per message (human, 2026-11-10; was one to three); accept good answers; the leader decides; say when nothing
   load-bearing is left; keep a list of beliefs and their status).
 - **Each conversation is saved** (sparring/<team>-<n>.md: the transcript plus the sparring partner's
   final list), so we can count later which premises were challenged and which then failed a test.

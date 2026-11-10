@@ -54,9 +54,9 @@ not the same as a **conclusion** ("so this part can't get faster"). The conclusi
 an assumption (here: that those bytes must be read at all). Find the hidden assumption.
 
 ## How to talk
-- **A few questions at a time, one to three per message,** each tied to a specific claim the
-  leader made. Say briefly why you're asking (what seems not to follow, or what the belief
-  rests on).
+- **One question per message,** tied to a specific claim the leader made, so it can't be
+  sidestepped among others. Pick the one that matters most now, and say briefly why you're asking
+  (what seems not to follow, or what the belief rests on). Keep the others for later turns.
 - **Follow up when an answer is weak:** vague, circular ("because the earlier result says so"),
   or based on a measurement of something slightly different. Ask for the number or the test, and
   keep breaking the claim down ("why is that?") until you reach either evidence or an admitted

@@ -146,6 +146,8 @@ def accounts(evs=None, led=None):
             acc[e["team"]]["last_grant"] = e["minutes"]
         elif ev == "close" and e.get("team") in acc:
             acc[e["team"]]["open"] = False
+        elif ev == "reopen" and e.get("team") in acc:
+            acc[e["team"]]["open"] = True
     for e in led:
         a = acc.get(e.get("team"))
         if a is not None and e.get("charged") and isinstance(e.get("gpu_minutes"), (int, float)):
@@ -658,7 +660,7 @@ def cmd_team(a):
                               "by": who(), "note": "automatic seed"})
             print(f"opened {a.team} ({a.type}) with a {p['seed']:g} GPU-min seed; "
                   f"pool free {pool_state()['free']:.1f}")
-        else:
+        elif a.action == "close":
             acc = accounts(evs)
             if a.team not in acc:
                 die(f"no account '{a.team}'")
@@ -667,6 +669,18 @@ def cmd_team(a):
             if a.team == MGR:
                 die(f"the {MGR} account can't be closed")
             append_event({"event": "close", "team": a.team, "by": who(), "note": a.note})
+        elif a.action == "reopen":
+            acc = accounts(evs)
+            if a.team not in acc:
+                die(f"no account '{a.team}'")
+            if acc[a.team]["open"]:
+                die(f"team {a.team} is already open")
+            bal = max(acc[a.team]["balance"], 0.0)
+            if pool_state(evs=evs)["free"] < bal:
+                die(f"the pool can't cover {a.team}'s unspent {bal:.1f} GPU-min")
+            append_event({"event": "reopen", "team": a.team, "by": who(), "note": a.note})
+            print(f"reopened {a.team} ({acc[a.team]['type']}); its unspent {bal:.1f} GPU-min are its balance "
+                  f"again; pool free {pool_state()['free']:.1f}")
     if a.action == "close":
         pids = cancel_team_jobs(a.team)
         t0 = time.time()
@@ -813,7 +827,7 @@ charged for its time) and its unspent minutes go back to the pool.""",
                        epilog="""examples:
   gpu team open T3 --type explore
   gpu team close T3 --note "second last-chance grant without progress\"""")
-    s.add_argument("action", choices=["open", "close"])
+    s.add_argument("action", choices=["open", "close", "reopen"])
     s.add_argument("team")
     s.add_argument("--type", choices=["explore", "exploit", "external"], default=None, help="open: the team type")
     s.add_argument("--note", default=None, help="close: why (required)")
@@ -858,8 +872,8 @@ examples:
         die("--timeout must be > 0")
     if a.cmd == "team" and a.action == "open" and not a.type:
         p.error("gpu team open: give --type explore|exploit|external")
-    if a.cmd == "team" and a.action == "close" and not a.note:
-        p.error("gpu team close: give --note \"<why>\"")
+    if a.cmd == "team" and a.action in ("close", "reopen") and not a.note:
+        p.error(f"gpu team {a.action}: give --note \"<why>\"")
     if a.cmd == "pool" and a.action == "add" and not a.note:
         p.error("gpu pool add: give --note \"<why>\"")
     a.fn(a)

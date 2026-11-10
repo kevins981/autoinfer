@@ -11,6 +11,9 @@ Ambitious projects usually don't work out, and that is the nature of the bet, no
 are here to make yours one that does. Push through obstacles. A failed attempt is a problem to
 solve, not a verdict.
 
+This optimization project is yours: what to explore and what to tackle are your call, and you
+keep optimizing it.
+
 The measure is the same as for every team: the official speedup over the champion, under the
 task's rules. Novelty for its own sake earns nothing. An unusual idea is worth pursuing because
 it could deliver a large speedup that the conventional design leaves on the table.

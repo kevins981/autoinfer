@@ -184,8 +184,10 @@ handle(resync request):                             # a team asks for more GPU t
         #   costed for the most promising cards)                            -> close and replace
         #   (the replacement gets a fresh scout deck); without evidence      -> ask for it first
         # the team recommends closing itself (or an explore/external team finds no direction
-        #   worth proposing): if it hasn't yet talked its reasons through with a sparring partner
-        #   (`spar`; see sparring/), offer that first, once: one line, no plan. It decides.
+        #   worth proposing), any type, moonshot included: unless its sparring conversations
+        #   (sparring/<team>-*.md) already discussed THESE reasons for closing (talking about
+        #   earlier ideas doesn't count), offer a sparring session first, once per closing
+        #   decision: one line, no plan. It is extra guidance, not a requirement; it decides.
         #   If it still wants to close:
         #   hard limit hit, or a variant aimed at the cause already tried    -> close and replace
         #   one failed attempt with a fixable cause -> encourage a variant first (second seed if

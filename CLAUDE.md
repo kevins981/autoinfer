@@ -49,6 +49,20 @@ which handles its own agents and GPU work; baseline: the researcher). No script.
   message / per job, so they are unaffected. Limit runs by experiments or budgets, not hours, when
   a pause is likely.
 
+## Messages to run agents (designer and manager alike)
+When you message a run agent (a manager kickoff, a note to a leader, a resume), say what changed
+and let it continue: a decision, a budget, a deadline, a new tool, "report when done". **Never tell
+it what to work on:** no test to run first, no direction to take, no list of what the proposal
+should contain. The agent and its own prompt decide that. Detail you add flows downstream: the
+manager passes it on and makes it more specific.
+- Bad (test-6, resume 3; the designer's kickoff to the manager): "Restart leader-32 and send it
+  its next task: continue from proposals/T32-3.md ... Use the seed for the cheap tests it judges
+  most useful, then send you a proposal with a roadmap and forecast. Its direction may now build
+  on what the sparring session surfaced ..." The manager then sent the leader a numbered plan
+  ("prefer the CPU-only tests 1 and 4 ... GPU ones 2, 3 or 5 ... the forecast must reach 1143.3").
+- Good: "T32 is reopened with its 20 GPU-min seed. Restart leader-32 and tell it to continue; it
+  reports to you as usual."
+
 ## Layout
 ```
 autoinfer/

@@ -14,7 +14,7 @@ Usage:
 Every turn is saved as it happens to $AUTOINFER_RUN/sparring/<team>-<n>.md (the transcript).
 The partner can't read the run's files or the code (enforced for the claude backend; prompt-only
 for codex): explain your reasoning and give it the numbers yourself. Backend, model and effort from config.md:
-  - sparring: claude leader / medium      (leader = the caller's own model; or: codex gpt-6.1-sol / high)
+  - sparring: codex gpt-6.1-sol / high    (default; or: claude leader / medium, leader = the caller's model)
 Spec: flavors/v2/design/sparring.md.
 """
 import argparse, json, os, re, subprocess, sys, time, uuid
@@ -44,7 +44,7 @@ def run_dir():
 
 
 def config(run):
-    backend, model, effort = "claude", None, "medium"
+    backend, model, effort = "codex", None, "high"
     cfg = run / "config.md"
     text = cfg.read_text() if cfg.exists() else ""
     m = re.search(r"^\s*-\s*sparring\s*:\s*(claude|codex)\s+([\w.\[\]-]+)\s*(?:/\s*(\w+))?", text, re.M)

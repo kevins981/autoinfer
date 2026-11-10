@@ -6,7 +6,7 @@ reply and prints it (usually under a few minutes; run it with a long Bash timeou
 Usage:
   spar guide                              # how to use the partner and how to start (read once)
   spar start "<your opening message>"     # a fresh partner; prints its id and first reply
-  spar send <id> "<message>"              # prints the reply
+  spar send <id> "<message>"              # prints the reply (also reopens an ended conversation)
   spar send <id> -f <file>                # message from a file
   spar end <id>                           # asks for its list of beliefs and their status, saves it
   spar list                               # this run's conversations
@@ -199,7 +199,10 @@ def main():
     else:
         c = load(run, a.id)
         if c["state"] != "open":
-            die(f"conversation {c['id']} has ended; start a new one")
+            if a.cmd == "end":
+                die(f"conversation {c['id']} has already ended")
+            c["state"] = "open"                 # coming back to an ended conversation: same partner, same memory
+            c.setdefault("reopened", []).append(datetime.now(timezone.utc).isoformat())
         if a.cmd == "end":
             text = END_MSG
         elif not text.strip():

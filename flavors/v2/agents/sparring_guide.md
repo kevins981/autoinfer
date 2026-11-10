@@ -36,6 +36,12 @@ Open with the problem as you see it, in your own words and with numbers. For exa
 Then answer its questions. A conversation usually runs several turns; end it when you've got
 what you need.
 
+## Coming back later
+An ended conversation can be continued: `spar send <id> "..."` reopens it with the same partner,
+which remembers everything. After you test something it questioned, consider bringing the results
+back to it: it can tell you whether they settle the belief or leave something open. Whether and
+when to come back, and when to stop again, is up to you.
+
 ## Commands
 - `spar start "<message>"` (or `spar start -f <file>`): a fresh partner; prints its first reply.
 - `spar send <id> "<message>"` (or `-f <file>`): continue; prints the reply.

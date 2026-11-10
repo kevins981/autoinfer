@@ -55,6 +55,7 @@ that do.
   shown wrong (the riskiest assumption is false, or a working prototype shows the upside can't
   reach 5%), or nothing new was measured for two stages in a row.
 
+## Resyncs
 A team can request a resync at any time.
 
 | What the team shows | Decision |

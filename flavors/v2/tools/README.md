@@ -50,6 +50,18 @@ Agents get the essentials in `agents/common.md`; every tool's `--help` (and `<to
   unchanged), and optionally at a last chance.
 - How many cards of each kind: the `inspiration` lines of the run's `config.md`.
 
+## `scout`: external technique cards (external teams)
+- Manager: `scout --team <team>` when an external team opens: a Codex agent with no project
+  context writes ~15 cards of exact inference techniques from the last two years into
+  `scout/<team>-<n>/` (10-30 min, background); the team's leader is messaged when they land.
+- `scout --status [--team <team>]`: progress.
+
+## `spar`: a sparring partner (any leader)
+- `spar start "<message>"`, `spar send <id> "<message>"` (or `-f <file>`), `spar end <id>`,
+  `spar list`. Synchronous: each call waits for the reply (seconds to minutes; use a long Bash
+  timeout). A fresh partner per conversation; it can't read the run or the code. Transcripts in
+  `sparring/`.
+
 ## `gpu`: the GPU queue (all GPU work goes through it)
 - `gpu run --timeout <min> [--label L] -- <command>`: runs your command with exclusive use of the
   GPUs, one job at a time for the whole run, first come first served. **Run it as a background

@@ -92,6 +92,8 @@ open_teams():                                       # from CONFIG: number of tea
 ```python
 handle(proposal from an explore or external team):  # roadmap, forecast, GPU time requested
     check (FUNDING_POLICY):
+        # 0a. any team: you may ask whether the leader talked its key premises through with a
+        #     sparring partner (`spar`; sparring/). Asking is fine; don't require it.
         # 0. external teams: the proposal names the scout card(s) it builds on and gives a transfer
         #    argument (a seed measurement of the condition the technique needs). Judge the
         #    measurement, not whether you like the card.

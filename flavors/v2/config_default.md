@@ -1,7 +1,7 @@
 # CONFIG (v2 defaults; copied into each run as config.md, where the human may edit it)
 Mostly free text: the manager reads it. The `models` and `slot` lines are also read by `agent start` and
 `new_run`, the `GPU pool` and `seed grant` lines by `new_run`, the `inspiration` lines by
-`inspire`, and the `scout` line by `scout`. Keep their format.
+`inspire`, the `scout` line by `scout`, and the `sparring` line by `spar`. Keep their format.
 
 - teams: 3 (team ids T1, T2, ...; a replacement team gets a new id)
   - explore: 1
@@ -21,6 +21,8 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
 - model slots: none (optional: per-team models for comparing models. One line per slot,
   "  - slot <S>: leader <model> / <effort>, worker <model> / <effort>"; the manager opens each
   team with `agent start ... --slot <S>`, and a replacement team keeps its slot)
+- sparring: claude leader / medium (the `spar` tool's partner: backend claude|codex, model / effort;
+  `leader` = the calling leader's own model)
 - scout: codex gpt-6.1-sol / medium, cards 15 (the `scout` tool, for external teams: agent, model /
   effort, cards per deck; one fresh deck per external team)
 - inspiration cards per draw: principles 5, hardware 5, software 5 (the `inspire` tool; 0 turns a

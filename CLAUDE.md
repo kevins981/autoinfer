@@ -105,6 +105,11 @@ autoinfer/
 - Each flavor's design lives in its `design/` folder, starting from `DESIGN.md`, e.g.
   [flavors/v1/design/DESIGN.md](flavors/v1/design/DESIGN.md).
 
+- [INSIGHTS_LOG.md](INSIGHTS_LOG.md): what worked (or clearly didn't) in the design. **Not a record
+  of everything**: add an entry only for an insight worth keeping. Every word matters: a few short
+  lines (setup, result, caveat), no tables of every team. Say when a result is a first try that
+  may not generalize.
+
 When a design decision is made, write it into the right file (principles, open questions, or the
 flavor's `design/` folder) so the next designer session starts from it.
 

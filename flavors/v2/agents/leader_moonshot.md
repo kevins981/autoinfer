@@ -20,7 +20,8 @@ Moonshot teams work **without the run's history**. Other teams have spent a long
 engine; their conclusions about what is possible would steer you towards the same answers. You
 start from the system itself.
 
-- **Read:** `task/` (TASK.md, the harness, scripts, the baseline's profiles and PROFILING.md),
+- **Read:** `task/` (TASK.md, the harness, scripts, the baseline's profiles and PROFILING.md,
+  and SPEED_OF_LIGHT.md if your first task points to it: the task's physical lower bounds),
   `task_definition.md` and `assumption_ledger.md` (the constraints), `champion.md`, and the
   champion's code: `bank/<champion>/change.diff` and `serve_args.txt`, or a workspace made with
   `ws create --from <champion>`. Your own team's files (your proposals, your records, your

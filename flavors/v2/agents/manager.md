@@ -100,7 +100,10 @@ open_teams():                                       # from CONFIG: number of tea
             # a list of dead ends; don't lead with "replaces <team>, which closed".
             # moonshot: the first task is history-free: team id and type, the champion (record
             # id + official numbers), the seed, where task/ and the constraints are, then the
-            # cards. No pointers to shared_kb.md, announcements, write-ups or earlier teams.
+            # cards. No pointers to shared_kb.md, announcements, write-ups or earlier teams, and
+            # nothing about how much work went into the champion (no "tuned by N teams").
+            # speed of light: if CONFIG's `speed of light` line lists the team's type and
+            # task/SPEED_OF_LIGHT.md exists, the first task points to it (one line, no comment).
         teams/<team>.md = new track record          # see "Track records"
         if exploit: agent announce "team <team> (exploit) opened with <seed + start> GPU-min"
 ```

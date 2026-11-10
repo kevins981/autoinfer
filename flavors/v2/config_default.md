@@ -27,6 +27,8 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
   for Claude, `claude leader / medium` uses the calling leader's own model)
 - scout: codex gpt-6.1-sol / medium, cards 15 (the `scout` tool, for external teams: agent, model /
   effort, cards per deck; one fresh deck per external team)
+- speed of light: moonshot (team types whose first task points to task/SPEED_OF_LIGHT.md, if the
+  task has one: physical lower bounds for the task; design/modules.md)
 - inspiration cards per draw: principles 5, hardware 5, software 5 (the `inspire` tool; 0 turns a
   kind off)
   - inspiration hardware cards: platform-supermicro-741ge-2x-rtx4090

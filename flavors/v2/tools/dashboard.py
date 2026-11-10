@@ -405,7 +405,7 @@ def overview(run):
     return {"champion": champ, "gpu": tool(run, "gpu", "status"), "teams": teams(run),
             "config": read(run / "config.md", 20000), "jobs": len(led),
             "manager": next((a for a in agent_list(run) if a["name"] == "manager"), None),
-            "scouts": scout_decks(run)}
+            "scouts": scout_decks(run), "sparring": sparring_list(run)}
 
 
 def gpu_jobs(run):
@@ -621,6 +621,17 @@ def scout_decks(run):
     return out
 
 
+def sparring_list(run):
+    out = []
+    for f in sorted(glob.glob(str(run / "sparring" / "*.json"))):
+        try:
+            c = json.loads(open(f).read())
+        except (OSError, ValueError):
+            continue
+        out.append({k: c.get(k) for k in ("id", "team", "by", "state", "turns", "backend", "model", "effort", "started")})
+    return out
+
+
 def parse_codex(lines):
     """Codex `exec --json` events -> the same item kinds as parse_events (text/tool/res/turn/sys)."""
     items = []
@@ -812,11 +823,12 @@ async function init(){const rs=await (await fetch('/api/runs')).json();$('#run')
  $('#run').onchange=()=>{RUN=$('#run').value;go({k:'overview',run:RUN})};VIEW.run=RUN;await refresh(true);
  setInterval(()=>{if($('#auto').checked)refresh(false)},8000)}
 async function refresh(full){try{OV=await api('/api/overview');navRender();$('#stamp').textContent='updated '+new Date().toLocaleTimeString();
- if(full)render();else if(VIEW.k==='agent')pollEvents();else if(['overview','gpu','timeline'].includes(VIEW.k))render(true);else if(VIEW.k==='scout')pollScout()}catch(e){$('#main').innerHTML='<p>'+esc(e.message)+'</p>'}}
+ if(full)render();else if(VIEW.k==='agent')pollEvents();else if(['overview','gpu','timeline'].includes(VIEW.k))render(true);else if(VIEW.k==='scout')pollScout();else if(VIEW.k==='spar')pollSpar()}catch(e){$('#main').innerHTML='<p>'+esc(e.message)+'</p>'}}
 function navRender(){const T=OV.teams;const open=T.filter(t=>t.status==='open'),closed=T.filter(t=>t.status!=='open');
  const a=(v,label,meta='',cls='')=>{const on=JSON.stringify({...v,run:RUN})===JSON.stringify({...VIEW,run:RUN});return `<a class="${cls} ${on?'on':''}" onclick='go(${JSON.stringify({...v,run:RUN})})'>${label}${meta?`<span class="meta">${meta}</span>`:''}</a>`};
  const team=t=>{let s=a({k:'team',team:t.team},`<b>${t.team}</b> <span class="muted">${esc(t.type||'')}${t.slot?' · slot '+t.slot:''}</span>`,t.used.toFixed(0)+'/'+t.granted.toFixed(0)+' min');
-   if(t.status==='open')for(const ag of t.agents.filter(x=>x.state==='alive'||true).sort((x,y)=>x.name.localeCompare(y.name)))s+=a({k:'agent',name:ag.name},`<span class="dot ${state(ag)}"></span>${esc(ag.name)}`,ag.cost_usd?'$'+ag.cost_usd.toFixed(0):'','sub');
+   if(t.status==='open'||t.agents.some(x=>x.state==='alive'))for(const ag of t.agents.filter(x=>x.state==='alive'||true).sort((x,y)=>x.name.localeCompare(y.name)))s+=a({k:'agent',name:ag.name},`<span class="dot ${state(ag)}"></span>${esc(ag.name)}`,ag.cost_usd?'$'+ag.cost_usd.toFixed(0):'','sub');
+   for(const c of (OV.sparring||[]).filter(x=>x.team===t.team))s+=a({k:'spar',id:c.id},`<span class="dot ${c.state==='open'?'busy':'stopped'}"></span>sparring ${esc(c.id)}`,c.turns+' turns','sub');
    for(const sc of (OV.scouts||[]).filter(x=>x.team===t.team))s+=a({k:'scout',deck:sc.deck},`<span class="dot ${sc.state==='running'?'busy':sc.state==='done'?'stopped':'idle'}"></span>scout ${esc(sc.deck)}`,sc.state==='running'?(sc.cards_so_far||0)+' files':(sc.cards||0)+' cards','sub');return s};
  const m=OV.manager;
  $('#nav').innerHTML=`<div class="sec">Run</div>${a({k:'overview'},'Overview')}${a({k:'timeline'},'Timeline')}${a({k:'gpu'},'GPU jobs')}${a({k:'file',path:'journal.md',title:'Journal'},'Journal')}
@@ -830,6 +842,7 @@ async function render(soft){clearTimeout(TIMER);const v=VIEW;const M=$('#main');
  ${T.map(t=>`<tr class="click" onclick='go({k:"team",team:"${t.team}"})'><td><b>${t.team}</b></td><td>${esc(t.type)}${t.slot?' · slot '+t.slot:''}</td>
  <td><span class="pill ${t.status==='open'?'open':''}">${t.status}</span></td><td>${t.models.map(short).join(', ')}</td><td>${t.used.toFixed(1)} / ${t.granted.toFixed(0)}</td><td>${t.jobs}</td><td>${t.records.length}</td><td>$${t.cost.toFixed(2)}</td><td class="muted">${ago(t.opened)}</td></tr>`).join('')}</table></div>
  <h3>Config</h3><div class="card">${md(OV.config)}</div>`}
+ else if(v.k==='spar'){M.innerHTML=`<h2>sparring ${esc(v.id)}</h2><div id="sphead"></div><div class="card" id="sptext"></div>`;await pollSpar(true)}
  else if(v.k==='scout'){M.innerHTML=`<h2>scout ${esc(v.deck)}</h2><div id="schead"></div><div class="tabs"><a class="on">activity</a></div><div class="filters"><label><input type="checkbox" id="fT" checked> messages</label><label><input type="checkbox" id="fU" checked> searches / pages / commands</label><label><input type="checkbox" id="fS" checked> thinking / turn</label><button id="bottom">jump to latest</button></div><div id="evs"></div>`;
   $('#bottom').onclick=()=>M.scrollTop=M.scrollHeight;await pollScout(true)}
  else if(v.k==='timeline'){const h=v.hours??6;const d=await api('/api/timeline',{hours:h});
@@ -923,6 +936,13 @@ function drawTimeline(d){const box=$('#tl');const W=Math.max(700,box.clientWidth
  const leg=Object.values(TLC).map(([c,l])=>`<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:12px;height:12px;background:${c};display:inline-block;border-radius:2px"></span>${l}</span>`).join('');
  box.innerHTML=`<div class="card" style="overflow-x:auto"><svg width="${W}" height="${y}" style="font-family:inherit">${svg}</svg><div style="font-size:12px;color:var(--muted);margin-top:6px">${leg}</div></div>`}
 
+
+async function pollSpar(first){const v=VIEW;if(v.k!=='spar')return;const M=$('#main');const atBottom=first||M.scrollHeight-M.scrollTop-M.clientHeight<80;
+ const c=(OV.sparring||[]).find(x=>x.id===v.id)||{};const f=await api('/api/file',{path:'sparring/'+v.id+'.md'});
+ $('#sphead').innerHTML=`<div class="card kv"><div><span>team</span><a class="lnk" onclick='go({k:"team",team:"${c.team}"})'>${esc(c.team)}</a></div><div><span>leader</span><a class="lnk" onclick='go({k:"agent",name:"${c.by}"})'>${esc(c.by)}</a></div>
+ <div><span>partner</span>${esc(c.backend)} ${esc(c.model)} / ${esc(c.effort)}</div><div><span>state</span>${esc(c.state)}</div><div><span>turns</span>${c.turns}</div><div><span>started</span>${ago(c.started)}</div></div>`;
+ const html=(f.text||'').replace(/^## (leader[^\n]*|partner[^\n]*)$/gm,(m,h)=>'\n\n---\n\n### '+(h.startsWith('partner')?'🟣 ':'🔵 ')+h+'\n');
+ $('#sptext').innerHTML=md(html)||'<p class="muted">empty</p>';if(atBottom)M.scrollTop=M.scrollHeight}
 async function pollScout(first){const v=VIEW;if(v.k!=='scout')return;const M=$('#main');const atBottom=first||M.scrollHeight-M.scrollTop-M.clientHeight<80;
  const d=await api('/api/scout',{deck:v.deck});if(d.error){M.innerHTML='<p>'+esc(d.error)+'</p>';return}const s=d.deck;
  $('#schead').innerHTML=`<div class="card kv"><div><span>team</span><a class="lnk" onclick='go({k:"team",team:"${s.team}"})'>${esc(s.team)}</a></div><div><span>state</span>${esc(s.state)}</div><div><span>agent</span>codex ${esc(s.model)} / ${esc(s.effort)}</div>

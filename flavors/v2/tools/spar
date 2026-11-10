@@ -4,6 +4,7 @@ goal is to help you think critically (agents/sparring.md). Synchronous: each `se
 reply and prints it (usually under a few minutes; run it with a long Bash timeout).
 
 Usage:
+  spar guide                              # how to use the partner and how to start (read once)
   spar start "<your opening message>"     # a fresh partner; prints its id and first reply
   spar send <id> "<message>"              # prints the reply
   spar send <id> -f <file>                # message from a file
@@ -13,7 +14,7 @@ Usage:
 Every turn is saved as it happens to $AUTOINFER_RUN/sparring/<team>-<n>.md (the transcript).
 The partner can't read the run's files or the code (enforced for the claude backend; prompt-only
 for codex): explain your reasoning and give it the numbers yourself. Backend, model and effort from config.md:
-  - sparring: claude leader / medium      (leader = the caller's own model; or: codex gpt-6.1-sol / medium)
+  - sparring: claude leader / medium      (leader = the caller's own model; or: codex gpt-6.1-sol / high)
 Spec: flavors/v2/design/sparring.md.
 """
 import argparse, json, os, re, subprocess, sys, time, uuid
@@ -51,14 +52,31 @@ def config(run):
         backend, model, effort = m.group(1), m.group(2), m.group(3) or effort
     if model == "leader":
         model = None
-    if not model and backend == "codex":
-        model = "gpt-6.1-sol"
+    if backend == "codex":
+        model = model or "gpt-6.1-sol"
+        if not (m and m.group(3)):
+            effort = "high"
     if not model:   # default: the caller's own model (same model as the leader)
         model = "claude-opus-5-5"
         meta = run / "agents" / os.environ.get("AUTOINFER_AGENT", "-") / "meta.json"
         if meta.exists():
             model = json.loads(meta.read_text()).get("model") or model
     return backend, model, effort
+
+
+def seen_file(run):
+    return run / "sparring" / ".guide_seen"
+
+
+def seen(run):
+    f = seen_file(run)
+    return f.exists() and os.environ.get("AUTOINFER_AGENT", "human") in f.read_text().split()
+
+
+def mark_seen(run):
+    conv_dir(run)
+    with open(seen_file(run), "a") as fh:
+        fh.write(os.environ.get("AUTOINFER_AGENT", "human") + "\n")
 
 
 def conv_dir(run):
@@ -140,8 +158,21 @@ def main():
     s = sub.add_parser("send"); s.add_argument("id"); s.add_argument("text", nargs="*"); s.add_argument("-f", "--file")
     s = sub.add_parser("end"); s.add_argument("id")
     sub.add_parser("list")
+    sub.add_parser("guide")
     a = p.parse_args()
     run = run_dir()
+    guide = (FLAVOR / "agents" / "sparring_guide.md").read_text()
+    if a.cmd == "guide":
+        mark_seen(run)
+        print(guide)
+        return
+    if a.cmd in ("start", "send") and not seen(run):
+        # first call by this agent: show how to use the partner before anything starts
+        mark_seen(run)
+        print(guide)
+        print("\n[spar: this is your first call, so nothing was sent. Re-run your command when ready; "
+              "consider shaping your opening message as described above.]")
+        return
     if a.cmd == "list":
         for f in sorted(conv_dir(run).glob("*.json")):
             c = json.loads(f.read_text())

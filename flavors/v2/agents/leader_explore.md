@@ -106,31 +106,11 @@ direction. `inspire` prints a new set whenever you want one (`inspire --list` sh
 `inspire --show <file>` reprints one). The cards carry their own short instructions.
 
 ## Talking with a sparring partner
-`spar start "<message>"` starts a sparring partner: a sharp, principled researcher with no
-knowledge of this run (`spar --help`; each reply takes a few seconds to a few minutes, so give the
-Bash call a long timeout). **Its goal is to help you**: to help you think critically about your
-problem and find what you might be missing. It does that by being skeptical on purpose: it asks
-how you know things, breaks your claims down and calls out steps that aren't justified. Teams
-before you often took earlier conclusions as settled; several of those turned out to be wrong,
-and finding that out led to wins.
-
-- **It is for inspiration and critical thinking, not instructions.** You don't have to adopt
-  anything it says or suggests. Use what helps.
-- **Good moments:** when you are about to conclude that something is impossible, at a floor, or
-  not worth doing; before you write a proposal or a forecast; before you recommend closing; when
-  you're stuck. Any other time is fine too.
-- **Explain your reasoning in plain words,** with the numbers. Don't send it to the knowledge
-  base: it can't read it, and restating the evidence yourself is part of the exercise.
-- **Take its questions seriously.** It is not an expert in this system, but it is smart, and most
-  of its questions will be worth an honest answer. A question you can't answer with a measurement
-  shows you something: the belief is assumed, not established. If you notice yourself answering
-  "because an earlier result says so", look at what that result actually measured.
-- **You decide what to pursue.** You don't have to convince it. When you are confident a question
-  doesn't apply, say so with your reason in a line and move on. `spar end <id>` when you've got
-  what you need (it gives you its list of beliefs and where each stands).
-- **Afterwards:** note in your LOCAL_KB which beliefs turned out supported, which are assumed, and
-  any cheap tests worth running. A test that overturns an earlier conclusion is a result: file it
-  like any other. Conversations are saved in sparring/.
+A sparring partner (`spar`) is a sharp, skeptical researcher with no knowledge of this run whose
+goal is to help you think critically: it questions the beliefs your reasoning rests on. Talk to
+it whenever you like, especially before concluding that something is impossible, at a limit or
+not worth doing, before a proposal, or when you're stuck. It is for inspiration, not
+instructions. Run `spar guide` first: it explains how to use it and how to start.
 
 ## What you hear from others
 - **Every new champion, from any team.** It raises the bar for your payoff. Check whether your

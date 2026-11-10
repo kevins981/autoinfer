@@ -22,7 +22,7 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
   "  - slot <S>: leader <model> / <effort>, worker <model> / <effort>"; the manager opens each
   team with `agent start ... --slot <S>`, and a replacement team keeps its slot)
 - sparring: claude leader / medium (the `spar` tool's partner: backend claude|codex, model / effort;
-  `leader` = the calling leader's own model)
+  `leader` = the calling leader's own model; for Codex use `codex gpt-6.1-sol / high`)
 - scout: codex gpt-6.1-sol / medium, cards 15 (the `scout` tool, for external teams: agent, model /
   effort, cards per deck; one fresh deck per external team)
 - inspiration cards per draw: principles 5, hardware 5, software 5 (the `inspire` tool; 0 turns a

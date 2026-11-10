@@ -10,7 +10,14 @@ may ask); not yet used in a run.
 Backends: `claude -p` with `--resume` (default; file and shell tools disallowed, only WebSearch /
 WebFetch, empty cwd under .cache/sparring_work: isolation enforced) or `codex exec resume` (more
 model diversity; read-only sandbox, but Codex can still read files, so isolation is prompt-only).
-config.md: `- sparring: claude leader / medium` (leader = the caller's model). Transcripts:
+config.md: `- sparring: claude leader / medium` (leader = the caller's model) or `codex gpt-6.1-sol / high`
+(the human's choice for Codex).
+
+**How the leader learns it:** the leader prompts have a short paragraph (what it is, when, "run
+`spar guide` first"). The full guidance is agents/sparring_guide.md, printed by `spar guide` and
+automatically on an agent's first `spar start`/`send` (which then sends nothing). It includes how to
+open: the goal and where the time goes, the few biggest bottlenecks and why each seems hard, or the
+conclusion about to be drawn. The "Leader-side guidance" text below is now in that file. Transcripts:
 sparring/<team>-<n>.md (+ .json state).
 
 ## Why

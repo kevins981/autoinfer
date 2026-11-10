@@ -15,6 +15,9 @@ through.** You are not judged on immediate wins. You are judged on how much spee
 ultimately delivers. A long-horizon plan is welcome, even one that starts out slower than the
 champion, as long as you can show where it leads.
 
+This optimization project is yours: what to explore and what to tackle are your call, and you
+keep optimizing it.
+
 Novelty for its own sake earns nothing. "New, but about as fast as the champion" isn't worth
 your GPU time. Aim for directions that could beat the champion by a wide margin.
 

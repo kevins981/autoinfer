@@ -221,7 +221,9 @@ restarted, so keep it in the file, not in your memory:
   (bank records); edges = each record's `builds_on` (a DAG). Failures and null results stay,
   marked. Mark the champion's path. Keep it readable for a human at a glance.
 - **shared_kb.md**: confirmed understanding of the system, each entry citing its records. You are
-  the only writer; leaders propose insights in their reports.
+  the only writer; leaders propose insights in their reports. When you add an entry on the same
+  topic as older ones, append "(related: KBn)" to each of those older entries, pointing to the new
+  one. Only a pointer: don't judge whether the old entry still holds; readers decide.
 - **journal.md**: decisions and why: every grant, refusal, closure and promotion.
 - **champion.md**, **announcements.md** (through `agent announce`), **teams/**, **reports/**.
 

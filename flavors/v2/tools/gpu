@@ -13,7 +13,7 @@ Usage:
   gpu history <team> [--json]
   gpu wait <job id>
   gpu cancel <job id>
-Manager:  gpu team open <team> --type explore|exploit
+Manager:  gpu team open <team> --type explore|exploit|external
           gpu grant <team> <minutes> --kind start|extension|last-chance --note "..."
           gpu team close <team> --note "..."
 Human:    gpu pool init <minutes> --seed <minutes>;  gpu pool add <minutes> --note "..."
@@ -815,7 +815,7 @@ charged for its time) and its unspent minutes go back to the pool.""",
   gpu team close T3 --note "second last-chance grant without progress\"""")
     s.add_argument("action", choices=["open", "close"])
     s.add_argument("team")
-    s.add_argument("--type", choices=["explore", "exploit"], default=None, help="open: the team type")
+    s.add_argument("--type", choices=["explore", "exploit", "external"], default=None, help="open: the team type")
     s.add_argument("--note", default=None, help="close: why (required)")
     s.set_defaults(fn=cmd_team)
     s = sub.add_parser("grant", formatter_class=R, help="(manager) grant GPU-minutes from the pool",
@@ -857,7 +857,7 @@ examples:
     if a.cmd == "run" and a.timeout <= 0:
         die("--timeout must be > 0")
     if a.cmd == "team" and a.action == "open" and not a.type:
-        p.error("gpu team open: give --type explore|exploit")
+        p.error("gpu team open: give --type explore|exploit|external")
     if a.cmd == "team" and a.action == "close" and not a.note:
         p.error("gpu team close: give --note \"<why>\"")
     if a.cmd == "pool" and a.action == "add" and not a.note:

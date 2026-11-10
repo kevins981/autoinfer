@@ -12,6 +12,8 @@
       "Bash(official_eval *)",
       "Bash(inspire)",
       "Bash(inspire *)",
+      "Bash(scout)",
+      "Bash(scout *)",
       "WebSearch",
       "WebFetch"
     ],

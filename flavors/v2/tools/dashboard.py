@@ -176,7 +176,8 @@ def team_detail(run, t):
     d = next((x for x in teams(run) if x["team"] == t), {"team": t})
     files = {}
     for kind, pat in (("track", f"teams/{t}.md"), ("proposals", f"proposals/{t}-*.md"),
-                      ("reports", f"reports/{t}-*.md"), ("inspiration", f"inspiration/{t}-*.md")):
+                      ("reports", f"reports/{t}-*.md"), ("inspiration", f"inspiration/{t}-*.md"),
+                      ("scout", f"scout/{t}-*/*.md")):
         files[kind] = [str(Path(p).relative_to(run)) for p in sorted(glob.glob(str(run / pat)))]
     recs = []
     for p in sorted(glob.glob(str(run / "bank" / f"{t}-*"))):
@@ -752,7 +753,7 @@ async function render(soft){clearTimeout(TIMER);const v=VIEW;const M=$('#main');
  ${t.note?`<div class="card"><b>Closed:</b> ${esc(t.note)}</div>`:''}
  <h3>Agents</h3><div class="card"><table><tr><th></th><th>agent</th><th>role</th><th>model</th><th>cost</th><th>last event</th><th>current task</th></tr>
  ${(t.agents||[]).map(a=>`<tr class="click" onclick='go({k:"agent",name:"${a.name}"})'><td><span class="dot ${state(a)}"></span></td><td>${esc(a.name)}</td><td>${esc(a.role)}</td><td></td><td>$${(a.cost_usd||0).toFixed(2)}</td><td class="muted">${ageS(a.last_event_age_s)}</td><td class="muted">${esc((a.task||'').slice(0,120))}</td></tr>`).join('')}</table></div>
- <h3>Documents</h3><div class="card"><p><b>Track record</b> (manager): ${fl(t.files.track)}</p><p><b>Proposals</b>: ${fl(t.files.proposals)}</p><p><b>Resync reports / write-up</b>: ${fl(t.files.reports)}</p><p><b>Inspiration draws</b>: ${fl(t.files.inspiration)}</p></div>
+ <h3>Documents</h3><div class="card"><p><b>Track record</b> (manager): ${fl(t.files.track)}</p><p><b>Proposals</b>: ${fl(t.files.proposals)}</p><p><b>Resync reports / write-up</b>: ${fl(t.files.reports)}</p><p><b>Inspiration draws</b>: ${fl(t.files.inspiration)}</p>${t.files.scout&&t.files.scout.length?`<p><b>Scout cards</b>: ${fl(t.files.scout)}</p>`:''}</div>
  <h3>Bank records (${t.bank.length})</h3><div class="card"><table><tr><th>record</th><th>official</th><th>performance</th></tr>
  ${t.bank.map(r=>`<tr class="click" onclick='go({k:"file",path:${JSON.stringify(r.path)},title:"${r.id}"})'><td><b>${r.id}</b></td><td>${r.official?'<span class="pill win">'+r.official.toFixed(1)+' tok/s</span>':''}</td><td>${esc(r.performance)}</td></tr>`).join('')||'<tr><td class="muted">none yet</td></tr>'}</table></div>`;
  const rows=M.querySelectorAll('table')[0].querySelectorAll('tr.click');(t.agents||[]).forEach((a,i)=>{api('/api/agent',{name:a.name}).then(d=>{rows[i].children[3].textContent=short(d.meta.model)})})}

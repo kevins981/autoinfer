@@ -65,18 +65,22 @@ initialize():                                       # WITH the human (as in v1)
 ```python
 open_teams():                                       # from CONFIG: number of teams and the ratio
     for each team in CONFIG (ids T1, T2, ...; never reuse an id):
-        gpu team open <team> --type explore|exploit         # grants the seed automatically
+        gpu team open <team> --type explore|exploit|external   # grants the seed automatically
         if exploit: gpu grant <team> <start size> --kind start --note "exploit team start"
-        inspire --team <team>                               # prints a set of inspiration cards and
+        if external: scout --team <team>                    # starts a scout in the background (10-30 min);
+            # its deck lands in scout/<team>-<n>/ and the leader is messaged when it is ready.
+            # No inspiration cards for an external team. The first task says the deck is coming
+            # and where; don't describe or preview its contents.
+        else: inspire --team <team>                         # prints a set of inspiration cards and
             # saves it to inspiration/<team>-<n>.md. Append that file to the first task UNCHANGED:
             # don't pick, drop, reorder or comment on cards. It carries its own instructions.
-        agent start leader-<k> --role leader_explore|leader_exploit --team <team> --task-file <f>
+        agent start leader-<k> --role leader_explore|leader_exploit|leader_external --team <team> --task-file <f>
             # if CONFIG has model slots: add --slot <S> (a new team takes a free slot; a
             # replacement team takes the slot of the team it replaces). The tool then picks the
             # team's leader and worker models; don't pass --model.
             # the first task is short: team id and type, the current CHAMPION (record id +
             # official numbers), its grant status (exploit: seed + start; explore: seed only,
-            # send a proposal to get a start grant), and where things are (bank/, shared_kb.md,
+            # external: like explore; send a proposal to get a start grant), and where things are (bank/, shared_kb.md,
             # announcements.md, task/), then the inspiration cards. NO direction: the team
             # chooses its own, and the cards are not one.
             # Point to earlier teams' write-ups as what was tried and what is still open, not as
@@ -86,8 +90,11 @@ open_teams():                                       # from CONFIG: number of tea
 ```
 
 ```python
-handle(proposal from an explore team):             # roadmap, forecast, GPU time requested
+handle(proposal from an explore or external team):  # roadmap, forecast, GPU time requested
     check (FUNDING_POLICY):
+        # 0. external teams: the proposal names the scout card(s) it builds on and gives a transfer
+        #    argument (a seed measurement of the condition the technique needs). Judge the
+        #    measurement, not whether you like the card.
         # 1. the forecast is broken into parts, each marked measured (with the job/record cited)
         #    or assumed
         # 2. the payoff IF THE ROADMAP WORKS clears the CURRENT champion by at least the policy's
@@ -129,6 +136,9 @@ handle(resync request):                             # a team asks for more GPU t
         # the measured part of the forecast grew, payoff-if-it-works clears bar -> extend
         # nothing new measured, or payoff-if-it-works below the bar             -> last chance
         # second last chance in a row                                       -> close and replace
+        # external team says no card is good enough, with evidence (what it measured or
+        #   costed for the most promising cards)                            -> close and replace
+        #   (the replacement gets a fresh scout deck); without evidence      -> ask for it first
         # the team recommends closing itself:
         #   hard limit hit, or a variant aimed at the cause already tried    -> close and replace
         #   one failed attempt with a fixable cause -> encourage a variant first (second seed if
@@ -145,7 +155,7 @@ handle(resync request):                             # a team asks for more GPU t
                           gpu team close <team> --note "<why>"; agent stop its leader and workers;
                           open a new team of the SAME type with a new id (open_teams() steps);
                           agent announce the closure (with the write-up's path) and the new team
-    if explore: agent remind <leader>               # after EVERY resync with an explore team
+    if explore or external: agent remind <leader>   # after EVERY resync with these teams
     save the resync report to reports/<team>-<n>.md; teams/<team>.md += decision
     report_to_human()                               # see "Reporting to the human"
 ```

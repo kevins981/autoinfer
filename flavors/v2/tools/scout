@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""scout: a deck of external technique cards for an external team, written by a scout agent.
+
+The scout gets agents/scout.md as its whole context (no run, task or project files), searches the
+web for exact inference techniques published in the last two years, and writes one card per
+technique. It runs in an empty folder outside the run; when it finishes, the cards are copied to
+$AUTOINFER_RUN/scout/<team>-<n>/ and the team's leader (if running) gets an inbox message.
+
+Usage:
+  scout --team T32            # manager: start a scout for team T32 (background; returns at once)
+  scout --status              # every deck of this run: state, cards, minutes
+  scout --status --team T32   # one team's decks
+
+The scout's agent, model, effort and card count come from config.md:
+  - scout: codex gpt-6.1-sol / medium, cards 15
+Spec: flavors/v2/design/external_teams.md.
+"""
+import argparse, json, os, re, shutil, subprocess, sys, time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+TOOLS = Path(__file__).resolve().parent
+FLAVOR = TOOLS.parent
+ROOT = FLAVOR.parent.parent                     # autoinfer/
+WORK = ROOT / ".cache" / "scout_work"           # where scouts run: nothing about the project nearby
+CODEX_HOME = ROOT / ".cache" / "codex"          # private Codex home (auth copied by the human)
+
+
+def die(msg):
+    print(f"scout: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def run_dir():
+    r = os.environ.get("AUTOINFER_RUN")
+    if not r:
+        die("AUTOINFER_RUN is not set")
+    return Path(r)
+
+
+def config(run):
+    """(agent, model, effort, cards) from config.md's '- scout:' line."""
+    agent, model, effort, cards = "codex", "gpt-6.1-sol", "medium", 15
+    cfg = run / "config.md"
+    if cfg.exists():
+        m = re.search(r"^\s*-\s*scout\s*:\s*(\w+)\s+([\w.\[\]-]+)\s*(?:/\s*(\w+))?\s*(?:,\s*cards\s+(\d+))?",
+                      cfg.read_text(), re.M)
+        if m:
+            agent, model = m.group(1), m.group(2)
+            effort = m.group(3) or effort
+            cards = int(m.group(4) or cards)
+    return agent, model, effort, cards
+
+
+def decks(run):
+    d = run / "scout"
+    if not d.exists():
+        return []
+    out = []
+    for s in sorted(d.glob("*.json")):
+        try:
+            out.append(json.loads(s.read_text()))
+        except ValueError:
+            pass
+    return out
+
+
+def write_status(run, st):
+    (run / "scout").mkdir(exist_ok=True)
+    tmp = run / "scout" / f".{st['deck']}.json.tmp"
+    tmp.write_text(json.dumps(st, indent=1))
+    tmp.replace(run / "scout" / f"{st['deck']}.json")
+
+
+def cmd_start(a):
+    role = os.environ.get("AUTOINFER_ROLE")
+    if role not in (None, "manager"):
+        die(f"only the manager starts a scout (your role: {role})")
+    run = run_dir()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", a.team):
+        die(f"bad team id {a.team}")
+    agent, model, effort, ncards = config(run)
+    if agent != "codex":
+        die(f"scout agent '{agent}' is not supported (only codex)")
+    if not shutil.which("codex"):
+        die("codex is not on PATH")
+    if not (CODEX_HOME / "auth.json").exists():
+        die(f"no Codex auth in {CODEX_HOME} (the human copies ~/.codex/auth.json there)")
+    n = 1 + sum(1 for d in decks(run) if d.get("team") == a.team)
+    deck = f"{a.team}-{n}"
+    today = datetime.now(timezone.utc).date()
+    start = today - timedelta(days=730)
+    work = WORK / f"{run.name}-{deck}-{int(time.time())}"
+    cards = work / "cards"
+    cards.mkdir(parents=True)
+    prompt = (FLAVOR / "agents" / "scout.md").read_text()
+    prompt = re.sub(r"^# Role: scout.*\n", "", prompt, count=1)
+    for k, v in {"{WINDOW_START}": start.strftime("%B %-d, %Y"), "{WINDOW_END}": today.strftime("%B %-d, %Y"),
+                 "{OUT_DIR}": str(cards), "{N_CARDS}": str(ncards)}.items():
+        prompt = prompt.replace(k, v)
+    (work / "prompt.md").write_text(prompt)
+    out = run / "scout" / deck
+    st = {"deck": deck, "team": a.team, "state": "running", "agent": agent, "model": model,
+          "effort": effort, "cards_wanted": ncards, "window": [str(start), str(today)],
+          "work": str(work), "cards_dir": str(out), "started": datetime.now(timezone.utc).isoformat(),
+          "by": os.environ.get("AUTOINFER_AGENT") or "human"}
+    write_status(run, st)
+    env = dict(os.environ, CODEX_HOME=str(CODEX_HOME))
+    for k in [k for k in env if k.startswith("AUTOINFER") or k.startswith("CLAUDE")]:
+        if k not in ("AUTOINFER_RUN",):
+            env.pop(k, None)
+    env["AUTOINFER_RUN"] = str(run)
+    # detached: run codex, then finish (copy cards, update status, tell the leader)
+    log = open(work / "runner.log", "w")
+    subprocess.Popen([sys.executable, __file__, "--_finish", str(work), "--_deck", deck,
+                      "--_run", str(run)], stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                     cwd=str(work), env=env, start_new_session=True)
+    print(f"scout started for {a.team}: deck {deck} ({model} / {effort}, {ncards} cards, "
+          f"window {start} to {today}). Usually 10-30 min.")
+    print(f"cards will be in {out}/ (index.md first); the team's leader gets an inbox message when "
+          f"they are ready. `scout --status` shows progress.")
+
+
+def finish(work, deck, run):
+    work, run = Path(work), Path(run)
+    st = json.loads((run / "scout" / f"{deck}.json").read_text())
+    t0 = time.time()
+    cmd = ["codex", "--search", "exec", "-m", st["model"], "-c", f'model_reasoning_effort="{st["effort"]}"',
+           "--skip-git-repo-check", "-C", str(work / "cards"), "-s", "workspace-write", "--json",
+           "-o", str(work / "last_message.md"), "-"]
+    with open(work / "prompt.md") as pin, open(work / "events.jsonl", "w") as ev, \
+            open(work / "stderr.txt", "w") as er:
+        rc = subprocess.call(cmd, stdin=pin, stdout=ev, stderr=er, cwd=str(work / "cards"))
+    out = Path(st["cards_dir"])
+    out.mkdir(parents=True, exist_ok=True)
+    files = sorted(p for p in (work / "cards").glob("*.md"))
+    for p in files:
+        shutil.copy2(p, out / p.name)
+    for extra in ("events.jsonl", "last_message.md", "prompt.md"):
+        if (work / extra).exists():
+            shutil.copy2(work / extra, out.parent / f"{deck}.{extra}")
+    n = sum(1 for p in files if p.name != "index.md")
+    st.update(state="done" if rc == 0 and n else "failed", rc=rc, cards=n,
+              has_index=(out / "index.md").exists(), minutes=round((time.time() - t0) / 60, 1),
+              ended=datetime.now(timezone.utc).isoformat())
+    write_status(run, st)
+    # tell the team's live leader
+    try:
+        lst = json.loads(subprocess.run([str(TOOLS / "agent"), "list", "--json"], capture_output=True,
+                                        text=True, env=dict(os.environ, AUTOINFER_RUN=str(run))).stdout or "[]")
+    except ValueError:
+        lst = []
+    leaders = [x["name"] for x in lst if x.get("team") == st["team"] and str(x.get("role", "")).startswith("leader")]
+    msg = (f"Your scout deck is ready: {n} external technique cards in {out}/ (start with index.md)."
+           if st["state"] == "done" else
+           f"The scout for your team failed (rc {rc}, {n} cards). Tell the manager; it can start another.")
+    for name in leaders:
+        subprocess.run([str(TOOLS / "agent"), "send", name, msg],
+                       env=dict(os.environ, AUTOINFER_RUN=str(run), AUTOINFER_AGENT="scout"))
+    print(f"finished: {st['state']}, {n} cards, {st['minutes']} min, told {leaders or 'nobody (no live leader)'}")
+
+
+def cmd_status(a):
+    run = run_dir()
+    ds = [d for d in decks(run) if not a.team or d.get("team") == a.team]
+    if not ds:
+        print("no scout decks yet")
+        return
+    for d in ds:
+        if d["state"] == "running":
+            mins = (time.time() - datetime.fromisoformat(d["started"]).timestamp()) / 60
+            have = len(list((Path(d["work"]) / "cards").glob("*.md")))
+            print(f"{d['deck']:10} running  {mins:5.1f} min  {have} files so far  ({d['model']} / {d['effort']})")
+        else:
+            print(f"{d['deck']:10} {d['state']:8} {d.get('minutes', 0):5.1f} min  {d.get('cards', 0)} cards  "
+                  f"-> {d['cards_dir']}/")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="scout", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--team")
+    p.add_argument("--status", action="store_true")
+    p.add_argument("--_finish", help=argparse.SUPPRESS)
+    p.add_argument("--_deck", help=argparse.SUPPRESS)
+    p.add_argument("--_run", help=argparse.SUPPRESS)
+    a = p.parse_args()
+    if a._finish:
+        return finish(a._finish, a._deck, a._run)
+    if a.status:
+        return cmd_status(a)
+    if not a.team:
+        p.error("give --team <team> (manager) or --status")
+    cmd_start(a)
+
+
+if __name__ == "__main__":
+    main()

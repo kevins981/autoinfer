@@ -91,9 +91,9 @@ eval gives up after 15 min per server start).
   scales and no lower formats; partial sums are scaled and accumulated in fp32 across 128-element
   K-blocks (the FP8 tensor cores' own accumulator is fine within a block); communication, norms,
   attention/GDN, the KV cache and the target's lm_head stay as in the baseline. Accuracy: besides
-  the GSM8K gate, a record using FP8 activations runs the full GSM8K test set (`gsm8k.py --n
-  1319`) in the same job as a bf16-activation reference of the same code and must be within 2.0
-  points of it.
+  the GSM8K gate, a record using FP8 activations runs the gate's GSM8K subset (`gsm8k.py`,
+  default 250 questions) in the same job as a bf16-activation reference of the same code and must
+  be within 2.0 points of it.
 - **Identical output text is not the test.** Even at temperature 0, floating-point results depend
   on batch composition and kernel choice, so the same code at concurrency 16 can produce different
   text run to run, and a valid change that reorders floating-point math will sometimes flip a

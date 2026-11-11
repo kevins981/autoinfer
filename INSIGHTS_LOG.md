@@ -34,3 +34,14 @@ of everything. Newest last.
   "components are at their floors" before forming ideas. Radical teams turned into auditors and
   proposed least.
 - Caveat: first try, n=2 per framing, one task near its floors; history and framing are confounded.
+
+## 2026-11-11 · test-6 · T50/T51: exploit vs exploit-long after the research teams
+- Setup: one exploit and one exploit-long team (renamed from explore); Opus 5.5 leader, Sonnet 5.5
+  worker; full history including the research teams' findings, speed of light, sparring, cards.
+- Result: the exploit team's first move merged two exact gains that research teams had measured but
+  never merged: new champion, +0.7% official, in ~1 h and 28 GPU-min. Then it closed (all else
+  <=0.4%). The exploit-long team re-priced an idea earlier teams had dropped (piggyback prefill)
+  and closed it with measured causes in 14 GPU-min.
+- Insight: measured-but-unmerged gains are the cheapest wins; they sit idle until a team's job is
+  to merge them. Research findings pay off through exploit teams.
+- Caveat: one team each.

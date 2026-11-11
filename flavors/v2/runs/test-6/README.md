@@ -25,7 +25,7 @@ T50-002 1181.3
 
 ## Teams
 One team = one leader (+ workers) with its own GPU account. Team types (prompts in
-`flavors/v2/agents/leader_<type>.md`, at the flavor commits in `flavor_commit*.txt`):
+`flavors/v2/agents/leader_<type>.md`; versions below):
 
 | Teams | Type | What it is |
 |---|---|---|
@@ -57,6 +57,22 @@ One team = one leader (+ workers) with its own GPU account. Team types (prompts 
 | `config.md`, `funding_policy.md` | the human's run settings (team counts, models, grants) |
 | `announcements.md` | messages the manager broadcast to all agents |
 | `kickoff.md` | the manager's first message |
+
+## Prompt and tool versions
+The design (`flavors/v2/agents/`, `flavors/v2/tools/`) changed during the run. Repo commits in
+effect at each manager start or resume:
+
+| From | Commit | Change it brought |
+|---|---|---|
+| 2026-11-08 | a7db733 | start: explore teams, payoff bar 5% |
+| 2026-11-09 | 5915cea | per-team model slots |
+| 2026-11-10 03:37 | deff909 | external teams (scout decks) |
+| 2026-11-10 15:39 | f776d0d | sparring partner; reopening closed teams |
+| 2026-11-10 21:25 | 9c962cc | moonshot teams; speed-of-light page |
+
+Later changes went in mid-run without a manager restart: research teams (2026-11-11), the rename
+of explore to exploit-long and message delivery to a stopped manager (2026-11-11). `git log
+flavors/v2` has the rest.
 
 Not in git: workspaces (vLLM copies), agent transcripts, raw per-request benchmark outputs and
 per-question GSM8K outputs.

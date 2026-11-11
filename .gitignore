@@ -38,7 +38,7 @@ flavors/*/runs/*/bank/*/official/*/gsm8k.json
 flavors/*/runs/*/bank/*/accuracy/
 *.pt
 *.npy
-# run plumbing (session ids, permission settings, locks, resume messages to the manager)
+# run plumbing (session ids, settings, locks, resume messages, flavor commits: see the run README)
 flavors/*/runs/*/manager_session*.json
 flavors/*/runs/*/*_settings.json
 flavors/*/runs/*/task_source.json
@@ -49,3 +49,4 @@ flavors/*/runs/**/*.lock
 flavors/*/runs/**/.lock
 flavors/*/runs/*/gpu/lock
 flavors/*/runs/*/gpu/seq
+flavors/*/runs/*/flavor_commit*.txt

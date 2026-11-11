@@ -1,1 +1,0 @@
-The human is resuming the run with one moonshot team. A new team type, `moonshot`, exists: your prompt (reloaded) has its sections, funding_policy.md has a "Moonshot teams" section, and the leader's prompt is flavors/v2/agents/leader_moonshot.md. config.md now says moonshot: 1 in slot A; no explore, exploit or external teams. Open it and continue; report to the human when done.

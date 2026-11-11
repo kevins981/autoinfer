@@ -1,1 +1,0 @@
-Your session was resumed. The human asks you to update the run's global files (shared_kb.md, graph.md, reports/final.md and anything else run-wide) with what the research teams T42-T49 found, including the new champion T45-005. No new teams. Continue; report to the human when done.

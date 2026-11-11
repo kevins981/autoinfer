@@ -12,12 +12,12 @@ H() { env -u AUTOINFER_TEAM -u AUTOINFER_ROLE -u AUTOINFER_AGENT "$@"; }
 M() { AUTOINFER_ROLE=manager AUTOINFER_AGENT=manager "$@"; }
 W() { local t=$1; shift; AUTOINFER_ROLE=worker AUTOINFER_TEAM=$t AUTOINFER_AGENT=w-$t "$@"; }
 
-M $G team open T1 --type explore >/dev/null 2>&1; check "open before pool refused" 1 $?
+M $G team open T1 --type exploit-long >/dev/null 2>&1; check "open before pool refused" 1 $?
 M $G pool init 200 --seed 20 >/dev/null 2>&1; check "manager can't init pool" 1 $?
 H $G pool init 200 --seed 20 >/dev/null; check "human pool init" 0 $?
 H $G pool init 300 --seed 20 >/dev/null 2>&1; check "second init refused" 1 $?
-W T1 $G team open T1 --type explore >/dev/null 2>&1; check "worker can't open team" 1 $?
-M $G team open T1 --type explore >/dev/null; check "manager opens T1" 0 $?
+W T1 $G team open T1 --type exploit-long >/dev/null 2>&1; check "worker can't open team" 1 $?
+M $G team open T1 --type exploit-long >/dev/null; check "manager opens T1" 0 $?
 M $G team open T1 --type exploit >/dev/null 2>&1; check "reused id refused" 1 $?
 M $G team open T2 >/dev/null 2>&1; check "open without --type refused" 2 $?
 free=$($G status --json | python3 -c "import json,sys;print(json.load(sys.stdin)['pool']['free'])"); check "pool free after seed" 180.0 $free
@@ -28,8 +28,8 @@ M $G grant T1 80 --kind start --note "proposal ok" >/dev/null; check "grant star
 
 out=$(W T1 $G run --timeout 1 --label ok -- sleep 2); rc=$?
 check "T1 job runs" 0 $rc
-echo "$out" | grep -q "team T1 (explore): 100.0 GPU-min left of 100 granted"; check "balance printed at start" 0 $?
-n=$(echo "$out" | grep -c "team T1 (explore): .* GPU-min left of 100 granted"); check "balance printed at start and end" 2 $n
+echo "$out" | grep -q "team T1 (exploit-long): 100.0 GPU-min left of 100 granted"; check "balance printed at start" 0 $?
+n=$(echo "$out" | grep -c "team T1 (exploit-long): .* GPU-min left of 100 granted"); check "balance printed at start and end" 2 $n
 W T1 $G run --timeout 500 -- true >/dev/null 2>&1; check "timeout over balance -> 76" 76 $?
 W T1 $G run --timeout 0.05 -- sleep 30 >/dev/null 2>&1; check "timeout kill -> 124" 124 $?
 W TX $G run --timeout 1 -- true >/dev/null 2>&1; check "unknown team -> 76" 76 $?
@@ -116,8 +116,8 @@ st=$(python3 -c "import json;print(json.load(open('$BASE/run3/gpu/jobs/$j3/job.j
 timeout 20 $G wait $j3 >/dev/null 2>&1; r=$?; [ $r -ne 124 ]; check "gpu wait returns for refused job" 0 $?
 $G history MGR >/dev/null; check "history MGR" 0 $?
 $G history T1 --json | python3 -c "import json,sys;d=json.load(sys.stdin);assert any(x.get('event')=='job' and 'gpu_minutes' in x for x in d)"; check "history --json structured" 0 $?
-M $G team open "" --type explore >/dev/null 2>&1; check "empty team id refused" 1 $?
-M $G team open "a b" --type explore >/dev/null 2>&1; check "bad team id refused" 1 $?
+M $G team open "" --type exploit-long >/dev/null 2>&1; check "empty team id refused" 1 $?
+M $G team open "a b" --type exploit-long >/dev/null 2>&1; check "bad team id refused" 1 $?
 M $G team close T3 >/dev/null 2>&1; check "close without --note refused" 2 $?
 M $G grant T1 1 --kind extension >/dev/null 2>&1; check "grant without --note refused" 2 $?
 W T1 $G run --timeout 2 -- sleep 60 > $BASE/cl.out 2>&1 & c=$!; sleep 4

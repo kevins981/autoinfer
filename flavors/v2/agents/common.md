@@ -13,9 +13,9 @@ Roles:
   owns the shared records and talks to the human. It funds and advises; it doesn't direct.
 - **leaders**: each leads one team, of one of these types, and chooses its own direction:
   - **exploit** (`leader_exploit`): make the champion faster now;
-  - **explore** (`leader_explore`): longer-horizon directions, judged on the speedup they
+  - **exploit-long** (`leader_exploit_long`): longer-horizon directions, judged on the speedup they
     ultimately deliver.
-  - **external** (`leader_external`): like explore, with a direction from a deck of published
+  - **external** (`leader_external`): like exploit-long, with a direction from a deck of published
     techniques;
   - **moonshot** (`leader_moonshot`): high-risk, high-reward directions that reject an
     assumption of the current design, worked on without the run's history.
@@ -41,7 +41,7 @@ TASK.definition    # task_definition.md: the agreed correctness criteria, hard c
                    # known loopholes. What a validity review checks against.        owner: manager
 ASSUMPTION_LEDGER  # assumption_ledger.md: what is frozen and what is open in this run. owner: manager
 FOCUS              # focus.md: the human's scope for this run.                      owner: manager
-CONFIG             # config.md: teams (explore/exploit), workers per leader, the GPU pool, human
+CONFIG             # config.md: teams (exploit-long/exploit), workers per leader, the GPU pool, human
                    # checkpoints, models.                                           owner: the human
 FUNDING_POLICY     # funding_policy.md: how the manager decides who gets GPU time (proposal
                    # checks, resync decisions, grant sizes).                        owner: the human
@@ -56,7 +56,7 @@ GRAPH              # graph.md: what was tried: directions -> experiments (record
                    # the champion's path marked.                                    owner: manager
 TEAMS              # teams/<team>.md: each team's track record (grants, GPU used, proposals and
                    # forecasts, results, resync decisions).                         owner: manager
-PROPOSALS          # proposals/<team>-<n>.md: explore teams' proposals (roadmap, forecast).
+PROPOSALS          # proposals/<team>-<n>.md: exploit-long teams' proposals (roadmap, forecast).
                    #                                                                owner: that team's leader
 ANNOUNCEMENTS      # announcements.md: every grant, new champion and team closure, in order.
                    #                                                                owner: manager
@@ -156,7 +156,7 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
 - **The run has a fixed pool of GPU-minutes.** The manager grants it to teams. Each team has an
   account (`gpu status`, `gpu history <team>`): every job of the team, official evals included, is
   charged to it, and jobs are refused when the balance can't cover them.
-- **More GPU time goes to teams that turn it into results** (wins, or for explore teams,
+- **More GPU time goes to teams that turn it into results** (wins, or for exploit-long teams,
   measured progress towards their forecast). A leader asks for more at a resync, citing evidence.
 - Inside a team, the **leader** decides how to use its balance: how many minutes each worker may
   use, what is kept for official evals, shifting minutes as results come in. A worker's

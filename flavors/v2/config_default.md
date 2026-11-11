@@ -4,7 +4,7 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
 `inspire`, the `scout` line by `scout`, and the `sparring` line by `spar`. Keep their format.
 
 - teams: 3 (team ids T1, T2, ...; a replacement team gets a new id)
-  - explore: 1
+  - exploit-long: 1
   - exploit: 2
   - external: 0 (direction from a scout's deck of published techniques; design/external_teams.md)
   - moonshot: 0 (high-risk, high-reward, without the run's history; agents/leader_moonshot.md)
@@ -16,7 +16,7 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
   human on every new champion and every resync, and whenever asked.
 - models (role: model / effort):
   - manager: claude-opus-5-5 / medium
-  - leader_explore: claude-opus-5-5 / medium
+  - leader_exploit_long: claude-opus-5-5 / medium
   - leader_exploit: claude-opus-5-5 / medium
   - leader_external: claude-opus-5-5 / medium
   - leader_moonshot: claude-opus-5-5 / medium

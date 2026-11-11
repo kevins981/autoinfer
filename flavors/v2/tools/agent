@@ -666,12 +666,12 @@ parent), and --task / --task-file as its first message. Model and effort come fr
 line in the run's config.md. You are its parent: it reports back to you with SendMessage.
 Returns immediately; talk to it with SendMessage (its name), check it with `agent list`.""",
                        epilog="""examples:
-  agent start leader-1 --role leader_explore --team T1 --task-file $AUTOINFER_RUN/teams/T1_task.md
+  agent start leader-1 --role leader_exploit_long --team T1 --task-file $AUTOINFER_RUN/teams/T1_task.md
   agent start leader-1.w1 --role worker --team T1 --cwd $AUTOINFER_RUN/workspaces/leader-1.fused-ar \\
       --task-file $AUTOINFER_RUN/workspaces/leader-1.fused-ar/task.md
 """)
     s.add_argument("name", help="unique in the run, e.g. leader-1, leader-1.w2")
-    s.add_argument("--role", required=True, help="manager, leader_explore, leader_exploit, leader_external, leader_moonshot, leader_research or worker (picks the prompt agents/<role>.md and the reminder agents/reminders/<role>.md)")
+    s.add_argument("--role", required=True, help="manager, leader_exploit_long, leader_exploit, leader_external, leader_moonshot, leader_research or worker (picks the prompt agents/<role>.md and the reminder agents/reminders/<role>.md)")
     s.add_argument("--team", help="team id (e.g. T1): GPU jobs are charged to it. Workers: the leader's team")
     s.add_argument("--cwd", help="working directory (workers: their workspace; default: the run folder)")
     s.add_argument("--persona", help="optional: a persona file (or a name in the flavor's agents/personas/), "
@@ -726,7 +726,7 @@ Returns immediately; talk to it with SendMessage (its name), check it with `agen
 sessions have no inbox and are skipped), with the header "[announcement from <you>; no reply
 needed]", and append it to $AUTOINFER_RUN/announcements.md so agents started later can catch up.""",
                        epilog="""examples:
-  agent announce "team T3 (explore) received 80 GPU-min to work on <direction>; proposal: proposals/T3.md"
+  agent announce "team T3 (exploit-long) received 80 GPU-min to work on <direction>; proposal: proposals/T3.md"
   agent announce "new champion T2-014 from team T2: 1010.3 tok/s (+7.2% over T1-042); how: bank/T2-014/"
   agent announce -f /path/to/text.md""")
     s.add_argument("text", nargs="*")
@@ -738,7 +738,7 @@ role, from the flavor's agents/reminders/<role>.md, as an inbox message headed "
 needed]" whose body starts with "<system message>:". Roles without a reminder file are skipped.""",
                        epilog="""examples:
   agent remind                       (everyone)
-  agent remind --role leader_explore
+  agent remind --role leader_exploit_long
   agent remind leader-2""")
     s.add_argument("names", nargs="*")
     s.add_argument("--role")

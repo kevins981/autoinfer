@@ -69,14 +69,14 @@ initialize():                                       # WITH the human (as in v1)
     #    (background, ~11 GPU-min, charged to MGR: fund it first with `gpu grant MGR ...`).
     GRAPH = new_graph(root = FOCUS); SHARED_KB = []; JOURNAL = ["run started: ..."]
 
-    # 3. Tell the human the plan: teams (how many explore, how many exploit), the pool, the
+    # 3. Tell the human the plan: teams (how many exploit-long, how many exploit), the pool, the
     #    funding policy in two lines.
 ```
 
 ```python
 open_teams():                                       # from CONFIG: number of teams and the ratio
     for each team in CONFIG (ids T1, T2, ...; never reuse an id):
-        gpu team open <team> --type explore|exploit|external|moonshot|research   # grants the seed automatically
+        gpu team open <team> --type exploit-long|exploit|external|moonshot|research   # grants the seed automatically
         if exploit: gpu grant <team> <start size> --kind start --note "exploit team start"
         if external: scout --team <team>                    # starts a scout in the background (10-30 min);
             # its deck lands in scout/<team>-<n>/ and the leader is messaged when it is ready.
@@ -86,14 +86,14 @@ open_teams():                                       # from CONFIG: number of tea
             # saves it to inspiration/<team>-<n>.md. Append that file to the first task UNCHANGED:
             # don't pick, drop, reorder or comment on cards. It carries its own instructions.
         if moonshot: gpu grant <team> <moonshot seed - seed> --kind extension --note "moonshot seed"
-            # (FUNDING_POLICY: moonshot seed). Inspiration cards as for explore.
-        agent start leader-<k> --role leader_explore|leader_exploit|leader_external|leader_moonshot|leader_research --team <team> --task-file <f>
+            # (FUNDING_POLICY: moonshot seed). Inspiration cards as for exploit-long.
+        agent start leader-<k> --role leader_exploit_long|leader_exploit|leader_external|leader_moonshot|leader_research --team <team> --task-file <f>
             # if CONFIG has model slots: add --slot <S> (a new team takes a free slot; a
             # replacement team takes the slot of the team it replaces). The tool then picks the
             # team's leader and worker models; don't pass --model.
             # the first task is short: team id and type, the current CHAMPION (record id +
-            # official numbers), its grant status (exploit: seed + start; explore: seed only,
-            # external: like explore; send a proposal to get a start grant), and where things are (bank/, shared_kb.md,
+            # official numbers), its grant status (exploit: seed + start; exploit-long: seed only,
+            # external: like exploit-long; send a proposal to get a start grant), and where things are (bank/, shared_kb.md,
             # announcements.md, task/), then the inspiration cards. NO direction: the team
             # chooses its own, and the cards are not one.
             # Point to earlier teams' write-ups as what was tried and what is still open, not as
@@ -106,13 +106,13 @@ open_teams():                                       # from CONFIG: number of tea
             # task/SPEED_OF_LIGHT.md exists, the first task points to it (one line, no comment).
             # persona: if CONFIG gives the team a persona, add --persona <name>; say nothing
             # about it in the first task.
-            # research: seed and first task as for explore (history included).
+            # research: seed and first task as for exploit-long (history included).
         teams/<team>.md = new track record          # see "Track records"
         if exploit: agent announce "team <team> (exploit) opened with <seed + start> GPU-min"
 ```
 
 ```python
-handle(proposal from an explore or external team):  # roadmap, forecast, GPU time requested
+handle(proposal from an exploit-long or external team):  # roadmap, forecast, GPU time requested
     check (FUNDING_POLICY):
         # 0a. any team: you may ask whether the leader talked its key premises through with a
         #     sparring partner (`spar`; sparring/). Asking is fine; don't require it.
@@ -135,7 +135,7 @@ handle(proposal from an explore or external team):  # roadmap, forecast, GPU tim
         # funding several teams on one problem can be worth it.
     if checks pass:
         gpu grant <team> <start size> --kind start --note "<direction, one line>; forecast <X%>"
-        agent announce "team <team> (explore) received <N> GPU-min to work on <direction>;
+        agent announce "team <team> (exploit-long) received <N> GPU-min to work on <direction>;
                         proposal: <path>"
     else:
         reply with what to fix (which check failed and why); the team revises
@@ -146,7 +146,7 @@ handle(proposal from an explore or external team):  # roadmap, forecast, GPU tim
 handle(proposal from a moonshot team):              # you invest like a venture investor
     # High risk for high reward: most moonshots don't pay off, and that is expected; the ones
     # that do can be worth more than many safe bets. Don't hold them to the expected-value
-    # standard of explore teams. Weird, non-standard, long or many-step is fine.
+    # standard of exploit-long teams. Weird, non-standard, long or many-step is fine.
     check (FUNDING_POLICY, moonshots):
         # 1. the assumption of the current design it rejects, and why that leaves speed behind
         # 2. the upside IF IT FULLY WORKS: >= 5% over the current champion, argued from hardware
@@ -205,7 +205,7 @@ handle(resync request):                             # a team asks for more GPU t
         # external team says no card is good enough, with evidence (what it measured or
         #   costed for the most promising cards)                            -> close and replace
         #   (the replacement gets a fresh scout deck); without evidence      -> ask for it first
-        # the team recommends closing itself (or an explore/external team finds no direction
+        # the team recommends closing itself (or an exploit-long/external team finds no direction
         #   worth proposing), any type, moonshot included: unless its sparring conversations
         #   (sparring/<team>-*.md) already discussed THESE reasons for closing (talking about
         #   earlier ideas doesn't count), offer a sparring session first, once per closing
@@ -232,7 +232,7 @@ handle(resync request):                             # a team asks for more GPU t
                           gpu team close <team> --note "<why>"; agent stop its leader and workers;
                           open a new team of the SAME type with a new id (open_teams() steps);
                           agent announce the closure (with the write-up's path) and the new team
-    if explore, external or moonshot: agent remind <leader>   # after EVERY resync with these teams
+    if exploit-long, external or moonshot: agent remind <leader>   # after EVERY resync with these teams
     save the resync report to reports/<team>-<n>.md; teams/<team>.md += decision
     report_to_human()                               # see "Reporting to the human"
 ```

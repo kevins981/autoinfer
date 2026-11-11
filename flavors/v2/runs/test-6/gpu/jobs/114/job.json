@@ -1,0 +1,19 @@
+{
+  "id": 114,
+  "pid": 269141,
+  "team": "T14",
+  "agent": "leader-14.w1",
+  "label": null,
+  "timeout_min": 5.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-14.w1/mb/job_mb.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-14.w1/mb",
+  "submitted": "2026-11-09T07:14:35+00:00",
+  "state": "done",
+  "started": "2026-11-09T07:14:35+00:00",
+  "ended": "2026-11-09T07:15:17+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.7
+}

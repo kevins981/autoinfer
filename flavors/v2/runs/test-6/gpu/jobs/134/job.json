@@ -1,0 +1,19 @@
+{
+  "id": 134,
+  "pid": 326566,
+  "team": "T19",
+  "agent": "leader-19.w1",
+  "label": "T19-L1b",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-19.w1/L1/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-09T09:01:35+00:00",
+  "state": "done",
+  "started": "2026-11-09T09:01:35+00:00",
+  "ended": "2026-11-09T09:04:33+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.979
+}

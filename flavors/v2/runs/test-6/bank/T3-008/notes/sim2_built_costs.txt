@@ -1,0 +1,46 @@
+== calibration quality, HELD-OUT only (Brier of survival product vs cumulative acceptance; lower better)
+  raw  cum1: Brier 0.1145 mean 0.794 (acc 0.782)  cum2: Brier 0.1587 mean 0.632 (acc 0.562)  cum3: Brier 0.1531 mean 0.505 (acc 0.395)  cum4: Brier 0.1347 mean 0.408 (acc 0.280)
+  iso  cum1: Brier 0.1146 mean 0.765 (acc 0.782)  cum2: Brier 0.1511 mean 0.545 (acc 0.562)  cum3: Brier 0.1356 mean 0.383 (acc 0.395)  cum4: Brier 0.1092 mean 0.273 (acc 0.280)
+  lr   cum1: Brier 0.1151 mean 0.764 (acc 0.782)  cum2: Brier 0.1518 mean 0.544 (acc 0.562)  cum3: Brier 0.1362 mean 0.381 (acc 0.395)  cum4: Brier 0.1094 mean 0.272 (acc 0.280)
+
+(a) fixed k=2 (HELD-OUT batches): E 2.348, t 25.20 ms
+
+== 1) fixed B, current-step on-device ranking (raw survival)
+  Kmax=3 B=24 (M=40)                             E 2.292  ms/step 24.84  ratio 0.9901  meanB 24.0
+  Kmax=3 B=32 (M=48)                             E 2.539  ms/step 26.04  ratio 1.0463  meanB 32.0
+  Kmax=3 B=40 (M=56)                             E 2.688  ms/step 29.78  ratio 0.9685  meanB 40.0
+  Kmax=3 B=48 (M=64)                             E 2.745  ms/step 30.66  ratio 0.9609  meanB 48.0
+  Kmax=4 B=24 (M=40)                             E 2.323  ms/step 25.68  ratio 0.9707  meanB 24.0
+  Kmax=4 B=32 (M=48)                             E 2.605  ms/step 26.88  ratio 1.0400  meanB 32.0
+  Kmax=4 B=40 (M=56)                             E 2.806  ms/step 30.62  ratio 0.9833  meanB 40.0
+  Kmax=4 B=48 (M=64)                             E 2.935  ms/step 31.50  ratio 0.9999  meanB 48.0
+
+== 2) rule (d): B from CURRENT confidences (upstream-ideal) vs B from STALE (previous position) with CURRENT ranking
+  Kmax=3 rule(d) B from current                  E 2.541  ms/step 26.06  ratio 1.0462  meanB 32.1
+  Kmax=3 rule(d) B from stale, current rank      E 2.540  ms/step 26.06  ratio 1.0460  meanB 32.1
+  Kmax=4 rule(d) B from current                  E 2.746  ms/step 28.40  ratio 1.0375  meanB 37.3
+  Kmax=4 rule(d) B from stale, current rank      E 2.730  ms/step 28.35  ratio 1.0334  meanB 37.1
+
+== 3) calibrated rankers (fit on train, eval held-out). raw vs iso (per-step isotonic) vs lr (logistic: logit conf, step, prev-step conf)
+  raw  Kmax=3 B=32                               E 2.539  ms/step 26.04  ratio 1.0463  meanB 32.0
+  raw  Kmax=4 B=32                               E 2.605  ms/step 26.88  ratio 1.0400  meanB 32.0
+  raw  Kmax=4 rule(d) current                    E 2.746  ms/step 28.40  ratio 1.0375  meanB 37.3
+  raw  Kmax=4 rule(d) stale-B, current rank      E 2.730  ms/step 28.35  ratio 1.0334  meanB 37.1
+  iso  Kmax=3 B=32                               E 2.544  ms/step 26.04  ratio 1.0486  meanB 32.0
+  iso  Kmax=4 B=32                               E 2.618  ms/step 26.88  ratio 1.0452  meanB 32.0
+  iso  Kmax=4 rule(d) current                    E 2.637  ms/step 27.04  ratio 1.0466  meanB 32.6
+  iso  Kmax=4 rule(d) stale-B, current rank      E 2.634  ms/step 27.04  ratio 1.0453  meanB 32.6
+  lr   Kmax=3 B=32                               E 2.543  ms/step 26.04  ratio 1.0482  meanB 32.0
+  lr   Kmax=4 B=32                               E 2.617  ms/step 26.88  ratio 1.0450  meanB 32.0
+  lr   Kmax=4 rule(d) current                    E 2.631  ms/step 26.99  ratio 1.0461  meanB 32.4
+  lr   Kmax=4 rule(d) stale-B, current rank      E 2.629  ms/step 27.00  ratio 1.0452  meanB 32.4
+
+== 4) per-request admitted slots, Kmax=4 (fraction of requests with 0..4 admitted drafts)
+  raw  B=32: 0:0.220 1:0.224 2:0.169 3:0.110 4:0.277 | per-batch max cap 4.00, min 0.01   rule(d): 0:0.158 1:0.196 2:0.165 3:0.121 4:0.360
+  iso  B=32: 0:0.137 1:0.289 2:0.228 3:0.127 4:0.218 | per-batch max cap 4.00, min 0.07   rule(d): 0:0.131 1:0.285 2:0.228 3:0.129 4:0.227
+  lr   B=32: 0:0.125 1:0.307 2:0.227 3:0.126 4:0.216 | per-batch max cap 4.00, min 0.12   rule(d): 0:0.120 1:0.305 2:0.227 3:0.127 4:0.222
+
+== noise check: raw vs iso vs lr ratio at Kmax=4 B=32 over 5 independent batch seeds (same 40 held-out seqs)
+  raw  ratio vs (a): 1.0410 1.0397 1.0412 1.0412 1.0391  mean 1.0404
+  iso  ratio vs (a): 1.0462 1.0455 1.0467 1.0465 1.0443  mean 1.0458
+  lr   ratio vs (a): 1.0462 1.0452 1.0465 1.0464 1.0445  mean 1.0458

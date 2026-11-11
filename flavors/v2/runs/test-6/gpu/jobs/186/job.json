@@ -1,0 +1,18 @@
+{
+  "id": 186,
+  "pid": 491433,
+  "team": "T27",
+  "agent": "leader-27",
+  "label": "t27-abba2",
+  "timeout_min": 15.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-27/abba2/abba2.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-27/abba2",
+  "submitted": "2026-11-09T15:23:32+00:00",
+  "state": "done",
+  "started": "2026-11-09T15:23:32+00:00",
+  "ended": "2026-11-09T15:33:39+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 10.121
+}

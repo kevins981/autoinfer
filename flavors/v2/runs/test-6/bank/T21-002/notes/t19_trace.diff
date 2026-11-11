@@ -1,0 +1,240 @@
+diff --git a/vllm/v1/engine/async_llm.py b/vllm/v1/engine/async_llm.py
+index 5d95df0fa8..8dd2b0ad0f 100644
+--- a/vllm/v1/engine/async_llm.py
++++ b/vllm/v1/engine/async_llm.py
+@@ -76,6 +76,10 @@ from vllm.v1.metrics.loggers import (
+ from vllm.v1.metrics.prometheus import shutdown_prometheus
+ from vllm.v1.metrics.stats import IterationStats
+ 
++from vllm.v1.engine import t19_trace as _t19  # noqa: E402
++
++_T19 = _t19.ON
++
+ logger = init_logger(__name__)
+ 
+ 
+@@ -595,7 +599,11 @@ class AsyncLLM(EngineClient):
+         self.output_processor.add_request(request, prompt, parent_req, index, queue)
+ 
+         # Add the EngineCoreRequest to EngineCore (separate process).
++        if _T19:
++            _t19.fe("send", request.external_req_id or request.request_id, iid=request.request_id)
+         await self.engine_core.add_request_async(request)
++        if _T19:
++            _t19.fe("sent", request.external_req_id or request.request_id)
+ 
+         if self.log_requests:
+             logger.info("Added request %s.", request.request_id)
+@@ -887,12 +895,22 @@ class AsyncLLM(EngineClient):
+         mm_processor_cache = renderer.mm_processor_cache
+         chunk_size = envs.VLLM_V1_OUTPUT_PROC_CHUNK_SIZE
+ 
++        _t19_seen: set = set()
++
+         async def output_handler():
+             try:
+                 while True:
+                     # 1) Pull EngineCoreOutputs from the EngineCore.
+                     outputs = await engine_core.get_output_async()
+                     num_outputs = len(outputs.outputs)
++                    if _T19:
++                        for _o in outputs.outputs:
++                            if _o.request_id not in _t19_seen and _o.new_token_ids:
++                                _t19_seen.add(_o.request_id)
++                                _t19.fe("first_out", _o.request_id)
++                            if _o.finish_reason is not None:
++                                _t19_seen.discard(_o.request_id)
++                                _t19.fe("final_out", _o.request_id)
+ 
+                     iteration_stats = (
+                         IterationStats() if (log_stats and num_outputs) else None
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+index f077b66bfb..bfd1b60bcf 100644
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -118,6 +118,10 @@ from vllm.v1.structured_output import StructuredOutputManager
+ from vllm.v1.utils import compute_iteration_details
+ from vllm.version import __version__ as VLLM_VERSION
+ 
++from vllm.v1.engine import t19_trace as _t19  # noqa: E402
++
++_T19 = _t19.ON
++
+ logger = init_logger(__name__)
+ 
+ 
+@@ -220,6 +224,8 @@ class EngineCore:
+         # schedule and execute batches, and is required by pipeline parallelism
+         # to eliminate pipeline bubbles.
+         self.batch_queue_size = vllm_config.max_concurrent_batches
++        if _T19:
++            self._t19_state = _t19.CoreState()
+         self.batch_queue: (
+             deque[tuple[Future[ModelRunnerOutput], SchedulerOutput, Future[Any]]] | None
+         ) = None
+@@ -564,6 +570,8 @@ class EngineCore:
+         `request_wave`: indicate which wave of requests this is expected to
+         belong to in DP case
+         """
++        if _T19:
++            _t19.core_add(request)
+         # Validate the request_id type.
+         if not isinstance(request.request_id, str):
+             raise TypeError(
+@@ -779,11 +787,19 @@ class EngineCore:
+         model_executed = False
+         deferred_scheduler_output = None
+         if self.scheduler.has_requests():
++            if _T19:
++                _t0 = _t19.now()
+             scheduler_output = self.scheduler.schedule(self._should_throttle_prefills())
++            if _T19:
++                _t1 = _t19.now()
+             with self.log_error_detail(scheduler_output):
+                 exec_future = self.model_executor.execute_model(
+                     scheduler_output, non_block=True
+                 )
++            if _T19:
++                _t19.core_step_record(
++                    self._t19_state, scheduler_output, self.scheduler,
++                    len(batch_queue), _t0, _t1, _t19.now())
+             if not self.is_mm_encoder_only:
+                 model_executed = scheduler_output.total_num_scheduled_tokens > 0
+ 
+@@ -823,6 +839,8 @@ class EngineCore:
+ 
+         # Block until the next result is available.
+         future, scheduler_output, exec_model_fut = batch_queue.pop()
++        if _T19:
++            _tw = _t19.now()
+         with (
+             self.capture_iteration_details(scheduler_output) as iteration_details,
+             self.log_error_detail(scheduler_output),
+@@ -834,6 +852,8 @@ class EngineCore:
+                 exec_model_fut.result()
+                 raise RuntimeError("unexpected error")
+ 
++        if _T19:
++            _tr = _t19.now()
+         # Before processing the model output, process any aborts that happened
+         # during the model execution.
+         self._process_aborts_queue()
+@@ -842,6 +862,9 @@ class EngineCore:
+         )
+         self._attach_iteration_details(engine_core_outputs, iteration_details)
+         self._attach_weight_version(engine_core_outputs)
++        if _T19:
++            _t19.core_out_record(
++                self._t19_state, scheduler_output, engine_core_outputs, _tw, _tr, _t19.now())
+ 
+         # NOTE(nick): We can either handle the deferred tasks here or save
+         # in a field and do it immediately once step_with_batch_queue is
+diff --git a/vllm/v1/engine/t19_trace.py b/vllm/v1/engine/t19_trace.py
+new file mode 100644
+index 0000000000..67b8367493
+--- /dev/null
++++ b/vllm/v1/engine/t19_trace.py
+@@ -0,0 +1,103 @@
++"""T19 step/request tracing (measurement only). Off unless T19_TRACE=<path> is set.
++Writes <path>.<proc>.jsonl (proc = core | fe), one JSON object per line."""
++import json
++import os
++import threading
++import time
++
++_PATH = os.environ.get("T19_TRACE", "")
++ON = bool(_PATH)
++
++_f = None
++_lock = threading.Lock()
++_proc = None
++
++
++def _open(proc):
++    global _f, _proc
++    if _f is None:
++        _proc = proc
++        _f = open(f"{_PATH}.{proc}.jsonl", "a", buffering=1 << 16)
++        _f.write(json.dumps({"e": "hdr", "proc": proc, "pid": os.getpid(),
++                             "wall": time.time_ns(), "perf": time.perf_counter_ns()}) + "\n")
++
++        def _flusher():
++            while True:
++                time.sleep(1.0)
++                with _lock:
++                    _f.flush()
++
++        threading.Thread(target=_flusher, daemon=True).start()
++
++
++def emit(proc, **kw):
++    if _f is None:
++        _open(proc)
++    line = json.dumps(kw, separators=(",", ":")) + "\n"
++    with _lock:
++        _f.write(line)
++
++
++# ---- engine-core side helpers ----
++class CoreState:
++    def __init__(self):
++        self.step = 0
++        self.inflight = {}      # id(scheduler_output) -> (step idx, t_sched info)
++        self.seen_first = set()
++
++
++def now():
++    return time.perf_counter_ns(), time.time_ns()
++
++
++def core_step_record(st, so, sched, qdepth, t0, t1, t2):
++    """t0=before schedule, t1=schedule done, t2=execute submitted (each (perf, wall))."""
++    idx = st.step
++    st.step += 1
++    st.inflight[id(so)] = idx
++    nst = so.num_scheduled_tokens
++    pre = []
++    for nr in so.scheduled_new_reqs:
++        pre.append([nr.req_id, nst.get(nr.req_id, 0), "N"])
++    cr = so.scheduled_cached_reqs
++    ndec = 0
++    try:
++        reqs = sched.requests
++        for i, rid in enumerate(cr.req_ids):
++            r = reqs.get(rid)
++            if r is not None and cr.num_computed_tokens[i] < r.num_prompt_tokens:
++                pre.append([rid, nst.get(rid, 0), "C"])
++            else:
++                ndec += 1
++    except Exception:
++        ndec = len(cr.req_ids)
++    emit("core", e="step", i=idx, p0=t0[0], w0=t0[1], p1=t1[0], w1=t1[1], p2=t2[0], w2=t2[1],
++         nreq=len(nst), ndec=ndec, npre=len(pre), pre=pre, ntok=so.total_num_scheduled_tokens,
++         q=qdepth)
++
++
++def core_out_record(st, so, outs, t_wait, t_recv, t_proc):
++    idx = st.inflight.pop(id(so), -1)
++    first, fin = [], []
++    if outs:
++        for eco in outs.values():
++            for o in eco.outputs:
++                rid = o.request_id
++                if rid not in st.seen_first and o.new_token_ids:
++                    st.seen_first.add(rid)
++                    first.append(rid)
++                if o.finish_reason is not None:
++                    st.seen_first.discard(rid)
++                    fin.append(rid)
++    emit("core", e="out", i=idx, pw=t_wait[0], ww=t_wait[1], pr=t_recv[0], wr=t_recv[1],
++         pp=t_proc[0], wp=t_proc[1], first=first, fin=fin)
++
++
++def core_add(request):
++    p, w = now()
++    emit("core", e="add", p=p, w=w, rid=request.request_id, np=request.num_prompt_tokens)
++
++
++# ---- frontend side ----
++def fe(ev, rid, **kw):
++    emit("fe", e=ev, rid=rid, w=time.time_ns(), **kw)

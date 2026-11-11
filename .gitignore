@@ -29,3 +29,12 @@ env/
 *.pem
 # judge reports and overlays: temporary, kept locally only
 evals/
+
+# Run records: keep the text that shows what each experiment did (records, diffs, KBs, journal,
+# proposals, reports, official results.json); skip raw per-request outputs, binaries and the task copy
+flavors/*/runs/*/task/
+flavors/*/runs/*/bank/*/official/*/trial*/
+flavors/*/runs/*/bank/*/official/*/gsm8k.json
+flavors/*/runs/*/bank/*/accuracy/
+*.pt
+*.npy

@@ -1,0 +1,21 @@
+{
+  "id": 58,
+  "pid": 155669,
+  "team": "T7",
+  "agent": "leader-7.w1",
+  "label": null,
+  "timeout_min": 4.0,
+  "command": [
+    "./job.sh",
+    "smoke",
+    "1",
+    "128,256"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-7.w1",
+  "submitted": "2026-11-09T03:25:11+00:00",
+  "state": "timed out",
+  "started": "2026-11-09T03:25:11+00:00",
+  "ended": "2026-11-09T03:29:12+00:00",
+  "exit_code": 124,
+  "gpu_minutes": 4.0
+}

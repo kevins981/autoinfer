@@ -1,0 +1,14 @@
+{
+  "record": "T1-037",
+  "n": 1,
+  "diff_sha256": "a2a9ab539b5dc770f84e67e4438bb611fbab1e1777b6c2ea6d331ec62b903346",
+  "baseline_commit": "4527515cd705db206ae927cf5acef506abc64bdd",
+  "harness": "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness",
+  "harness_version": "34ba3cd",
+  "workspace": "eval-T1-037-1",
+  "requested_by": "leader-2",
+  "team": "T1",
+  "started": "2026-11-08T12:03:09+00:00",
+  "serve_args": "--attention-backend TRITON_ATTN --compilation-config '{\"max_prefill_cudagraph_capture_tokens\": 2048, \"prefill_cudagraph_capture_token_sizes\": [1,2,4,8,16,24,32,40,48,56,64,80,96,112,128,160,192,224,256,288,320,352,384,416,448,480,512,544,576,608,640,672,704,736,768,800,832,864,896,928,960,992,1024,1056,1088,1120,1152,1184,1216,1248,1280,1312,1344,1376,1408,1440,1472,1504,1536,1568,1600,1632,1664,1696,1728,1760,1792,1824,1856,1888,1920,1952,1984,2016,2048]}' --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"use_local_argmax_reduction\":true,\"draft_lm_head_quantization\":\"fp8\",\"draft_lm_head_vocab_size\":98304}'",
+  "ended": "2026-11-08T12:14:51+00:00"
+}

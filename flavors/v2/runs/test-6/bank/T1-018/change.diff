@@ -1,0 +1,2274 @@
+diff --git a/csrc/gdn/fused_gdn_decode_kernel.cu b/csrc/gdn/fused_gdn_decode_kernel.cu
+index 5e606ffd7f..6a0184167a 100644
+--- a/csrc/gdn/fused_gdn_decode_kernel.cu
++++ b/csrc/gdn/fused_gdn_decode_kernel.cu
+@@ -373,6 +373,480 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+   }
+ }
+ 
++// ===================== GDN replay (checkpoint + replay) =====================
++// The spec-decode kernel keeps ONE committed state (slot S[0]) and, per
++// (request, value head), a log of the last step's per-token recurrence inputs
++// (normalized k, v, decay, beta) in slot S[1]. A per-(slot, head) flag byte holds
++// the number of logged tokens (0 = no valid log). Next step the kernel loads S[0],
++// replays the accepted tokens of the log (same fp32 ops, same order as the
++// original per-token recurrence), stores the new committed state to S[0] and runs
++// the new tokens without storing any per-token state.
++constexpr int kMaxLogTokens = 4;
++constexpr int kLogDecayOff = kMaxLogTokens * kDimK;       // floats
++constexpr int kLogBetaOff = kLogDecayOff + kMaxLogTokens;  // floats
++constexpr int kLogVOff = kLogBetaOff + kMaxLogTokens;      // floats (bf16 array)
++
++__device__ __forceinline__ void replay_advance(
++    float (&h)[kRowsPerWarp][4], const float* k_ptr, float decay, float beta,
++    const __nv_bfloat16* v_row, int chunk, const int (&rows)[kRowsPerWarp]) {
++  const float4 k4 = *reinterpret_cast<const float4*>(k_ptr);
++  const float k_values[4] = {k4.x, k4.y, k4.z, k4.w};
++  float dot_hk[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      h[row][i] *= decay;
++      dot_hk[row] += h[row][i] * k_values[i];
++    }
++  }
++  const Sum2 dot_hk_01 = warp_reduce_sum_pair(dot_hk[0], dot_hk[1]);
++  const Sum2 dot_hk_23 = warp_reduce_sum_pair(dot_hk[2], dot_hk[3]);
++  const float reduced_hk[kRowsPerWarp] = {dot_hk_01.x, dot_hk_01.y,
++                                          dot_hk_23.x, dot_hk_23.y};
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++    const int value = chunk * kChunkV + rows[row];
++    const float delta =
++        (__bfloat162float(v_row[value]) - reduced_hk[row]) * beta;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      h[row][i] += k_values[i] * delta;
++    }
++  }
++}
++
++template <int ValueHeadsPerKeyHead, bool SigmoidGate>
++__global__ __launch_bounds__(kThreads, 2) void gdn_decode_replay_kernel(
++    const __nv_bfloat16* __restrict__ mixed_qkv,
++    const __nv_bfloat16* __restrict__ a, const __nv_bfloat16* __restrict__ b,
++    const float* __restrict__ a_log, const void* __restrict__ dt_bias,
++    const int* __restrict__ state_indices, const int* __restrict__ cu_seqlens,
++    const int* __restrict__ num_accepted_tokens, float* __restrict__ state,
++    uint8_t* __restrict__ flags,
++    const __nv_bfloat16* __restrict__ output_gate,
++    const void* __restrict__ norm_weight, __nv_bfloat16* __restrict__ out,
++    int H, int HV, int state_indices_width, int dt_bias_type,
++    bool norm_weight_is_bf16, float scale, float norm_eps,
++    GdnDecodeStrides strides) {
++  using StateT = float;
++  const int request = blockIdx.x;
++  const int value_head = blockIdx.y;
++  const int tid = threadIdx.x;
++  const int lane = tid & 31;
++  const int warp = tid >> 5;
++  const int bos = cu_seqlens[request];
++  const int eos = cu_seqlens[request + 1];
++  const int num_tokens = eos - bos;
++  if (num_tokens <= 0) {
++    return;
++  }
++
++  const int accepted = num_accepted_tokens[request];
++  const int key_slot = state_indices[request * state_indices_width];
++  const int log_slot =
++      state_indices_width >= 2 ? state_indices[request * state_indices_width + 1]
++                               : 0;
++  const bool can_log = key_slot > 0 && log_slot > 0;
++  const int logged =
++      can_log ? static_cast<int>(
++                    flags[static_cast<int64_t>(key_slot) * HV + value_head])
++              : 0;
++  int replay = 0;
++  int source_slot;
++  if (logged > 0 && accepted > 0) {
++    replay = accepted < logged ? accepted : logged;
++    source_slot = key_slot;
++  } else {
++    source_slot =
++        accepted > 0 && accepted <= state_indices_width
++            ? state_indices[request * state_indices_width + accepted - 1]
++            : 0;
++  }
++  if (source_slot <= 0 || !can_log || num_tokens > kMaxLogTokens) {
++    for (int linear = tid; linear < num_tokens * kDimV; linear += kThreads) {
++      const int token = bos + linear / kDimV;
++      const int value = linear % kDimV;
++      const int64_t out_offset =
++          (static_cast<int64_t>(token) * HV + value_head) * kDimV + value;
++      out[out_offset] = __float2bfloat16(0.0f);
++    }
++    return;
++  }
++  const bool store_committed = replay > 0 || source_slot != key_slot;
++
++  const int key_head = value_head / ValueHeadsPerKeyHead;
++  __shared__ StateT shared_state[2][kChunkV][kDimK];
++  __shared__ float shared_q[kMaxLogTokens][kDimK];
++  __shared__ float shared_k[kMaxLogTokens][kDimK];
++  __shared__ __nv_bfloat16 shared_v[kMaxLogTokens][kDimV];
++  __shared__ __nv_bfloat16 shared_out[kMaxLogTokens][kDimV];
++  __shared__ float shared_decay[kMaxLogTokens];
++  __shared__ float shared_beta[kMaxLogTokens];
++  __shared__ __align__(16) float shared_lk[kMaxLogTokens][kDimK];
++  __shared__ __nv_bfloat16 shared_lv[kMaxLogTokens][kDimV];
++  __shared__ float shared_ldecay[kMaxLogTokens];
++  __shared__ float shared_lbeta[kMaxLogTokens];
++
++  const int64_t head_off = static_cast<int64_t>(value_head) * kDimV * kDimK;
++  StateT* source_state =
++      state + static_cast<int64_t>(source_slot) * strides.state_slot + head_off;
++  StateT* committed_state =
++      state + static_cast<int64_t>(key_slot) * strides.state_slot + head_off;
++  float* log_ptr =
++      state + static_cast<int64_t>(log_slot) * strides.state_slot + head_off;
++  copy_state_chunk<StateT, kChunkV, kDimK, 2>(&shared_state[0][0][0],
++                                              source_state, 0, tid, kThreads);
++
++  if (replay > 0) {
++    for (int idx = tid; idx < replay * kDimK; idx += kThreads) {
++      (&shared_lk[0][0])[idx] = log_ptr[idx];
++    }
++    const __nv_bfloat16* log_v =
++        reinterpret_cast<const __nv_bfloat16*>(log_ptr + kLogVOff);
++    for (int idx = tid; idx < replay * kDimV; idx += kThreads) {
++      (&shared_lv[0][0])[idx] = log_v[idx];
++    }
++    if (tid < replay) {
++      shared_ldecay[tid] = log_ptr[kLogDecayOff + tid];
++      shared_lbeta[tid] = log_ptr[kLogBetaOff + tid];
++    }
++  }
++
++  if (warp < num_tokens) {
++    const int t = warp;
++    const int token = bos + t;
++    const int64_t mixed_base = static_cast<int64_t>(token) * strides.mixed_row;
++    float q_values[4];
++    float k_values[4];
++    float q_square = 0.0f;
++    float k_square = 0.0f;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int dim = lane + i * 32;
++      q_values[i] =
++          __bfloat162float(mixed_qkv[mixed_base + key_head * kDimK + dim]);
++      k_values[i] = __bfloat162float(
++          mixed_qkv[mixed_base + H * kDimK + key_head * kDimK + dim]);
++      shared_v[t][dim] =
++          mixed_qkv[mixed_base + 2 * H * kDimK + value_head * kDimV + dim];
++      q_square += q_values[i] * q_values[i];
++      k_square += k_values[i] * k_values[i];
++    }
++    const Sum2 qk_sums = warp_reduce_sum_pair(q_square, k_square);
++    const float q_scale = __shfl_sync(
++        0xffffffffu, lane == 0 ? rsqrtf(qk_sums.x + 1.0e-6f) * scale : 0.0f, 0);
++    const float k_scale = __shfl_sync(
++        0xffffffffu, lane == 0 ? rsqrtf(qk_sums.y + 1.0e-6f) : 0.0f, 0);
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int dim = lane + i * 32;
++      shared_q[t][dim] = q_values[i] * q_scale;
++      shared_k[t][dim] = k_values[i] * k_scale;
++    }
++    if (lane == 0) {
++      const float a_value = __bfloat162float(
++          a[static_cast<int64_t>(token) * strides.a_row + value_head]);
++      const float b_value = __bfloat162float(
++          b[static_cast<int64_t>(token) * strides.b_row + value_head]);
++      const float g = -__expf(a_log[value_head]) *
++                      softplus_fast(a_value + load_dt_bias(dt_bias, value_head,
++                                                           dt_bias_type));
++      shared_decay[t] = __expf(g);
++      shared_beta[t] = sigmoid_fast(b_value);
++    }
++  }
++  __syncthreads();
++
++  const int k_base = lane * 4;
++  int rows[kRowsPerWarp];
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++    rows[row] = warp + row * kWarps;
++  }
++
++#pragma unroll
++  for (int chunk = 0; chunk < kNumChunks; ++chunk) {
++    cp_async_wait_all();
++    __syncthreads();
++    if (chunk + 1 < kNumChunks) {
++      copy_state_chunk<StateT, kChunkV, kDimK, 2>(
++          &shared_state[0][0][0], source_state, chunk + 1, tid, kThreads);
++    }
++
++    float h[kRowsPerWarp][4];
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) {
++      const float4 state_value =
++          load_state4(&shared_state[chunk & 1][rows[row]][k_base]);
++      h[row][0] = state_value.x;
++      h[row][1] = state_value.y;
++      h[row][2] = state_value.z;
++      h[row][3] = state_value.w;
++    }
++
++    for (int r = 0; r < replay; ++r) {
++      replay_advance(h, &shared_lk[r][k_base], shared_ldecay[r],
++                     shared_lbeta[r], shared_lv[r], chunk, rows);
++    }
++    if (store_committed) {
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        const int value = chunk * kChunkV + rows[row];
++        store_state4(committed_state + value * kDimK + k_base,
++                     make_float4(h[row][0], h[row][1], h[row][2], h[row][3]));
++      }
++    }
++
++    for (int t = 0; t < num_tokens; ++t) {
++      const float4 q4 = *reinterpret_cast<const float4*>(&shared_q[t][k_base]);
++      const float4 k4 = *reinterpret_cast<const float4*>(&shared_k[t][k_base]);
++      const float q_values[4] = {q4.x, q4.y, q4.z, q4.w};
++      const float k_values[4] = {k4.x, k4.y, k4.z, k4.w};
++
++      float dot_hk[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++#pragma unroll
++        for (int i = 0; i < 4; ++i) {
++          h[row][i] *= shared_decay[t];
++          dot_hk[row] += h[row][i] * k_values[i];
++        }
++      }
++      const Sum2 dot_hk_01 = warp_reduce_sum_pair(dot_hk[0], dot_hk[1]);
++      const Sum2 dot_hk_23 = warp_reduce_sum_pair(dot_hk[2], dot_hk[3]);
++      const float reduced_hk[kRowsPerWarp] = {dot_hk_01.x, dot_hk_01.y,
++                                              dot_hk_23.x, dot_hk_23.y};
++
++      float dot_hq[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        const int value = chunk * kChunkV + rows[row];
++        const float delta =
++            (__bfloat162float(shared_v[t][value]) - reduced_hk[row]) *
++            shared_beta[t];
++#pragma unroll
++        for (int i = 0; i < 4; ++i) {
++          h[row][i] += k_values[i] * delta;
++          dot_hq[row] += h[row][i] * q_values[i];
++        }
++      }
++      const Sum2 dot_hq_01 = warp_reduce_sum_pair(dot_hq[0], dot_hq[1]);
++      const Sum2 dot_hq_23 = warp_reduce_sum_pair(dot_hq[2], dot_hq[3]);
++      if (lane == 0) {
++        shared_out[t][chunk * kChunkV + rows[0]] =
++            __float2bfloat16(dot_hq_01.x);
++        shared_out[t][chunk * kChunkV + rows[1]] =
++            __float2bfloat16(dot_hq_01.y);
++        shared_out[t][chunk * kChunkV + rows[2]] =
++            __float2bfloat16(dot_hq_23.x);
++        shared_out[t][chunk * kChunkV + rows[3]] =
++            __float2bfloat16(dot_hq_23.y);
++      }
++    }
++  }
++  __syncthreads();
++
++  // Log this step's recurrence inputs (overwrites the log consumed above; all
++  // source-state reads of this block are complete).
++  for (int idx = tid; idx < num_tokens * kDimK; idx += kThreads) {
++    log_ptr[idx] = (&shared_k[0][0])[idx];
++  }
++  {
++    __nv_bfloat16* log_v_w = reinterpret_cast<__nv_bfloat16*>(log_ptr + kLogVOff);
++    for (int idx = tid; idx < num_tokens * kDimV; idx += kThreads) {
++      log_v_w[idx] = (&shared_v[0][0])[idx];
++    }
++  }
++  if (tid < num_tokens) {
++    log_ptr[kLogDecayOff + tid] = shared_decay[tid];
++    log_ptr[kLogBetaOff + tid] = shared_beta[tid];
++  }
++
++  if (warp < num_tokens) {
++    const int t = warp;
++    float output_values[4];
++    float sum_square = 0.0f;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int value = lane + i * 32;
++      output_values[i] = __bfloat162float(shared_out[t][value]);
++      sum_square += output_values[i] * output_values[i];
++    }
++    sum_square = warp_reduce_sum(sum_square);
++    const float rstd =
++        rsqrtf(sum_square / static_cast<float>(kDimV) + norm_eps);
++    const int token = bos + t;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int value = lane + i * 32;
++      const float gate_input = __bfloat162float(
++          output_gate[static_cast<int64_t>(token) * strides.gate_row +
++                      value_head * kDimV + value]);
++      const float gate =
++          SigmoidGate ? sigmoid_fast(gate_input) : silu_fast(gate_input);
++      const float weight =
++          norm_weight_is_bf16
++              ? __bfloat162float(
++                    static_cast<const __nv_bfloat16*>(norm_weight)[value])
++              : static_cast<const float*>(norm_weight)[value];
++      const int64_t out_offset =
++          (static_cast<int64_t>(token) * HV + value_head) * kDimV + value;
++      out[out_offset] =
++          __float2bfloat16(output_values[i] * rstd * weight * gate);
++    }
++  }
++  if (tid == 0) {
++    flags[static_cast<int64_t>(key_slot) * HV + value_head] =
++        static_cast<uint8_t>(num_tokens);
++  }
++}
++
++// Flush: materialize the state(s) stock would have left in the per-token slots,
++// from (committed state S[0] + log), for requests whose state is about to be read
++// by code outside the fused kernel. Grid: (batch, HV, layers).
++// mode 0 (pre-copy, V2): col=src_col[req] (<0 skip), skip when col==dst(state_idx);
++//        a = src_off[req]+1; clear flags of block bt[req, dst].
++// mode 1 (post-copy, V2): decision of postprocess_mamba_fused_kernel;
++//        materializes S[0..a-1]; clears flags of the destination block.
++// mode 2 (layer, direct): bt is the [n, W] state-index tensor, col 0, a=acc[req].
++// mode 3 (layer, clear-only): bt is a [n] tensor of keys.
++__global__ __launch_bounds__(kThreads, 2) void gdn_replay_flush_kernel(
++    const int64_t* __restrict__ state_ptrs,
++    const int64_t* __restrict__ flag_ptrs, int64_t state_slot_stride, int HV,
++    const int* __restrict__ bt, int64_t bt_stride,
++    const int* __restrict__ idx_mapping, const int* __restrict__ p0,
++    const int* __restrict__ p1, const int* __restrict__ p2, int num_reqs,
++    int mode, int block_size, unsigned long long* __restrict__ counters) {
++  const int batch = blockIdx.x;
++  const int value_head = blockIdx.y;
++  const int layer = blockIdx.z;
++  if (batch >= num_reqs) return;
++  const int tid = threadIdx.x;
++  const int lane = tid & 31;
++  const int warp = tid >> 5;
++  const int req = idx_mapping ? idx_mapping[batch] : batch;
++  if (req < 0) return;
++  const int* bt_row = bt + static_cast<int64_t>(req) * bt_stride;
++  float* state = reinterpret_cast<float*>(state_ptrs[layer]);
++  uint8_t* flags = reinterpret_cast<uint8_t*>(flag_ptrs[layer]);
++
++  int col = -1;     // block-table column of the committed slot S[0]
++  int a = 0;        // accepted count (replay length)
++  int clear_col = -1;
++  if (mode == 0) {
++    const int src_col = p0[req];
++    const int dst_col = p1[req];
++    if (src_col == dst_col) return;
++    col = src_col;  // < 0: fresh request, only clear the destination flags
++    a = p2[req] + 1;
++    clear_col = dst_col;
++  } else if (mode == 1) {
++    // p0 = num_accepted (live), p1 = mamba_state_idx, p2 = new_num_computed
++    const int acc = p0[req];
++    const int src_col = p1[req];
++    const int new_nc = p2[req];
++    const int running = new_nc - acc + 1;
++    const int aligned = (new_nc / block_size) * block_size;
++    if (!(aligned >= running)) return;
++    col = src_col;
++    a = acc;
++    clear_col = aligned / block_size - 1;
++  } else if (mode == 2) {
++    if (batch >= num_reqs) return;
++    col = 0;
++    a = p0[req];
++  } else {  // mode 3
++    if (tid == 0) {
++      const int key = bt[req];
++      if (key > 0) {
++        uint8_t* fl = flags + static_cast<int64_t>(key) * HV + value_head;
++        if (counters != nullptr && *fl != 0) atomicAdd(&counters[3], 1ULL);
++        *fl = 0;
++      }
++    }
++    return;
++  }
++
++  __shared__ __align__(16) float shared_lk[kMaxLogTokens][kDimK];
++  __shared__ __nv_bfloat16 shared_lv[kMaxLogTokens][kDimV];
++  __shared__ float shared_ldecay[kMaxLogTokens];
++  __shared__ float shared_lbeta[kMaxLogTokens];
++
++  const int key_slot = col >= 0 ? bt_row[col] : 0;
++  const int log_slot = col >= 0 ? bt_row[col + 1] : 0;
++  int replay = 0;
++  if (key_slot > 0 && log_slot > 0 && a > 0) {
++    const int logged = flags[static_cast<int64_t>(key_slot) * HV + value_head];
++    replay = a < logged ? a : logged;
++  }
++  const int64_t head_off = static_cast<int64_t>(value_head) * kDimV * kDimK;
++  if (replay > 0) {
++    float* committed =
++        state + static_cast<int64_t>(key_slot) * state_slot_stride + head_off;
++    float* log_ptr =
++        state + static_cast<int64_t>(log_slot) * state_slot_stride + head_off;
++    // Stage the log (it may live in a slot we are about to overwrite).
++    for (int idx = tid; idx < replay * kDimK; idx += kThreads) {
++      (&shared_lk[0][0])[idx] = log_ptr[idx];
++    }
++    const __nv_bfloat16* log_v =
++        reinterpret_cast<const __nv_bfloat16*>(log_ptr + kLogVOff);
++    for (int idx = tid; idx < replay * kDimV; idx += kThreads) {
++      (&shared_lv[0][0])[idx] = log_v[idx];
++    }
++    if (tid < replay) {
++      shared_ldecay[tid] = log_ptr[kLogDecayOff + tid];
++      shared_lbeta[tid] = log_ptr[kLogBetaOff + tid];
++    }
++    __syncthreads();
++    // Slots S[0..replay-1] receive the state after tokens 0..replay-1, i.e.
++    // exactly what the per-token-store kernel leaves there (S[0] is overwritten
++    // last in program order for each thread-owned element, after C was read).
++    float* slot_state[kMaxLogTokens];
++#pragma unroll
++    for (int r = 0; r < kMaxLogTokens; ++r) {
++      const int sl = r < replay ? bt_row[col + r] : 0;
++      slot_state[r] = sl > 0 ? state + static_cast<int64_t>(sl) * state_slot_stride + head_off
++                             : nullptr;
++    }
++    const int k_base = lane * 4;
++    int rows[kRowsPerWarp];
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) rows[row] = warp + row * kWarps;
++    for (int chunk = 0; chunk < kNumChunks; ++chunk) {
++      float h[kRowsPerWarp][4];
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        const float4 sv = *reinterpret_cast<const float4*>(
++            committed + (chunk * kChunkV + rows[row]) * kDimK + k_base);
++        h[row][0] = sv.x; h[row][1] = sv.y; h[row][2] = sv.z; h[row][3] = sv.w;
++      }
++      for (int r = 0; r < replay; ++r) {
++        replay_advance(h, &shared_lk[r][k_base], shared_ldecay[r],
++                       shared_lbeta[r], shared_lv[r], chunk, rows);
++        if (slot_state[r] != nullptr) {
++#pragma unroll
++          for (int row = 0; row < kRowsPerWarp; ++row) {
++            store_state4(slot_state[r] + (chunk * kChunkV + rows[row]) * kDimK + k_base,
++                         make_float4(h[row][0], h[row][1], h[row][2], h[row][3]));
++          }
++        }
++      }
++    }
++    __syncthreads();
++    if (tid == 0) {
++      flags[static_cast<int64_t>(key_slot) * HV + value_head] = 0;
++      if (counters != nullptr) atomicAdd(&counters[mode], 1ULL);
++    }
++  }
++  if (tid == 0 && clear_col >= 0) {
++    const int ck = bt_row[clear_col];
++    if (ck > 0) flags[static_cast<int64_t>(ck) * HV + value_head] = 0;
++  }
++}
++
++// ==== TORCH BINDINGS ====
+ template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate>
+ void launch_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a_log,
+@@ -595,3 +1069,216 @@ void fused_gdn_decode_post_conv_mtp(
+       break;
+   }
+ }
++
++
++void fused_gdn_decode_post_conv_mtp_replay(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor& flags,
++    torch::stable::Tensor const& output_gate,
++    torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
++    double scale, double norm_eps, const std::string& output_gate_activation) {
++  using torch::headeronly::ScalarType;
++  STD_TORCH_CHECK(
++      mixed_qkv.is_cuda() && mixed_qkv.scalar_type() == ScalarType::BFloat16,
++      "mixed_qkv must be a CUDA bfloat16 tensor");
++  STD_TORCH_CHECK(a.is_cuda() && a.scalar_type() == ScalarType::BFloat16 &&
++                      b.is_cuda() && b.scalar_type() == ScalarType::BFloat16,
++                  "a, b must be CUDA bfloat16 tensors");
++  STD_TORCH_CHECK(a_log.is_cuda() && a_log.scalar_type() == ScalarType::Float,
++                  "A_log must be a CUDA float32 tensor");
++  const auto dt_bias_scalar_type = dt_bias.scalar_type();
++  STD_TORCH_CHECK(
++      dt_bias.is_cuda() && (dt_bias_scalar_type == ScalarType::Float ||
++                            dt_bias_scalar_type == ScalarType::BFloat16 ||
++                            dt_bias_scalar_type == ScalarType::Half),
++      "dt_bias must be a CUDA float32, bfloat16, or float16 tensor");
++  STD_TORCH_CHECK(state_indices.is_cuda() &&
++                      state_indices.scalar_type() == ScalarType::Int &&
++                      cu_seqlens.is_cuda() &&
++                      cu_seqlens.scalar_type() == ScalarType::Int &&
++                      num_accepted_tokens.is_cuda() &&
++                      num_accepted_tokens.scalar_type() == ScalarType::Int,
++                  "index tensors must be CUDA int32");
++  STD_TORCH_CHECK(state.is_cuda() && state.scalar_type() == ScalarType::Float,
++                  "replay path requires a CUDA float32 state");
++  STD_TORCH_CHECK(flags.is_cuda() && flags.scalar_type() == ScalarType::Byte &&
++                      flags.dim() == 2 && flags.size(0) >= state.size(0) &&
++                      flags.size(1) == state.size(1) && flags.is_contiguous(),
++                  "flags must be a contiguous uint8 [num_blocks, HV] tensor");
++  STD_TORCH_CHECK(output_gate.is_cuda() &&
++                      output_gate.scalar_type() == ScalarType::BFloat16,
++                  "output_gate must be a CUDA bfloat16 tensor");
++  STD_TORCH_CHECK(norm_weight.is_cuda() &&
++                      (norm_weight.scalar_type() == ScalarType::Float ||
++                       norm_weight.scalar_type() == ScalarType::BFloat16),
++                  "norm_weight must be a CUDA float32 or bfloat16 tensor");
++  STD_TORCH_CHECK(out.is_cuda() && out.scalar_type() == ScalarType::BFloat16,
++                  "out must be a CUDA bfloat16 tensor");
++  STD_TORCH_CHECK(
++      output_gate_activation == "silu" || output_gate_activation == "sigmoid",
++      "output_gate_activation must be 'silu' or 'sigmoid'");
++  STD_TORCH_CHECK(mixed_qkv.dim() == 2, "mixed_qkv must be 2-D");
++  const int num_tokens = static_cast<int>(mixed_qkv.size(0));
++  STD_TORCH_CHECK(num_tokens > 0, "requires at least one token");
++  STD_TORCH_CHECK(
++      state.dim() == 4 && state.size(2) == kDimV && state.size(3) == kDimK,
++      "state must have shape [slots, HV, 128, 128]");
++  const int num_value_heads = static_cast<int>(state.size(1));
++  const int64_t key_width =
++      mixed_qkv.size(1) - static_cast<int64_t>(num_value_heads) * kDimV;
++  STD_TORCH_CHECK(key_width > 0 && key_width % (2 * kDimK) == 0,
++                  "mixed_qkv width is inconsistent with state");
++  const int num_key_heads = static_cast<int>(key_width / (2 * kDimK));
++  const int vh_per_kh = num_value_heads / num_key_heads;
++  STD_TORCH_CHECK(num_value_heads % num_key_heads == 0 &&
++                      ((vh_per_kh >= 1 && vh_per_kh <= 4) || vh_per_kh == 8),
++                  "requires HV/H in {1, 2, 3, 4, 8}");
++  STD_TORCH_CHECK(state_indices.dim() == 2 && state_indices.size(0) > 0 &&
++                      state_indices.size(1) >= 2 &&
++                      state_indices.size(1) <= kMaxLogTokens,
++                  "state_indices must have shape [N, S] with 2 <= S <= 4");
++  const int num_requests = static_cast<int>(state_indices.size(0));
++  STD_TORCH_CHECK(cu_seqlens.numel() == num_requests + 1 &&
++                      num_accepted_tokens.numel() == num_requests,
++                  "cu_seqlens / num_accepted_tokens size mismatch");
++  STD_TORCH_CHECK(a.dim() == 2 && a.size(0) == num_tokens &&
++                      a.size(1) == num_value_heads && b.dim() == 2 &&
++                      b.size(0) == num_tokens && b.size(1) == num_value_heads,
++                  "a/b must have shape [L, HV]");
++  STD_TORCH_CHECK(a_log.is_contiguous() && a_log.numel() == num_value_heads &&
++                      dt_bias.is_contiguous() &&
++                      dt_bias.numel() == num_value_heads,
++                  "A_log / dt_bias must be contiguous with HV elements");
++  STD_TORCH_CHECK(state_indices.is_contiguous() && cu_seqlens.is_contiguous() &&
++                      num_accepted_tokens.is_contiguous(),
++                  "index tensors must be contiguous");
++  STD_TORCH_CHECK(output_gate.dim() == 3 && output_gate.size(0) == num_tokens &&
++                      output_gate.size(1) == num_value_heads &&
++                      output_gate.size(2) == kDimV,
++                  "output_gate must have shape [L, HV, 128]");
++  STD_TORCH_CHECK(norm_weight.is_contiguous() && norm_weight.numel() == kDimV,
++                  "norm_weight must be contiguous with 128 elements");
++  STD_TORCH_CHECK(out.dim() == 3 && out.size(0) == num_tokens &&
++                      out.size(1) == num_value_heads && out.size(2) == kDimV &&
++                      out.is_contiguous(),
++                  "out must be contiguous [L, HV, 128]");
++  STD_TORCH_CHECK(mixed_qkv.stride(1) == 1 && a.stride(1) == 1 &&
++                      b.stride(1) == 1,
++                  "channels must be contiguous");
++  STD_TORCH_CHECK(state.stride(0) >= num_value_heads * kDimV * kDimK &&
++                      state.stride(1) == kDimV * kDimK &&
++                      state.stride(2) == kDimK && state.stride(3) == 1,
++                  "state must have contiguous [HV, 128, 128] slot contents");
++  STD_TORCH_CHECK(reinterpret_cast<uintptr_t>(state.data_ptr()) % 16 == 0 &&
++                      state.stride(0) % 4 == 0,
++                  "state slots must preserve 16-byte alignment");
++  STD_TORCH_CHECK(output_gate.stride(2) == 1 && output_gate.stride(1) == kDimV,
++                  "output_gate head rows must be contiguous");
++  STD_TORCH_CHECK(norm_eps >= 0.0, "norm_eps must be non-negative");
++
++  const GdnDecodeStrides strides{mixed_qkv.stride(0), a.stride(0), b.stride(0),
++                                 output_gate.stride(0), state.stride(0)};
++  const int dt_bias_type =
++      dt_bias_scalar_type == ScalarType::Float
++          ? kDtBiasFloat32
++          : (dt_bias_scalar_type == ScalarType::BFloat16 ? kDtBiasBFloat16
++                                                         : kDtBiasFloat16);
++  torch::stable::accelerator::DeviceGuard const device_guard(
++      mixed_qkv.get_device_index());
++  const cudaStream_t stream =
++      get_current_cuda_stream(mixed_qkv.get_device_index());
++  const dim3 grid(num_requests, num_value_heads);
++  const bool sigmoid = output_gate_activation == "sigmoid";
++  const auto launch = [&]<int VH, bool Sig>() {
++    gdn_decode_replay_kernel<VH, Sig><<<grid, kThreads, 0, stream>>>(
++        static_cast<const __nv_bfloat16*>(mixed_qkv.data_ptr()),
++        static_cast<const __nv_bfloat16*>(a.data_ptr()),
++        static_cast<const __nv_bfloat16*>(b.data_ptr()),
++        static_cast<const float*>(a_log.data_ptr()), dt_bias.data_ptr(),
++        static_cast<const int*>(state_indices.data_ptr()),
++        static_cast<const int*>(cu_seqlens.data_ptr()),
++        static_cast<const int*>(num_accepted_tokens.data_ptr()),
++        static_cast<float*>(state.data_ptr()),
++        static_cast<uint8_t*>(flags.data_ptr()),
++        static_cast<const __nv_bfloat16*>(output_gate.data_ptr()),
++        norm_weight.data_ptr(), static_cast<__nv_bfloat16*>(out.data_ptr()),
++        num_key_heads, num_value_heads,
++        static_cast<int>(state_indices.size(1)), dt_bias_type,
++        norm_weight.scalar_type() == ScalarType::BFloat16,
++        static_cast<float>(scale), static_cast<float>(norm_eps), strides);
++  };
++  const auto dispatch_act = [&]<int VH>() {
++    if (sigmoid) {
++      launch.template operator()<VH, true>();
++    } else {
++      launch.template operator()<VH, false>();
++    }
++  };
++  switch (vh_per_kh) {
++    case 1: dispatch_act.template operator()<1>(); break;
++    case 2: dispatch_act.template operator()<2>(); break;
++    case 3: dispatch_act.template operator()<3>(); break;
++    case 4: dispatch_act.template operator()<4>(); break;
++    default: dispatch_act.template operator()<8>(); break;
++  }
++  const cudaError_t error = cudaGetLastError();
++  STD_TORCH_CHECK(error == cudaSuccess,
++                  "GDN replay decode kernel launch failed: ",
++                  cudaGetErrorString(error));
++}
++
++void gdn_replay_flush(torch::stable::Tensor const& state_ptrs,
++                      torch::stable::Tensor const& flag_ptrs,
++                      int64_t state_slot_stride, int64_t hv,
++                      torch::stable::Tensor const& bt,
++                      torch::stable::Tensor const& idx_mapping,
++                      torch::stable::Tensor const& p0,
++                      torch::stable::Tensor const& p1,
++                      torch::stable::Tensor const& p2, int64_t num_reqs,
++                      int64_t mode, int64_t block_size,
++                      int64_t use_idx_mapping,
++                      torch::stable::Tensor const& counters) {
++  using torch::headeronly::ScalarType;
++  if (num_reqs <= 0) return;
++  STD_TORCH_CHECK(state_ptrs.is_cuda() &&
++                      state_ptrs.scalar_type() == ScalarType::Long &&
++                      flag_ptrs.is_cuda() &&
++                      flag_ptrs.scalar_type() == ScalarType::Long &&
++                      state_ptrs.numel() == flag_ptrs.numel(),
++                  "pointer tables must be CUDA int64 of equal length");
++  STD_TORCH_CHECK(bt.is_cuda() && bt.scalar_type() == ScalarType::Int &&
++                      p0.is_cuda() && p0.scalar_type() == ScalarType::Int &&
++                      p1.is_cuda() && p1.scalar_type() == ScalarType::Int &&
++                      p2.is_cuda() && p2.scalar_type() == ScalarType::Int &&
++                      idx_mapping.is_cuda() &&
++                      idx_mapping.scalar_type() == ScalarType::Int,
++                  "index tensors must be CUDA int32");
++  STD_TORCH_CHECK(mode >= 0 && mode <= 3, "bad mode");
++  const int64_t bt_stride = bt.dim() == 2 ? bt.stride(0) : 1;
++  torch::stable::accelerator::DeviceGuard const device_guard(
++      bt.get_device_index());
++  const cudaStream_t stream = get_current_cuda_stream(bt.get_device_index());
++  const dim3 grid(static_cast<unsigned>(num_reqs), static_cast<unsigned>(hv),
++                  static_cast<unsigned>(state_ptrs.numel()));
++  gdn_replay_flush_kernel<<<grid, kThreads, 0, stream>>>(
++      static_cast<const int64_t*>(state_ptrs.data_ptr()),
++      static_cast<const int64_t*>(flag_ptrs.data_ptr()), state_slot_stride,
++      static_cast<int>(hv), static_cast<const int*>(bt.data_ptr()), bt_stride,
++      use_idx_mapping ? static_cast<const int*>(idx_mapping.data_ptr())
++                      : nullptr,
++      static_cast<const int*>(p0.data_ptr()),
++      static_cast<const int*>(p1.data_ptr()),
++      static_cast<const int*>(p2.data_ptr()), static_cast<int>(num_reqs),
++      static_cast<int>(mode), static_cast<int>(block_size),
++      counters.numel() >= 4
++          ? static_cast<unsigned long long*>(counters.data_ptr())
++          : nullptr);
++  const cudaError_t error = cudaGetLastError();
++  STD_TORCH_CHECK(error == cudaSuccess, "GDN replay flush launch failed: ",
++                  cudaGetErrorString(error));
++}
+diff --git a/csrc/ops.h b/csrc/ops.h
+index 81a0065c98..deff2813ef 100644
+--- a/csrc/ops.h
++++ b/csrc/ops.h
+@@ -452,6 +452,30 @@ void fused_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
+     double scale, double norm_eps, const std::string& output_gate_activation);
+ 
++void fused_gdn_decode_post_conv_mtp_replay(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor& flags,
++    torch::stable::Tensor const& output_gate,
++    torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
++    double scale, double norm_eps, const std::string& output_gate_activation);
++
++void gdn_replay_flush(torch::stable::Tensor const& state_ptrs,
++                      torch::stable::Tensor const& flag_ptrs,
++                      int64_t state_slot_stride, int64_t hv,
++                      torch::stable::Tensor const& bt,
++                      torch::stable::Tensor const& idx_mapping,
++                      torch::stable::Tensor const& p0,
++                      torch::stable::Tensor const& p1,
++                      torch::stable::Tensor const& p2, int64_t num_reqs,
++                      int64_t mode, int64_t block_size,
++                      int64_t use_idx_mapping,
++                      torch::stable::Tensor const& counters);
++
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+diff --git a/csrc/quantization/marlin/marlin.cu b/csrc/quantization/marlin/marlin.cu
+index 9d031dcd28..3ab6bcca30 100644
+--- a/csrc/quantization/marlin/marlin.cu
++++ b/csrc/quantization/marlin/marlin.cu
+@@ -337,6 +337,18 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
+         }
+       }
+ 
++      // Decode-size batches (2-3 m blocks): {64, 128, 128} streams the weights
++      // faster than {64, 256, 256} on large N (measured on sm_89, e.g. the
++      // 17408 x 5120 gate_up at M = 17..48: 104-107 us vs 108-114 us).
++      if (thread_m_blocks >= 2 && thread_m_blocks <= 3 &&
++          thread_tfg.thread_k == 64 && thread_tfg.thread_n == 256 &&
++          is_valid_config({64, 128, 128}, thread_m_blocks, prob_m_split, prob_n,
++                          prob_k, num_bits, group_size, has_zp, is_zp_float,
++                          stages, max_shared_mem_new)) {
++        thread_tfg = {64, 128, 128};
++        exec_cfg = {1, thread_tfg};
++      }
++
+       if (thread_tfg.thread_k == -1 && max_thread_m_blocks > 1) {
+         max_thread_m_blocks--;
+         continue;
+diff --git a/csrc/torch_bindings.cpp b/csrc/torch_bindings.cpp
+index 78ae89a646..33747e3013 100644
+--- a/csrc/torch_bindings.cpp
++++ b/csrc/torch_bindings.cpp
+@@ -573,6 +573,18 @@ STABLE_TORCH_LIBRARY_FRAGMENT(_C, ops) {
+       "Tensor! state, Tensor output_gate, Tensor norm_weight, Tensor! out, "
+       "float scale, float norm_eps=1e-5, "
+       "str output_gate_activation='silu') -> ()");
++  ops.def(
++      "fused_gdn_decode_post_conv_mtp_replay("
++      "Tensor mixed_qkv, Tensor a, Tensor b, Tensor A_log, Tensor dt_bias, "
++      "Tensor state_indices, Tensor cu_seqlens, Tensor num_accepted_tokens, "
++      "Tensor! state, Tensor! flags, Tensor output_gate, Tensor norm_weight, "
++      "Tensor! out, float scale, float norm_eps=1e-5, "
++      "str output_gate_activation='silu') -> ()");
++  ops.def(
++      "gdn_replay_flush(Tensor state_ptrs, Tensor flag_ptrs, "
++      "int state_slot_stride, int hv, Tensor bt, Tensor idx_mapping, "
++      "Tensor p0, Tensor p1, Tensor p2, int num_reqs, int mode, "
++      "int block_size, int use_idx_mapping, Tensor counters) -> ()");
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+@@ -907,6 +919,9 @@ STABLE_TORCH_LIBRARY_IMPL(_C, CUDA, ops) {
+ #ifdef VLLM_ENABLE_FUSED_GDN_DECODE
+   ops.impl("fused_gdn_decode_post_conv_mtp",
+            TORCH_BOX(&fused_gdn_decode_post_conv_mtp));
++  ops.impl("fused_gdn_decode_post_conv_mtp_replay",
++           TORCH_BOX(&fused_gdn_decode_post_conv_mtp_replay));
++  ops.impl("gdn_replay_flush", TORCH_BOX(&gdn_replay_flush));
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+diff --git a/vllm/_custom_ops.py b/vllm/_custom_ops.py
+index 00fe25c0f4..41991ae683 100644
+--- a/vllm/_custom_ops.py
++++ b/vllm/_custom_ops.py
+@@ -3210,6 +3210,47 @@ def fused_gdn_decode_post_conv_mtp(
+     return out
+ 
+ 
++def fused_gdn_decode_post_conv_mtp_replay(
++    mixed_qkv: torch.Tensor,
++    a: torch.Tensor,
++    b: torch.Tensor,
++    A_log: torch.Tensor,
++    dt_bias: torch.Tensor,
++    state_indices: torch.Tensor,
++    cu_seqlens: torch.Tensor,
++    num_accepted_tokens: torch.Tensor,
++    state: torch.Tensor,
++    flags: torch.Tensor,
++    output_gate: torch.Tensor,
++    norm_weight: torch.Tensor,
++    out: torch.Tensor | None = None,
++    scale: float = 128**-0.5,
++    norm_eps: float = 1e-5,
++    output_gate_activation: str = "silu",
++) -> torch.Tensor:
++    if out is None:
++        out = torch.empty_like(output_gate)
++    torch.ops._C.fused_gdn_decode_post_conv_mtp_replay(
++        mixed_qkv,
++        a,
++        b,
++        A_log,
++        dt_bias,
++        state_indices,
++        cu_seqlens,
++        num_accepted_tokens,
++        state,
++        flags,
++        output_gate,
++        norm_weight,
++        out,
++        scale,
++        norm_eps,
++        output_gate_activation,
++    )
++    return out
++
++
+ def concat_and_cache_mla(
+     kv_c: torch.Tensor,
+     k_pe: torch.Tensor,
+diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
+index 0e6348f2ab..7e005c63ab 100644
+--- a/vllm/config/speculative.py
++++ b/vllm/config/speculative.py
+@@ -105,6 +105,7 @@ _QWEN3_OMNI_DSPARK_ARCHITECTURE = "Qwen3OmniDSparkModel"
+ _METHOD_SPECIFIC_OPTIONS = (
+     "dspark_draft_topk",
+     "draft_lm_head_quantization",
++    "draft_lm_head_vocab_size",
+     "index_share_for_mtp_iteration",
+     "xpress_topc",
+     "speculator_options",
+@@ -537,6 +538,12 @@ class SpeculativeConfig:
+     activation scales on the platform's FP8 linear kernel; "nvfp4" is
+     weight-only on the platform's W4A16 kernel. The target verifies with its
+     own head, so only the acceptance length can change. Model Runner V2 only."""
++    draft_lm_head_vocab_size: int | None = None
++    """Give the drafter a copy of the shared target lm_head that keeps only the
++    first N token ids (re-sharded over the TP ranks, then quantized per
++    draft_lm_head_quantization). Low token ids are the frequent BPE merges, so
++    drafts lose little; the target still verifies with its full head, so only
++    the acceptance length can change. Needs use_local_argmax_reduction."""
+     use_local_argmax_reduction: bool = False
+     """Use vocab-parallel local argmax instead of all-gathering full logits
+     for draft token generation. Reduces communication from O(vocab_size) to
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..4664cd4ca3 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -2,7 +2,10 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ 
++import os
++
+ import torch
++import torch.distributed as dist
+ from torch.distributed import ProcessGroup
+ 
+ import vllm.envs as envs
+@@ -112,6 +115,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             if is_symmetric_memory_enabled():
+                 register_nccl_symmetric_ops(self.pynccl_comm)
+ 
++        self.host_ar_comm = None
+         self.ca_comm: CustomAllreduce | None = None
+         self.qr_comm: QuickAllReduce | None = None
+         self.symm_mem_comm: SymmMemCommunicator | None = None
+@@ -165,6 +169,26 @@ class CudaCommunicator(DeviceCommunicatorBase):
+                 register_graph_buffers=register,
+             )
+ 
++        # 2-rank TP without GPU peer-to-peer: all-reduce through shared pinned
++        # host memory (NCCL goes through host memory too, but slower).
++        if (
++            unique_name.split(":")[0] == "tp"
++            and self.world_size == 2
++            and current_platform.is_cuda()
++            and not envs.VLLM_BATCH_INVARIANT
++            and os.environ.get("VLLM_DISABLE_HOST_STAGED_AR", "0") != "1"
++        ):
++            from vllm.distributed.device_communicators.custom_all_reduce import (
++                _can_p2p,
++            )
++
++            if not _can_p2p(dist.get_rank(self.cpu_group), self.world_size):
++                from vllm.distributed.device_communicators.host_staged_ar import (
++                    HostStagedAllReduce,
++                )
++
++                self.host_ar_comm = HostStagedAllReduce(self.cpu_group, self.device)
++
+         # AITER custom all-gather/reduce-scatter DP-attention dispatch/combine.
+         # AITER requires a torch.distributed-registered group and exchanges IPC
+         # handles via the default store; stateless groups satisfy neither.
+@@ -426,6 +450,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             out = aiter_ar_comm.custom_all_reduce(input_)
+             assert out is not None
+             return out
++        host_ar = self.host_ar_comm
++        if host_ar is not None and host_ar.should_use(input_):
++            return host_ar.all_reduce(input_)
+         ca_comm = self.ca_comm
+         if (
+             ca_comm is not None
+@@ -486,6 +513,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         # gather-before-GEMM uses dim=0 with tp-aligned (uniform) shards.
+         if dim < 0:
+             dim += input_.dim()
++        host_ar = self.host_ar_comm
++        if host_ar is not None and host_ar.should_use_all_gather(input_, dim):
++            return host_ar.all_gather(input_, dim)
+         if dim == 0 and should_nccl_symm_mem_ag_rs():
+             return self._all_gather_symm_mem(input_.contiguous())
+ 
+diff --git a/vllm/distributed/device_communicators/host_staged_ar.cu b/vllm/distributed/device_communicators/host_staged_ar.cu
+new file mode 100644
+index 0000000000..7e43c77947
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_staged_ar.cu
+@@ -0,0 +1,194 @@
++#include <torch/extension.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <sys/mman.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <string>
++
++#define MAXB 128
++#define MAXK 8
++#define FSTRIDE 16   // ints between flags (64B)
++
++static __device__ __forceinline__ uint4 ld_cv(const uint4* p) {
++  uint4 r;
++  asm volatile("ld.global.cv.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(r.x),"=r"(r.y),"=r"(r.z),"=r"(r.w) : "l"(p) : "memory");
++  return r;
++}
++static __device__ __forceinline__ void st_cs(uint4* p, uint4 v) {
++  asm volatile("st.global.cs.v4.u32 [%0], {%1,%2,%3,%4};" :: "l"(p),"r"(v.x),"r"(v.y),"r"(v.z),"r"(v.w) : "memory");
++}
++static __device__ __forceinline__ int ld_vol(const int* p) {
++  int r; asm volatile("ld.volatile.global.s32 %0, [%1];" : "=r"(r) : "l"(p) : "memory"); return r;
++}
++static __device__ __forceinline__ uint32_t add_bf16x2(uint32_t a, uint32_t b) {
++  __nv_bfloat162 x = *reinterpret_cast<__nv_bfloat162*>(&a), y = *reinterpret_cast<__nv_bfloat162*>(&b);
++  float2 fx = __bfloat1622float2(x), fy = __bfloat1622float2(y);
++  __nv_bfloat162 r = __floats2bfloat162_rn(fx.x + fy.x, fx.y + fy.y);
++  return *reinterpret_cast<uint32_t*>(&r);
++}
++static __device__ __forceinline__ uint4 add4(uint4 a, uint4 b) {
++  return make_uint4(add_bf16x2(a.x,b.x), add_bf16x2(a.y,b.y), add_bf16x2(a.z,b.z), add_bf16x2(a.w,b.w));
++}
++
++struct Params {
++  const uint4* x; uint4* out;
++  uint4* slot[2][2];      // [rank][parity] device ptr to host-mapped data slots
++  int* flags[2];          // [rank] flag base (host-mapped)
++  int* state;             // device: [0]=epoch, [1]=done counter
++  int rank; long n_vec; int K; int mode; int gather; long inner_vec;
++  unsigned long long* trace;  // test-only (VLLM_HOSTAR_TRACE): [cap][8] stamps, null = off
++  long trace_cap;
++};
++static __device__ __forceinline__ unsigned long long gtimer() {
++  unsigned long long t; asm volatile("mov.u64 %0, %globaltimer;" : "=l"(t)); return t;
++}
++
++__global__ void hostar_kernel(Params p) {
++  __shared__ int s_epoch;
++  const int G = gridDim.x / 2, tid = threadIdx.x, nt = blockDim.x;
++  const bool writer = blockIdx.x < G;
++  const int g = writer ? blockIdx.x : blockIdx.x - G;
++  if (tid == 0) s_epoch = *(volatile int*)&p.state[0];
++  __syncthreads();
++  const int epoch = s_epoch, par = epoch & 1;
++  // trace entry: [0]=n_vec|gather<<40|grid<<48, [1]=w0 start, [2]=w0 flags published, [3]=r0 start,
++  // [4]=r0 peer flag observed (chunk 0), [5]=r0 end, [6]=last block end, [7]=max reader observe
++  unsigned long long* tr = (p.trace && epoch < p.trace_cap) ? p.trace + (size_t)epoch * 8 : nullptr;
++  if (tr && tid == 0) {
++    unsigned long long t = gtimer();
++    if (blockIdx.x == 0) { tr[0] = (unsigned long long)p.n_vec | ((unsigned long long)p.gather << 40) | ((unsigned long long)gridDim.x << 48); tr[1] = t; }
++    else if (blockIdx.x == G) tr[3] = t;
++  }
++  uint4* mine = p.slot[p.rank][par];
++  const uint4* peer = p.slot[1 - p.rank][par];
++  int* myf = p.flags[p.rank] + (size_t)g * MAXK * FSTRIDE;
++  const int* pf = p.flags[1 - p.rank] + (size_t)g * MAXK * FSTRIDE;
++  const int K = p.K;
++  long total_chunks = (long)G * K;
++  long cs = (p.n_vec + total_chunks - 1) / total_chunks;
++  for (int c = 0; c < K; c++) {
++    long lo = ((long)c * G + g) * cs, hi = lo + cs;
++    if (lo > p.n_vec) lo = p.n_vec; if (hi > p.n_vec) hi = p.n_vec;
++    if (writer && p.gather) {
++      // all-gather: publish my shard and place it in my slot of the output
++      for (long i = lo + tid; i < hi; i += nt) {
++        uint4 v = p.x[i];
++        st_cs(mine + i, v);
++        p.out[(i / p.inner_vec * 2 + p.rank) * p.inner_vec + i % p.inner_vec] = v;
++      }
++      __threadfence_system();
++      __syncthreads();
++      if (tid == 0) asm volatile("st.volatile.global.s32 [%0], %1;" :: "l"(myf + c * FSTRIDE), "r"(epoch) : "memory");
++    } else if (writer) {
++      long i = lo + tid;
++      for (; i + 3 * nt < hi; i += 4 * nt) {
++        uint4 v0 = p.x[i], v1 = p.x[i+nt], v2 = p.x[i+2*nt], v3 = p.x[i+3*nt];
++        st_cs(mine+i, v0); st_cs(mine+i+nt, v1); st_cs(mine+i+2*nt, v2); st_cs(mine+i+3*nt, v3);
++      }
++      for (; i < hi; i += nt) st_cs(mine + i, p.x[i]);
++      if (!(p.mode & 4)) __threadfence_system();
++      __syncthreads();
++      if (tid == 0 && (p.mode & 4)) __threadfence_system();
++      if (tid == 0) asm volatile("st.volatile.global.s32 [%0], %1;" :: "l"(myf + c * FSTRIDE), "r"(epoch) : "memory");
++      if (tr && tid == 0 && blockIdx.x == 0 && c == K - 1) tr[2] = gtimer();
++    } else {
++      if (tid == 0) {
++        if (p.mode & 8) { while (ld_vol(pf + c * FSTRIDE) != epoch) { } }  // test-only: old racy check
++        else { while ((int)(ld_vol(pf + c * FSTRIDE) - epoch) < 0) { } }   // monotonic: peer may be ahead
++        __threadfence_system();
++        if (tr && c == 0) { unsigned long long t = gtimer(); if (blockIdx.x == G) tr[4] = t; atomicMax(tr + 7, t); }
++      }
++      __syncthreads();
++      if (p.gather) {
++        const int pr = 1 - p.rank;
++        long j = lo + tid;
++        for (; j + 3 * nt < hi; j += 4 * nt) {
++          uint4 v0 = ld_cv(peer + j), v1 = ld_cv(peer + j + nt), v2 = ld_cv(peer + j + 2*nt), v3 = ld_cv(peer + j + 3*nt);
++          #define PUT(jj, vv) p.out[((jj) / p.inner_vec * 2 + pr) * p.inner_vec + (jj) % p.inner_vec] = vv
++          PUT(j, v0); PUT(j + nt, v1); PUT(j + 2*nt, v2); PUT(j + 3*nt, v3);
++        }
++        for (; j < hi; j += nt) { uint4 v = ld_cv(peer + j); PUT(j, v); }
++        continue;
++      }
++      long i = lo + tid;
++      for (; i + 3 * nt < hi; i += 4 * nt) {
++        uint4 v0 = ld_cv(peer + i), v1 = ld_cv(peer + i + nt), v2 = ld_cv(peer + i + 2*nt), v3 = ld_cv(peer + i + 3*nt);
++        p.out[i] = add4(p.x[i], v0); p.out[i+nt] = add4(p.x[i+nt], v1);
++        p.out[i+2*nt] = add4(p.x[i+2*nt], v2); p.out[i+3*nt] = add4(p.x[i+3*nt], v3);
++      }
++      for (; i < hi; i += nt) p.out[i] = add4(p.x[i], ld_cv(peer + i));
++    }
++  }
++  __syncthreads();
++  if (tr && tid == 0 && blockIdx.x == G) tr[5] = gtimer();
++  if (tid == 0) {
++    __threadfence();
++    int d = atomicAdd(&p.state[1], 1);
++    if (tr && d == (int)gridDim.x - 1) tr[6] = gtimer();
++    if (d == (int)gridDim.x - 1) { p.state[1] = 0; __threadfence(); *(volatile int*)&p.state[0] = epoch + 1; }
++  }
++}
++
++struct Ctx {
++  void* base[1]; size_t slot_bytes; Params p; int* state; bool init=false; int dev=0;
++};
++static Ctx C;
++
++// Layout of shm file: [rank 0..1][parity 0..1] data slots, then flags [rank][MAXB*MAXK*FSTRIDE ints]
++size_t total_bytes(size_t slot_bytes) { return 4 * slot_bytes + 2 * (size_t)MAXB * MAXK * FSTRIDE * 4; }
++
++void hostar_init(std::string path, int64_t slot_bytes, int64_t rank, bool create) {
++  size_t tot = total_bytes(slot_bytes);
++  int fd = open(path.c_str(), O_RDWR | (create ? (O_CREAT) : 0), 0600);
++  TORCH_CHECK(fd >= 0, "open failed");
++  if (create) TORCH_CHECK(ftruncate(fd, tot) == 0, "ftruncate");
++  void* m = mmap(nullptr, tot, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++  TORCH_CHECK(m != MAP_FAILED, "mmap");
++  close(fd);
++  TORCH_CHECK(cudaHostRegister(m, tot, cudaHostRegisterMapped) == cudaSuccess, "hostregister");
++  void* d; TORCH_CHECK(cudaHostGetDevicePointer(&d, m, 0) == cudaSuccess, "getdevptr");
++  char* b = (char*)d;
++  for (int r = 0; r < 2; r++) for (int q = 0; q < 2; q++) C.p.slot[r][q] = (uint4*)(b + ((size_t)(r * 2 + q)) * slot_bytes);
++  for (int r = 0; r < 2; r++) C.p.flags[r] = (int*)(b + 4 * slot_bytes + (size_t)r * MAXB * MAXK * FSTRIDE * 4);
++  void* st; cudaMalloc(&st, 64); cudaMemset(st, 0, 64);
++  int one = 1; cudaMemcpy(st, &one, 4, cudaMemcpyHostToDevice);
++  C.p.state = (int*)st; C.p.rank = rank; C.slot_bytes = slot_bytes; C.init = true;
++  C.p.trace = nullptr; C.p.trace_cap = 0; cudaGetDevice(&C.dev);
++}
++// test-only tracing (default off)
++void hostar_trace_enable(int64_t cap) {
++  void* t; TORCH_CHECK(cudaMalloc(&t, cap * 64) == cudaSuccess); cudaMemset(t, 0, cap * 64); cudaDeviceSynchronize();
++  C.p.trace = (unsigned long long*)t; C.p.trace_cap = cap;
++}
++torch::Tensor hostar_trace_dump() {
++  TORCH_CHECK(C.p.trace);
++  cudaSetDevice(C.dev);
++  auto out = torch::empty({C.p.trace_cap, 8}, torch::kInt64);
++  cudaStream_t s; cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking);
++  cudaMemcpyAsync(out.data_ptr(), C.p.trace, C.p.trace_cap * 64, cudaMemcpyDeviceToHost, s);
++  cudaStreamSynchronize(s); cudaStreamDestroy(s);
++  return out;
++}
++void hostar_zero(std::string path) {}  // flags are zero from ftruncate
++
++void hostar_allreduce(torch::Tensor x, torch::Tensor out, int64_t grid, int64_t K, int64_t threads, int64_t mode) {
++  TORCH_CHECK(C.init);
++  size_t bytes = x.numel() * 2;
++  TORCH_CHECK(bytes % 16 == 0 && bytes <= C.slot_bytes && K <= MAXK && grid <= 2*MAXB && grid%2==0);
++  Params p = C.p; p.x = (const uint4*)x.data_ptr(); p.out = (uint4*)out.data_ptr();
++  p.n_vec = bytes / 16; p.K = K; p.mode = mode; p.gather = 0; p.inner_vec = 1;
++  hostar_kernel<<<grid, threads, 0, at::cuda::getCurrentCUDAStream()>>>(p);
++}
++void hostar_allgather(torch::Tensor x, torch::Tensor out, int64_t grid, int64_t K, int64_t threads, int64_t inner_bytes) {
++  TORCH_CHECK(C.init);
++  size_t bytes = x.numel() * x.element_size();
++  TORCH_CHECK(bytes % 16 == 0 && inner_bytes % 16 == 0 && bytes <= C.slot_bytes && K <= MAXK && grid <= 2*MAXB && grid%2==0);
++  Params p = C.p; p.x = (const uint4*)x.data_ptr(); p.out = (uint4*)out.data_ptr();
++  p.n_vec = bytes / 16; p.K = K; p.mode = 4; p.gather = 1; p.inner_vec = inner_bytes / 16;
++  hostar_kernel<<<grid, threads, 0, at::cuda::getCurrentCUDAStream()>>>(p);
++}
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("init", &hostar_init); m.def("trace_enable", &hostar_trace_enable); m.def("trace_dump", &hostar_trace_dump); m.def("allreduce", &hostar_allreduce); m.def("allgather", &hostar_allgather);
++}
+diff --git a/vllm/distributed/device_communicators/host_staged_ar.py b/vllm/distributed/device_communicators/host_staged_ar.py
+new file mode 100644
+index 0000000000..8d65200e5a
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_staged_ar.py
+@@ -0,0 +1,151 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Host-staged 2-rank all-reduce for GPUs without peer-to-peer access.
++
++Both ranks write their partial into a pinned host buffer shared through a
++/dev/shm file (mapped into both processes and registered with
++cudaHostRegister), exchange per-chunk flags in the same shared memory and add
++the peer's partial locally (fp32 add, round to bf16: the same math as NCCL).
++The kernel is CUDA-graph capturable: the flag value (an epoch) lives in device
++memory and is advanced by the kernel itself.
++"""
++
++import os
++import uuid
++
++import torch
++import torch.distributed as dist
++from torch.distributed import ProcessGroup
++
++import vllm.envs as envs
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++_SLOT_BYTES = 24 << 20  # max message size handled; larger falls back to NCCL
++_MIN_BYTES = 1024
++_mod = None
++
++
++def _load_ext():
++    global _mod
++    if _mod is not None:
++        return _mod
++    from torch.utils.cpp_extension import load
++
++    if "TORCH_EXTENSIONS_DIR" not in os.environ:
++        os.environ["TORCH_EXTENSIONS_DIR"] = os.path.join(
++            envs.VLLM_CACHE_ROOT, "torch_extensions"
++        )
++    build_dir = os.path.join(os.environ["TORCH_EXTENSIONS_DIR"], "vllm_host_staged_ar")
++    os.makedirs(build_dir, exist_ok=True)
++    major, minor = torch.cuda.get_device_capability()
++    os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{major}.{minor}")
++    src = os.path.join(os.path.dirname(__file__), "host_staged_ar.cu")
++    _mod = load("vllm_host_staged_ar", [src], build_directory=build_dir, verbose=False)
++    return _mod
++
++
++def _config(nbytes: int) -> tuple[int, int]:
++    """(grid, chunks per writer block) as a function of message size."""
++    if nbytes <= 600 * 1024:
++        return 8, 1
++    if nbytes <= 8 << 20:
++        return 16, 4
++    return 32, 8
++
++
++class HostStagedAllReduce:
++    _instance_made = False
++
++    def __init__(self, group: ProcessGroup, device: torch.device):
++        self.disabled = True
++        if HostStagedAllReduce._instance_made:
++            return
++        self.world_size = dist.get_world_size(group=group)
++        self.rank = dist.get_rank(group=group)
++        if self.world_size != 2:
++            return
++        HostStagedAllReduce._instance_made = True
++        self.device = device
++        torch.cuda.set_device(device)
++        mod = _load_ext()
++        # rank 0 creates the file; both map it; unlink once both have mapped.
++        name = [f"/dev/shm/vllm_hostar_{os.getpid()}_{uuid.uuid4().hex}"]
++        dist.broadcast_object_list(name, src=dist.get_process_group_ranks(group)[0],
++                                   group=group)
++        path = name[0]
++        if self.rank == 0:
++            mod.init(path, _SLOT_BYTES, 0, True)
++        dist.barrier(group=group)
++        if self.rank == 1:
++            mod.init(path, _SLOT_BYTES, 1, False)
++        dist.barrier(group=group)
++        if self.rank == 0:
++            os.unlink(path)
++        self.mod = mod
++        self.disabled = False
++        trace = os.environ.get("VLLM_HOSTAR_TRACE")  # test-only: path prefix
++        if trace:
++            self._start_trace(trace)
++        logger.info("Host-staged all-reduce (no-P2P, 2 ranks) enabled")
++
++    def _start_trace(self, prefix: str):
++        """Test-only: stamp every call into a device ring; dump it to
++        <prefix>.rank<r>.npy once <prefix>.dump exists."""
++        import threading
++        import time
++
++        import numpy as np
++
++        self.mod.trace_enable(1 << 19)
++        rank = self.rank
++
++        def watch():
++            while not os.path.exists(prefix + ".dump"):
++                time.sleep(0.5)
++            np.save(f"{prefix}.rank{rank}.npy", self.mod.trace_dump().numpy())
++            logger.info("host AR trace dumped (rank %d)", rank)
++
++        threading.Thread(target=watch, daemon=True).start()
++        logger.warning("Host-staged AR TRACE enabled (test-only): %s", prefix)
++
++    def should_use(self, inp: torch.Tensor) -> bool:
++        if self.disabled or inp.dtype != torch.bfloat16 or not inp.is_cuda:
++            return False
++        nbytes = inp.numel() * inp.element_size()
++        return (
++            _MIN_BYTES <= nbytes <= _SLOT_BYTES
++            and nbytes % 16 == 0
++            and inp.is_contiguous()
++        )
++
++    def all_reduce(self, inp: torch.Tensor) -> torch.Tensor:
++        out = torch.empty_like(inp)
++        grid, k = _config(inp.numel() * 2)
++        self.mod.allreduce(inp, out, grid, k, 512, 4)
++        return out
++
++    def should_use_all_gather(self, inp: torch.Tensor, dim: int) -> bool:
++        if self.disabled or not inp.is_cuda or not inp.is_contiguous():
++            return False
++        nbytes = inp.numel() * inp.element_size()
++        inner = 1
++        for s in inp.shape[dim:]:
++            inner *= s
++        return (
++            _MIN_BYTES <= nbytes <= _SLOT_BYTES
++            and nbytes % 16 == 0
++            and (inner * inp.element_size()) % 16 == 0
++        )
++
++    def all_gather(self, inp: torch.Tensor, dim: int) -> torch.Tensor:
++        """Exact copy-based all-gather of two shards along `dim` (dim >= 0)."""
++        shape = list(inp.shape)
++        inner = 1
++        for s in shape[dim:]:
++            inner *= s
++        shape[dim] *= 2
++        out = torch.empty(shape, dtype=inp.dtype, device=inp.device)
++        grid, k = _config(inp.numel() * inp.element_size())
++        self.mod.allgather(inp, out, grid, k, 512, inner * inp.element_size())
++        return out
+diff --git a/vllm/model_executor/layers/logits_processor.py b/vllm/model_executor/layers/logits_processor.py
+index 1ca1d71381..6ff93977da 100644
+--- a/vllm/model_executor/layers/logits_processor.py
++++ b/vllm/model_executor/layers/logits_processor.py
+@@ -262,6 +262,60 @@ class LogitsProcessor(PluggableLayer):
+         top_tokens = gathered[:, :, 1].gather(dim=-1, index=max_rank_idx)
+         return top_tokens.squeeze(-1).to(torch.int64)
+ 
++    def get_greedy_tokens(
++        self,
++        lm_head: VocabParallelEmbedding,
++        hidden_states: torch.Tensor,
++        embedding_bias: torch.Tensor | None = None,
++    ) -> torch.Tensor | None:
++        """Exact greedy token ids without all-gathering full logits.
++
++        Returns the same ids as ``greedy_argmax`` over the gathered, vocab-cut
++        logits (first index on ties; padded / out-of-vocab columns excluded).
++        Each rank reduces its shard to (max, argmax); only these pairs are
++        gathered. Returns None if this head cannot be handled exactly.
++        """
++        from vllm.v1.worker.gpu.sample.greedy_argmax import (
++            greedy_argmax_with_value,
++        )
++
++        if (
++            self.scale != 1.0
++            or self.soft_cap is not None
++            or self.org_vocab_size >= 2**24
++            or self.logits_as_input
++            or not self.use_all_gather
++        ):
++            return None
++        logits = self._apply_head(lm_head, hidden_states, embedding_bias)
++        if logits.dtype not in (torch.bfloat16, torch.float32) or logits.ndim != 2:
++            return None
++        tp_size = lm_head.tp_size
++        si = lm_head.shard_indices
++        width = logits.shape[-1]
++        # The full path concatenates the shards and cuts at org_vocab_size, so
++        # shard r owns ids [r * width, (r + 1) * width). Anything else: fall back.
++        if si.num_org_vocab_padding != 0 or si.org_vocab_start_index != (
++            lm_head.tp_rank * width
++        ):
++            return None
++        num_valid = max(0, min(width, self.org_vocab_size - si.org_vocab_start_index))
++        vals, idx = greedy_argmax_with_value(logits, num_valid)
++        gidx = idx + si.org_vocab_start_index
++        if tp_size == 1:
++            return gidx.to(torch.int64)
++        pair = torch.stack([vals, gidx.float()], dim=-1)  # [rows, 2]
++        gathered = tensor_model_parallel_all_gather(pair, dim=-1)
++        gathered = gathered.view(hidden_states.shape[0], tp_size, 2)
++        # Strict '>' so the lowest rank (lowest ids) wins ties.
++        best_v = gathered[:, 0, 0]
++        best_i = gathered[:, 0, 1]
++        for r in range(1, tp_size):
++            take = gathered[:, r, 0] > best_v
++            best_v = torch.where(take, gathered[:, r, 0], best_v)
++            best_i = torch.where(take, gathered[:, r, 1], best_i)
++        return best_i.to(torch.int64)
++
+     def get_top_k_tokens(
+         self,
+         lm_head: VocabParallelEmbedding,
+diff --git a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+index bdea28e11a..b9d1070869 100644
+--- a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
++++ b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+@@ -96,6 +96,11 @@ from vllm.v1.attention.backends.gdn_attn import (
+ )
+ from vllm.v1.kv_cache_interface import KVCacheSpec, MambaSpec
+ from vllm.v1.worker.workspace import current_workspace_manager
++from vllm.model_executor.layers.mamba.gdn.replay import (
++    gdn_replay_op_available,
++    get_stats_tensor,
++    gdn_replay_requested,
++)
+ 
+ # Optional ROCm AITER Triton kernels for the GDN decode path.
+ # Availability is checked centrally via rocm_aiter_ops; the actual function
+@@ -884,6 +889,21 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         if self.speculative_config is not None:
+             logger.info_once("GDN spec decode kernel: %s", self.gdn_decode_kernel)
+ 
++        # State checkpoint + replay for the fused spec-decode kernel (see
++        # gdn/replay.py). Flag arrays are attached by GdnReplayRegistry once the
++        # KV cache exists (V2 model runner, align/none mamba cache mode only).
++        self._gdn_replay_capable = bool(
++            gdn_replay_requested()
++            and self.enable_fused_gdn_spec_decode
++            and self.speculative_config is not None
++            and 1 <= self.speculative_config.num_speculative_tokens <= 3
++            and vllm_config.use_v2_model_runner
++            and self.get_state_dtype()[1] == torch.float32
++            and gdn_replay_op_available()
++        )
++        self._gdn_replay_flags: torch.Tensor | None = None
++        self._gdn_replay_layer_tables: tuple | None = None
++
+         compilation_config = get_current_vllm_config().compilation_config
+         if prefix in compilation_config.static_forward_context:
+             raise ValueError(f"Duplicate layer name: {prefix}")
+@@ -1786,6 +1806,7 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+             return
+ 
+         assert isinstance(attn_metadata, GDNAttentionMetadata)
++        self._gdn_replay_flush_layer(attn_metadata)
+ 
+         if (
+             self.enable_packed_recurrent_decode
+@@ -2362,6 +2383,26 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         assert num_accepted_tokens is not None
+ 
+         num_requests = attn_metadata.num_spec_decodes
++        if self._use_gdn_replay(state_indices):
++            ops.fused_gdn_decode_post_conv_mtp_replay(
++                mixed_qkv=mixed_qkv,
++                a=a,
++                b=b,
++                A_log=self.A_log,
++                dt_bias=self.dt_bias,
++                state_indices=state_indices[:num_requests],
++                cu_seqlens=cu_seqlens[: num_requests + 1],
++                num_accepted_tokens=num_accepted_tokens[:num_requests],
++                state=self.kv_cache[1],
++                flags=self._gdn_replay_flags,
++                output_gate=output_gate,
++                norm_weight=self.norm.weight,
++                out=core_attn_out,
++                scale=self.head_k_dim**-0.5,
++                norm_eps=self.layer_norm_epsilon,
++                output_gate_activation=self.norm.activation,
++            )
++            return
+         fused_mtp_decode_impl()(
+             mixed_qkv=mixed_qkv,
+             a=a,
+@@ -2429,6 +2470,53 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+             and supports_fused_mtp_decode()
+         )
+ 
++    def _use_gdn_replay(self, state_indices: torch.Tensor) -> bool:
++        flags = self._gdn_replay_flags
++        return (
++            self._gdn_replay_capable
++            and flags is not None
++            and 2 <= state_indices.size(1) <= 4
++            and self.kv_cache[1].dtype == torch.float32
++        )
++
++    def _gdn_replay_flush_layer(self, attn_metadata: GDNAttentionMetadata) -> None:
++        """Before a non-fused GDN path touches the recurrent state: materialize
++        the committed state of spec requests (stock layout) and invalidate the
++        replay log of every request this path writes."""
++        flags = self._gdn_replay_flags
++        if flags is None:
++            return
++        state = self.kv_cache[1]
++        assert state.shape[0] <= flags.shape[0], "GDN replay flag capacity exceeded"
++        cached = self._gdn_replay_layer_tables
++        if cached is None or cached[0] != (state.data_ptr(), flags.data_ptr()):
++            dev = state.device
++            cached = (
++                (state.data_ptr(), flags.data_ptr()),
++                torch.tensor([state.data_ptr()], dtype=torch.int64, device=dev),
++                torch.tensor([flags.data_ptr()], dtype=torch.int64, device=dev),
++            )
++            self._gdn_replay_layer_tables = cached
++        _, sp, fp = cached
++        stride = state.stride(0)
++        hv = state.shape[1]
++        spec_idx = attn_metadata.spec_state_indices_tensor
++        num_spec = attn_metadata.num_spec_decodes
++        acc = attn_metadata.num_accepted_tokens
++        if spec_idx is not None and acc is not None and num_spec > 0:
++            torch.ops._C.gdn_replay_flush(
++                sp, fp, stride, hv, spec_idx[:num_spec], acc[:num_spec],
++                acc[:num_spec], acc[:num_spec], acc[:num_spec], num_spec, 2, 0, 0,
++                get_stats_tensor(sp.device),
++            )
++        non_spec = attn_metadata.non_spec_state_indices_tensor
++        if non_spec is not None and non_spec.numel() > 0:
++            keys = non_spec.to(torch.int32).contiguous()
++            torch.ops._C.gdn_replay_flush(
++                sp, fp, stride, hv, keys, keys, keys, keys, keys,
++                keys.numel(), 3, 0, 0, get_stats_tensor(sp.device),
++            )
++
+     def _rms_norm_gated_cuda(
+         self,
+         x: torch.Tensor,
+diff --git a/vllm/model_executor/layers/mamba/gdn/replay.py b/vllm/model_executor/layers/mamba/gdn/replay.py
+new file mode 100644
+index 0000000000..d554e6e5c6
+--- /dev/null
++++ b/vllm/model_executor/layers/mamba/gdn/replay.py
+@@ -0,0 +1,173 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""GDN spec-decode "checkpoint + replay" bookkeeping.
++
++The fused spec-decode kernel (``fused_gdn_decode_post_conv_mtp_replay``) keeps one
++committed recurrent state per request (block-table slot S[0]) plus a log of the
++last step's per-token recurrence inputs (slot S[1]) instead of storing the state
++after every token. The state that stock code expects at slot S[accepted - 1] is
++only materialized on demand by ``gdn_replay_flush``: before any code outside the
++fused kernel reads or copies the state (prefix-cache align copies, the non-fused
++GDN paths).  A per-(block, value head) byte holds the number of logged tokens
++(0 = no valid log).
++"""
++
++import os
++
++import torch
++
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++# Upper bound on the number of state blocks (the KV cache may grow after CUDA
++# graph capture, so the flag arrays are sized once, generously).
++FLAGS_CAPACITY_BLOCKS = 8192
++
++
++_STATS: dict = {}
++
++
++def stats_enabled() -> bool:
++    return os.environ.get("VLLM_GDN_REPLAY_STATS", "0") == "1"
++
++
++def get_stats_tensor(device) -> torch.Tensor:
++    """int64[4] counters of flush blocks that materialized something, per mode
++    (0 pre-copy, 1 post-copy, 2 layer-spec, 3 layer-clear of a live log). Empty
++    tensor (= disabled) unless VLLM_GDN_REPLAY_STATS=1."""
++    t = _STATS.get(device)
++    if t is None:
++        t = torch.zeros(4 if stats_enabled() else 0, dtype=torch.int64, device=device)
++        _STATS[device] = t
++    return t
++
++
++def gdn_replay_requested() -> bool:
++    return os.environ.get("VLLM_GDN_REPLAY", "1") not in ("0", "false", "False")
++
++
++def gdn_replay_op_available() -> bool:
++    return hasattr(torch.ops._C, "gdn_replay_flush") and hasattr(
++        torch.ops._C, "fused_gdn_decode_post_conv_mtp_replay"
++    )
++
++
++def _is_gdn_layer(layer: object) -> bool:
++    return hasattr(layer, "_gdn_replay_capable") and layer._gdn_replay_capable
++
++
++class GdnReplayRegistry:
++    """Flag arrays + batched flush over all replay-capable GDN layers."""
++
++    def __init__(self, forward_context: dict, kv_cache_config=None) -> None:
++        # Group layers by KV cache group (each group has its own block table).
++        name_to_group: dict[str, int] = {}
++        if kv_cache_config is not None:
++            for gid, group in enumerate(kv_cache_config.kv_cache_groups):
++                for name in group.layer_names:
++                    name_to_group[name] = gid
++        self.groups: dict[int, list] = {}
++        for name, layer in forward_context.items():
++            if not _is_gdn_layer(layer) or not hasattr(layer, "kv_cache"):
++                continue
++            state = layer.kv_cache[1]
++            hv = state.shape[1]
++            if layer._gdn_replay_flags is None:
++                layer._gdn_replay_flags = torch.zeros(
++                    max(FLAGS_CAPACITY_BLOCKS, state.shape[0]),
++                    hv,
++                    dtype=torch.uint8,
++                    device=state.device,
++                )
++            self.groups.setdefault(name_to_group.get(name, 0), []).append(layer)
++        self.hv = hv if self.groups else 0
++        self._tables: dict[int, tuple] = {}
++        self._calls = 0
++        # Capacity is fixed for the whole run; the KV cache must never outgrow it.
++        self.capacity = min(
++            layer._gdn_replay_flags.shape[0]
++            for layers in self.groups.values()
++            for layer in layers
++        )
++        self.num_layers = sum(len(v) for v in self.groups.values())
++        logger.info_once(
++            "GDN replay (state checkpoint + replay) enabled for %d layers",
++            self.num_layers,
++        )
++
++    def _group_tables(self, gid: int):
++        layers = self.groups[gid]
++        ptrs = tuple(layer.kv_cache[1].data_ptr() for layer in layers)
++        cached = self._tables.get(gid)
++        if cached is not None and cached[0] == ptrs:
++            return cached[1], cached[2], cached[3]
++        dev = layers[0].kv_cache[1].device
++        stride = layers[0].kv_cache[1].stride(0)
++        sp = torch.tensor(ptrs, dtype=torch.int64, device=dev)
++        fp = torch.tensor(
++            [layer._gdn_replay_flags.data_ptr() for layer in layers],
++            dtype=torch.int64,
++            device=dev,
++        )
++        self._tables[gid] = (ptrs, sp, fp, stride)
++        return sp, fp, stride
++
++    def flush(
++        self,
++        mode: int,
++        block_tables: dict[int, torch.Tensor],
++        idx_mapping: torch.Tensor,
++        num_reqs: int,
++        p0: torch.Tensor,
++        p1: torch.Tensor,
++        p2: torch.Tensor,
++        block_size: int,
++    ) -> None:
++        if num_reqs == 0:
++            return
++        for layers in self.groups.values():
++            assert layers[0].kv_cache[1].shape[0] <= self.capacity, (
++                "GDN replay flag capacity exceeded by the KV cache"
++            )
++        if idx_mapping.dtype != torch.int32:
++            idx_mapping = idx_mapping.to(torch.int32)
++        for gid in self.groups:
++            sp, fp, stride = self._group_tables(gid)
++            torch.ops._C.gdn_replay_flush(
++                sp,
++                fp,
++                stride,
++                self.hv,
++                block_tables[gid],
++                idx_mapping,
++                p0,
++                p1,
++                p2,
++                num_reqs,
++                mode,
++                block_size,
++                1,
++                get_stats_tensor(sp.device),
++            )
++        self._calls += 1
++        if stats_enabled() and mode == 1 and self._calls % 20 == 0:
++            logger.info("GDN replay flush stats [pre,post,layer_spec,layer_clear]: %s",
++                        get_stats_tensor(idx_mapping.device).tolist())
++
++    def flush_pre(self, block_tables, idx_mapping, num_reqs, src_col, state_idx,
++                  src_off, block_size) -> None:
++        self.flush(0, block_tables, idx_mapping, num_reqs, src_col, state_idx,
++                   src_off, block_size)
++
++    def flush_post(self, block_tables, idx_mapping, num_reqs, num_accepted,
++                   state_idx, new_num_computed, block_size) -> None:
++        self.flush(1, block_tables, idx_mapping, num_reqs, num_accepted,
++                   state_idx, new_num_computed, block_size)
++
++
++def get_registry(forward_context: dict, kv_cache_config=None):
++    if not gdn_replay_requested() or not gdn_replay_op_available():
++        return None
++    reg = GdnReplayRegistry(forward_context, kv_cache_config)
++    return reg if reg.num_layers > 0 else None
+diff --git a/vllm/model_executor/layers/quantization/online/lm_head.py b/vllm/model_executor/layers/quantization/online/lm_head.py
+index 26728ed388..6c81f9fc63 100644
+--- a/vllm/model_executor/layers/quantization/online/lm_head.py
++++ b/vllm/model_executor/layers/quantization/online/lm_head.py
+@@ -203,3 +203,55 @@ def restore_quantized_lm_heads(model: Module, refresh: bool = True) -> None:
+         setattr(module, name, head)
+     if refresh:
+         refresh_quantized_lm_heads(model)
++
++
++@torch.no_grad()
++def vocab_subset_lm_head_copy(
++    lm_head: ParallelLMHead,
++    num_rows: int,
++    quantization: Literal["fp8", "nvfp4"] | None,
++    chunk_rows: int = 8192,
++) -> ParallelLMHead:
++    """A ParallelLMHead over the first `num_rows` token ids of `lm_head`,
++    re-sharded over the TP ranks (optionally quantized). Row i is token i, so
++    its argmax is a token id of the full vocab."""
++    from vllm.distributed import tensor_model_parallel_all_reduce
++
++    dtype = lm_head.weight.dtype
++    num_rows = min(num_rows, lm_head.org_vocab_size)
++    with set_default_torch_dtype(dtype):
++        sub = ParallelLMHead(
++            num_rows,
++            lm_head.embedding_dim,
++            params_dtype=dtype,
++            padding_size=lm_head.padding_size,
++            prefix=lm_head.prefix + ".vocab_subset",
++            disable_tp=lm_head.disable_tp,
++        )
++    sub = sub.to(lm_head.weight.device)
++    src, dst = lm_head.shard_indices, sub.shard_indices
++    sub.weight.data.zero_()
++    for c0 in range(0, num_rows, chunk_rows):
++        c1 = min(num_rows, c0 + chunk_rows)
++        buf = torch.zeros(c1 - c0, lm_head.embedding_dim, dtype=dtype,
++                          device=lm_head.weight.device)
++        a, b = max(c0, src.org_vocab_start_index), min(c1, src.org_vocab_end_index)
++        if a < b:
++            off = src.org_vocab_start_index
++            buf[a - c0 : b - c0] = lm_head.weight.data[a - off : b - off]
++        if not lm_head.disable_tp and lm_head.tp_size > 1:
++            # Owners are disjoint: summing with zeros copies exactly.
++            buf = tensor_model_parallel_all_reduce(buf)
++        a, b = max(c0, dst.org_vocab_start_index), min(c1, dst.org_vocab_end_index)
++        if a < b:
++            off = dst.org_vocab_start_index
++            sub.weight.data[a - off : b - off] = buf[a - c0 : b - c0]
++    if quantization is not None:
++        sub = _quantize_copy(sub, quantization)
++    get_layerwise_info(sub).reset()
++    logger.info(
++        "Drafter lm_head over the first %d token ids (%d x %d per rank, %s).",
++        num_rows, sub.output_size_per_partition if hasattr(sub, "output_size_per_partition") else dst.num_org_elements,
++        lm_head.embedding_dim, quantization or dtype,
++    )
++    return sub
+diff --git a/vllm/models/qwen3_5/nvidia/model.py b/vllm/models/qwen3_5/nvidia/model.py
+index be483f5a88..f2df35b149 100644
+--- a/vllm/models/qwen3_5/nvidia/model.py
++++ b/vllm/models/qwen3_5/nvidia/model.py
+@@ -766,6 +766,10 @@ class Qwen3_5ForCausalLMBase(
+     ) -> torch.Tensor:
+         return self.logits_processor(self.lm_head, hidden_states, skip_gather=True)
+ 
++    def compute_greedy_tokens(self, hidden_states: torch.Tensor) -> torch.Tensor | None:
++        """Greedy ids of ``compute_logits`` without gathering full logits."""
++        return self.logits_processor.get_greedy_tokens(self.lm_head, hidden_states)
++
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         loader = AutoWeightsLoader(self)
+         return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+@@ -915,6 +919,9 @@ class Qwen3_5ForConditionalGeneration(Qwen3VLForConditionalGeneration, IsHybrid)
+     def compute_logits_local(self, hidden_states: torch.Tensor) -> torch.Tensor:
+         return self.language_model.compute_logits_local(hidden_states)
+ 
++    def compute_greedy_tokens(self, hidden_states: torch.Tensor) -> torch.Tensor | None:
++        return self.language_model.compute_greedy_tokens(hidden_states)
++
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         loader = AutoWeightsLoader(self)
+         return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+index 5286d9008d..b657cd5a4a 100644
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -18,6 +18,7 @@ instead of embedding feature-specific logic directly.
+ 
+ import functools
+ import gc
++import os
+ import time
+ from collections.abc import Iterable
+ from contextlib import AbstractContextManager, nullcontext
+@@ -198,6 +199,15 @@ from vllm.v1.worker.workspace import lock_workspace, use_workspace_lane
+ 
+ logger = init_logger(__name__)
+ 
++# TEST ONLY, off by default and not used in serving: with
++# VLLM_TEST_GREEDY_IDS_CHECK=1 the greedy local-argmax verification also runs the
++# full-logits path every step and counts mismatches.
++_GREEDY_IDS_CHECK = os.environ.get("VLLM_TEST_GREEDY_IDS_CHECK", "0") == "1"
++_GREEDY_IDS_STATS = [0, 0, 0, 0]  # steps, rows, mismatches, tied rows
++from vllm.v1.worker.gpu.model_states.interface import ModelState as _ModelState  # noqa: E402
++
++_DEFAULT_COMPUTE_SAMPLE_LOGITS = _ModelState.compute_sample_logits
++
+ 
+ class GPUModelRunner(LoRAModelRunnerMixin):
+     def __init__(self, vllm_config: VllmConfig, device: torch.device):
+@@ -345,6 +355,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         # Samplers and decode_query_len created in load_model() after
+         # model_state exists (num_new_sampled_tokens_per_step from ModelState).
+         self.sampler: Sampler | None = None
++        self._greedy_ids_disabled = False
+         self.rejection_sampler: RejectionSampler | None = None
+         self.batch_sharder: BatchSharder | None = None
+         self.prompt_logprobs_worker: PromptLogprobsWorker | None = None
+@@ -1698,6 +1709,106 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         )
+         return block_tables, slot_mappings
+ 
++    def _greedy_ids_eligible(
++        self, input_batch: InputBatch, grammar_output: GrammarOutput | None
++    ) -> bool:
++        """All-greedy spec-decode batch where nothing reads the full logits."""
++        if _GREEDY_IDS_CHECK and not getattr(self, "_gv_dbg", False):
++            self._gv_dbg = True
++            logger.info(
++                "GREEDY_IDS_CHECK conds: disabled=%s grammar=%s ndraft=%s rs=%s "
++                "sampler=%s sharder=%s hasattr=%s default_csl=%s rs_ok=%s",
++                self._greedy_ids_disabled,
++                grammar_output is not None,
++                input_batch.num_draft_tokens,
++                self.rejection_sampler is not None,
++                self.sampler is not None,
++                self.batch_sharder is not None,
++                hasattr(self.model, "compute_greedy_tokens"),
++                type(self.model_state).compute_sample_logits
++                is _DEFAULT_COMPUTE_SAMPLE_LOGITS,
++                self.rejection_sampler is not None
++                and self.rejection_sampler.supports_greedy_ids(),
++            )
++        if (
++            self._greedy_ids_disabled
++            or grammar_output is not None
++            or input_batch.num_draft_tokens == 0
++            or self.rejection_sampler is None
++            or self.sampler is None
++            or self.batch_sharder is not None
++            or not hasattr(self.model, "compute_greedy_tokens")
++            or type(self.model_state).compute_sample_logits
++            is not _DEFAULT_COMPUTE_SAMPLE_LOGITS
++            or not self.rejection_sampler.supports_greedy_ids()
++        ):
++            return False
++        return self.sampler.all_pure_greedy(input_batch.idx_mapping_np)
++
++    def _try_greedy_ids_sample(
++        self,
++        sample_hidden_states: torch.Tensor,
++        input_batch: InputBatch,
++        grammar_output: GrammarOutput | None,
++    ) -> SamplerOutput | None:
++        """Greedy verification from vocab-parallel local argmax (no full logits).
++
++        Picks the same ids as the full-logits greedy path (first index on ties,
++        vocab padding excluded). Returns None to fall back to the full path.
++        """
++        if not self._greedy_ids_eligible(input_batch, grammar_output):
++            return None
++        target_ids = self.model.compute_greedy_tokens(sample_hidden_states)
++        if target_ids is None:
++            self._greedy_ids_disabled = True
++            return None
++        assert self.rejection_sampler is not None
++        out = self.rejection_sampler.verify_greedy_ids(target_ids, input_batch)
++        if _GREEDY_IDS_CHECK:
++            # TEST ONLY (VLLM_TEST_GREEDY_IDS_CHECK=1): also run the full-logits
++            # path and compare. Costs the full gather; never enabled in serving.
++            logits = self.model_state.compute_sample_logits(sample_hidden_states)
++            ref = self.rejection_sampler(
++                logits, input_batch, self.speculator.draft_logits
++            )
++            n = out.num_sampled.shape[0]
++            bad_ns = int((out.num_sampled != ref.num_sampled).sum().item())
++            cols = torch.arange(
++                out.sampled_token_ids.shape[1], device=out.sampled_token_ids.device
++            )
++            valid = cols[None, :] < ref.num_sampled.view(-1, 1)
++            # num_sampled from get_num_sampled_and_rejected may differ in
++            # meaning from the raw count; compare tokens on the reference span.
++            bad_tok = int(
++                (
++                    (out.sampled_token_ids != ref.sampled_token_ids) & valid
++                )
++                .any(dim=1)
++                .sum()
++                .item()
++            )
++            bad_rej = int((out.num_rejected != ref.num_rejected).sum().item())
++            _GREEDY_IDS_STATS[0] += 1
++            _GREEDY_IDS_STATS[1] += logits.shape[0]
++            _GREEDY_IDS_STATS[2] += bad_ns + bad_tok + bad_rej
++            _mx = logits.max(dim=-1, keepdim=True).values
++            _GREEDY_IDS_STATS[3] += int(((logits == _mx).sum(dim=-1) > 1).sum().item())
++            if bad_ns + bad_tok + bad_rej:
++                logger.error(
++                    "GREEDY_IDS_CHECK MISMATCH: num_sampled=%d tokens=%d "
++                    "num_rejected=%d (of %d reqs)",
++                    bad_ns,
++                    bad_tok,
++                    bad_rej,
++                    n,
++                )
++            if _GREEDY_IDS_STATS[0] % 200 == 0:
++                logger.info(
++                    "GREEDY_IDS_CHECK steps=%d rows=%d mismatches=%d tied_rows=%d",
++                    *_GREEDY_IDS_STATS,
++                )
++        return out
++
+     def sample(
+         self,
+         hidden_states: torch.Tensor,
+@@ -1725,6 +1836,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+             logits = logits[:, : self.vocab_size]
+         else:
+             sample_hidden_states = hidden_states[input_batch.logits_indices]
++            greedy_out = self._try_greedy_ids_sample(
++                sample_hidden_states, input_batch, grammar_output
++            )
++            if greedy_out is not None:
++                return greedy_out, greedy_out.num_sampled, greedy_out.num_rejected
+             logits = self.model_state.compute_sample_logits(sample_hidden_states)
+ 
+         # A diffusion prefill has no logit rows even when a bitmask row
+diff --git a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
+index d97672d163..ee46f3439d 100644
+--- a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
++++ b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
+@@ -76,6 +76,14 @@ class MambaHybridAttnMetadata(ModelSpecificAttnMetadata):
+         }
+ 
+ 
++try:
++    from vllm.model_executor.layers.mamba.gdn.replay import (
++        get_registry as get_gdn_replay_registry,
++    )
++except ImportError:  # pragma: no cover
++    get_gdn_replay_registry = None
++
++
+ class MambaHybridModelState(DefaultModelState):
+     """Model state for hybrid attention + Mamba / linear-attention models."""
+ 
+@@ -98,6 +106,7 @@ class MambaHybridModelState(DefaultModelState):
+         # running state_idx are kept GPU-resident.
+         self._align_mode = self.cache_config.mamba_cache_mode == "align"
+         self._use_flashinfer_replayssm = vllm_config.use_flashinfer_replayssm
++        self._gdn_replay = None
+         if self._use_flashinfer_replayssm:
+             self._is_prefilling_gpu = torch.zeros(
+                 self.max_num_reqs, dtype=torch.bool, device=self.device
+@@ -160,6 +169,17 @@ class MambaHybridModelState(DefaultModelState):
+                 kv_cache_config,
+                 self.vllm_config.compilation_config.static_forward_context,
+             )
++        self._gdn_replay = None
++        if get_gdn_replay_registry is not None:
++            self._gdn_replay = get_gdn_replay_registry(
++                self.vllm_config.compilation_config.static_forward_context,
++                kv_cache_config,
++            )
++            if self._gdn_replay is not None:
++                self._gdn_replay_bt = {
++                    gid: block_tables.block_tables[gid].gpu
++                    for gid in self._gdn_replay.groups
++                }
+         if not (self._align_mode or self._use_flashinfer_replayssm):
+             return
+         mamba_group_ids, _ = self._get_mamba_group_info(kv_cache_config)
+@@ -242,6 +262,17 @@ class MambaHybridModelState(DefaultModelState):
+                 dst_cols=self._mamba_state_idx_gpu,
+                 num_reqs=num_reqs,
+             )
++        if self._gdn_replay is not None:
++            # Materialize the stock-layout state the copy below will read.
++            self._gdn_replay.flush_pre(
++                self._gdn_replay_bt,
++                input_batch.idx_mapping,
++                num_reqs,
++                self._mamba_src_col_gpu,
++                self._mamba_state_idx_gpu,
++                self._mamba_src_off_gpu,
++                mamba_spec.block_size,
++            )
+         ctx.run_fused_precopy(
+             num_reqs,
+             self._mamba_state_idx_gpu,
+@@ -434,6 +465,16 @@ class MambaHybridModelState(DefaultModelState):
+             and num_computed_tokens is not None
+             and self._mamba_ctx is not None
+         ):
++            if self._gdn_replay is not None:
++                self._gdn_replay.flush_post(
++                    self._gdn_replay_bt,
++                    idx_mapping,
++                    num_reqs,
++                    self.num_accepted_tokens_gpu,
++                    self._mamba_state_idx_gpu,
++                    num_computed_tokens,
++                    self._mamba_ctx.block_size,
++                )
+             self._mamba_ctx.run_fused_postprocess_align(
+                 num_reqs,
+                 self.num_accepted_tokens_gpu,
+diff --git a/vllm/v1/worker/gpu/sample/greedy_argmax.py b/vllm/v1/worker/gpu/sample/greedy_argmax.py
+index 8809e0b322..0629427c79 100644
+--- a/vllm/v1/worker/gpu/sample/greedy_argmax.py
++++ b/vllm/v1/worker/gpu/sample/greedy_argmax.py
+@@ -64,3 +64,43 @@ def greedy_argmax(logits: torch.Tensor) -> torch.Tensor:
+         values, indices, out, splits, triton.next_power_of_2(splits), num_warps=1
+     )
+     return out
++
++
++@triton.jit
++def _argmax_finish_value(
++    PV, PI, OUT_V, OUT_I, SPLITS: tl.constexpr, BLOCK: tl.constexpr
++):
++    row = tl.program_id(0)
++    col = tl.arange(0, BLOCK)
++    value = tl.load(PV + row * SPLITS + col, col < SPLITS, float("-inf"))
++    part = tl.argmax(value, axis=0)
++    tl.store(OUT_V + row, tl.max(value, axis=0))
++    tl.store(OUT_I + row, tl.load(PI + row * SPLITS + part))
++
++
++def greedy_argmax_with_value(
++    logits: torch.Tensor, num_valid: int
++) -> tuple[torch.Tensor, torch.Tensor]:
++    """(max, argmax) over the first ``num_valid`` columns of each row.
++
++    Same pick as ``greedy_argmax`` restricted to ``logits[:, :num_valid]``: first
++    index on ties, NaN treated as -inf, all -inf rows give index 0. Returns
++    float32 values and int32 indices (relative to column 0).
++    """
++    rows, vocab = logits.shape
++    assert logits.stride(1) == 1 and 0 <= num_valid <= vocab
++    vals = torch.empty(rows, dtype=torch.float32, device=logits.device)
++    idx = torch.empty(rows, dtype=torch.int32, device=logits.device)
++    if rows == 0:
++        return vals, idx
++    block = 4096
++    splits = max(1, triton.cdiv(num_valid, block))
++    pv = torch.empty((rows, splits), dtype=torch.float32, device=logits.device)
++    pi = torch.empty((rows, splits), dtype=torch.int32, device=logits.device)
++    _argmax_partial[(rows, splits)](
++        logits, pv, pi, num_valid, logits.stride(0), splits, block, num_warps=4
++    )
++    _argmax_finish_value[(rows,)](
++        pv, pi, vals, idx, splits, triton.next_power_of_2(splits), num_warps=1
++    )
++    return vals, idx
+diff --git a/vllm/v1/worker/gpu/sample/sampler.py b/vllm/v1/worker/gpu/sample/sampler.py
+index 7fe9806ddf..d19adbe344 100644
+--- a/vllm/v1/worker/gpu/sample/sampler.py
++++ b/vllm/v1/worker/gpu/sample/sampler.py
+@@ -86,6 +86,10 @@ class Sampler:
+         # Whether processing may leave -inf in a request's logits (filters,
+         # forcing, logits processors) rather than only scale them.
+         self.may_mask_logits = np.zeros(max_num_reqs, dtype=bool)
++        # Greedy requests whose logits nothing reads or modifies besides the
++        # argmax: temperature 0, no logits processing, no logprobs of any kind.
++        # Lets verification take token ids from a vocab-parallel local argmax.
++        self.pure_greedy = np.zeros(max_num_reqs, dtype=bool)
+         self.num_speculative_tokens = num_speculative_tokens
+         self.return_sampling_mask = return_sampling_mask
+         self.use_flashinfer = (
+@@ -104,11 +108,27 @@ class Sampler:
+             may_mask |= processor.add_request(req_idx, sampling_params)
+         self.needs_logits_processing[req_idx] = needs_processing or may_mask
+         self.may_mask_logits[req_idx] = may_mask
++        self.pure_greedy[req_idx] = (
++            sampling_params.temperature == 0.0
++            and not self.needs_logits_processing[req_idx]
++            and sampling_params.logprobs is None
++            and not sampling_params.logprob_token_ids
++            and sampling_params.prompt_logprobs is None
++        )
+ 
+         self.logprob_token_ids_state.add_request(req_idx, sampling_params)
+         if self.trace_replay_state is not None:
+             self.trace_replay_state.add_request(req_idx, sampling_params)
+ 
++    def all_pure_greedy(self, idx_mapping_np: np.ndarray) -> bool:
++        """Every request is greedy with nothing but the argmax reading its logits.
++
++        Custom logits processors may touch any request, so they disable it.
++        """
++        return len(self.logits_processors) == 3 and bool(
++            np.all(self.pure_greedy[idx_mapping_np])
++        )
++
+     def apply_staged_writes(self) -> None:
+         self.sampling_states.apply_staged_writes()
+         for processor in self.logits_processors:
+diff --git a/vllm/v1/worker/gpu/spec_decode/eagle/config.py b/vllm/v1/worker/gpu/spec_decode/eagle/config.py
+index 8f46445430..f93172c5a3 100644
+--- a/vllm/v1/worker/gpu/spec_decode/eagle/config.py
++++ b/vllm/v1/worker/gpu/spec_decode/eagle/config.py
+@@ -34,7 +34,9 @@ def check_draft_lm_head_quantization(spec: SpeculativeConfig) -> None:
+ class EagleSpeculatorConfig(DraftModelSpeculatorConfig):
+     base_method = "eagle"
+     speculator_class = "vllm.v1.worker.gpu.spec_decode.eagle.speculator.EagleSpeculator"
+-    supported_options = frozenset({"draft_lm_head_quantization"})
++    supported_options = frozenset(
++        {"draft_lm_head_quantization", "draft_lm_head_vocab_size"}
++    )
+     uses_target_hidden_states = True
+     supports_watermarking = True
+ 
+diff --git a/vllm/v1/worker/gpu/spec_decode/eagle/utils.py b/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
+index 8cba9af864..1cbb0a24e6 100644
+--- a/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
++++ b/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
+@@ -10,6 +10,7 @@ from vllm.distributed.parallel_state import get_pp_group
+ from vllm.lora.layers.base import BaseLayerWithLoRA
+ from vllm.model_executor.layers.quantization.online.lm_head import (
+     quantized_lm_head_copy,
++    vocab_subset_lm_head_copy,
+ )
+ from vllm.model_executor.model_loader import get_model
+ from vllm.model_executor.model_loader.utils import get_draft_load_config
+@@ -47,6 +48,7 @@ def share_target_lm_head(
+     target_lm_head: nn.Module | None,
+     quantization: Literal["fp8", "nvfp4"] | None,
+     can_share: bool = True,
++    vocab_size: int | None = None,
+ ) -> nn.Module | None:
+     """Install the target lm_head, or its quantized copy, on a drafter that
+     shares it. Returns the installed head, or None if the drafter keeps its own.
+@@ -64,7 +66,9 @@ def share_target_lm_head(
+             )
+         return None
+     head = target_lm_head
+-    if quantization is not None:
++    if vocab_size is not None:
++        head = vocab_subset_lm_head_copy(target_lm_head, vocab_size, quantization)
++    elif quantization is not None:
+         head = quantized_lm_head_copy(target_lm_head, quantization)
+     if draft_lm_head is not None:
+         del draft_model.lm_head
+@@ -146,6 +150,7 @@ def load_eagle_model(target_model: nn.Module, vllm_config: VllmConfig) -> nn.Mod
+         eagle_model,
+         get_target_lm_head(target_model, target_language_model),
+         speculative_config.draft_lm_head_quantization,
++        vocab_size=speculative_config.draft_lm_head_vocab_size,
+     )
+     if draft_head is not None:
+         # MTP layers route logits through layer.shared_head.head, not
+diff --git a/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py b/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
+index f5f40ea271..b5277fdef0 100644
+--- a/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
++++ b/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
+@@ -22,6 +22,7 @@ from vllm.v1.worker.gpu.sample.output import SamplerOutput, SamplingMaskTensors
+ from vllm.v1.worker.gpu.sample.sampler import Sampler
+ from vllm.v1.worker.gpu.spec_decode.draft_logits import DraftLogitsCache
+ from vllm.v1.worker.gpu.spec_decode.rejection_sampler_utils import (
++    greedy_ids_rejection_sample,
+     rejection_sample,
+ )
+ 
+@@ -421,6 +422,57 @@ class RejectionSampler:
+         )
+         return sampled, num_sampled, logprobs_tensors, sampling_mask_tensors
+ 
++    def supports_greedy_ids(self) -> bool:
++        """Whether verification can run from precomputed greedy target ids."""
++        return (
++            self.watermark_key is None
++            and self.synthetic_conditional_rates is None
++            and not self.use_block_verification
++            and self.fly_window_size == 0
++            and not self.enable_adaptive_verification
++            and not self.sampler.compute_nans
++            and not self.sampler.return_sampling_mask
++            and self.sampler.trace_replay_state is None
++        )
++
++    def verify_greedy_ids(
++        self, target_ids: torch.Tensor, input_batch: InputBatch
++    ) -> SamplerOutput:
++        """Verify drafts of an all-greedy batch given the target argmax ids.
++
++        Same result as ``__call__`` on the logits those ids were taken from,
++        when every request is greedy with no logits processing and no logprobs.
++        """
++        draft_sampled, _ = gather_draft_sampled(
++            input_batch.input_ids,
++            input_batch.positions,
++            input_batch.logits_indices,
++            input_batch.expanded_idx_mapping,
++            input_batch.expanded_local_pos,
++            self.sampler.req_states.prefill_len.gpu,
++        )
++        sampled, num_sampled = greedy_ids_rejection_sample(
++            target_ids,
++            draft_sampled,
++            input_batch.cu_num_logits,
++            self.num_speculative_steps,
++        )
++        num_sampled, num_rejected = get_num_sampled_and_rejected(
++            num_sampled,
++            input_batch.seq_lens,
++            input_batch.cu_num_logits,
++            input_batch.idx_mapping,
++            self.sampler.req_states.prefill_len.gpu,
++        )
++        return SamplerOutput(
++            sampled_token_ids=sampled,
++            logprobs_tensors=None,
++            num_nans=None,
++            num_sampled=num_sampled,
++            num_rejected=num_rejected,
++            sampling_mask_tensors=None,
++        )
++
+     def __call__(
+         self,
+         logits: torch.Tensor,
+diff --git a/vllm/v1/worker/gpu/spec_decode/rejection_sampler_utils.py b/vllm/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
+index 9377927856..8254cd0b5f 100644
+--- a/vllm/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
++++ b/vllm/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
+@@ -1460,3 +1460,66 @@ def rejection_sample(
+         PADDED_RESAMPLE_NUM_BLOCKS=padded_resample_num_blocks,
+     )
+     return sampled, num_sampled
++
++
++@triton.jit
++def _greedy_ids_rejection_kernel(
++    # [num_reqs, num_speculative_steps + 1]
++    sampled_ptr,
++    sampled_stride,
++    # [num_reqs]
++    num_sampled_ptr,
++    # [num_logits] target argmax of every logits row
++    target_ids_ptr,
++    # [num_logits]
++    draft_sampled_ptr,
++    # [num_reqs + 1]
++    cu_num_logits_ptr,
++):
++    req_idx = tl.program_id(0)
++    start_idx = tl.load(cu_num_logits_ptr + req_idx).to(tl.int64)
++    end_idx = tl.load(cu_num_logits_ptr + req_idx + 1).to(tl.int64)
++    num_draft_tokens = end_idx - start_idx - 1
++    accepted_length = tl.zeros((), tl.int64)
++    verifying = True
++    for i in range(num_draft_tokens):
++        if verifying:
++            draft = tl.load(draft_sampled_ptr + start_idx + i + 1).to(tl.int64)
++            target = tl.load(target_ids_ptr + start_idx + i).to(tl.int64)
++            # -1 placeholder drafts are rejected.
++            accepted = (target == tl.maximum(0, draft)) & (draft >= 0)
++            # Accepted: sampled == draft == target; rejected: the target.
++            tl.store(sampled_ptr + req_idx * sampled_stride + i, target)
++            verifying = accepted
++            accepted_length += accepted
++    # Rejected position (correction) or bonus: the target argmax there.
++    final = tl.load(target_ids_ptr + start_idx + accepted_length).to(tl.int64)
++    tl.store(sampled_ptr + req_idx * sampled_stride + accepted_length, final)
++    tl.store(num_sampled_ptr + req_idx, (accepted_length + 1).to(tl.int32))
++
++
++def greedy_ids_rejection_sample(
++    target_ids: torch.Tensor,  # [num_logits]
++    draft_sampled: torch.Tensor,  # [num_logits]
++    cu_num_logits: torch.Tensor,  # [num_reqs + 1]
++    num_speculative_steps: int,
++) -> tuple[torch.Tensor, torch.Tensor]:
++    """Greedy verification from precomputed target argmax ids.
++
++    Equivalent to ``rejection_sample`` when every request is greedy.
++    """
++    num_reqs = cu_num_logits.shape[0] - 1
++    sampled = draft_sampled.new_empty(
++        num_reqs, num_speculative_steps + 1, dtype=torch.int64
++    )
++    num_sampled = sampled.new_empty(num_reqs, dtype=torch.int32)
++    _greedy_ids_rejection_kernel[(num_reqs,)](
++        sampled,
++        sampled.stride(0),
++        num_sampled,
++        target_ids,
++        draft_sampled,
++        cu_num_logits,
++        num_warps=1,
++    )
++    return sampled, num_sampled

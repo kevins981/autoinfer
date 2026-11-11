@@ -1,0 +1,19 @@
+{
+  "id": 409,
+  "pid": 281237,
+  "team": "T44",
+  "agent": "leader-44.w1",
+  "label": null,
+  "timeout_min": 3.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-44.w1/s4/job_quick.sh",
+    "out4"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-44.w1/s4",
+  "submitted": "2026-11-11T03:01:52+00:00",
+  "state": "done",
+  "started": "2026-11-11T03:06:18+00:00",
+  "ended": "2026-11-11T03:06:24+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.1
+}

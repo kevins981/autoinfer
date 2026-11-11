@@ -1,0 +1,19 @@
+{
+  "id": 366,
+  "pid": 93189,
+  "team": "T37",
+  "agent": "leader-37",
+  "label": "t37-prof-node",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "agents/leader-37/jobs/prof.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T21:28:04+00:00",
+  "state": "done",
+  "started": "2026-11-10T21:28:04+00:00",
+  "ended": "2026-11-10T21:30:58+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.897
+}

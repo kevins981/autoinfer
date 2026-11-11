@@ -1,0 +1,9 @@
+team:         T33
+builds_on:    T33-003 (kernel ov4 c21 S4 mbarrier) on T31's chain harness
+performance:  "chain microbench (job 325): overlapped gate_up kernel -6.4/-5.7 us per layer vs Marlin at the champion's hint-48 prefetch (gu 81.6/84.4 vs 88.0/90.1); with all four GEMMs at 0.875x bytes (decode free) layer 241.9/246.9 vs champion-like 272.2/274.2 (-30/-27 us)"
+summary:
+  hypothesis: the stream/MMA-overlapped gate_up kernel beats Marlin in situ (real AR, hint prefetch), and its gain grows with fewer weight bytes.
+  change:     agents/leader-33.w1/ov4.cu: 128 CTAs x 136 cols, 4 producer + 17 consumer warps (1 n8 tile each, 3 m16 tiles, B reuse x3), S=4 mbarrier ring, A plain row-major via cp.async, B stage-major [kblock][cta][tile] so the first X MB = prefix of every CTA's K range. Standalone (jobs 322/323): cold 101.6/100.7, pf48 71.4/66.8, pf24 85.8/82.8, 0.875x+pf48 59.5/54.8. Chain plugin (ch/plug_ov4_*.py) replacing gu only; out/down/qkvz on t31b (champion-like).
+  results:    Observed (job 325, rank0/rank1 us): pf48: marlin gu 88.0/90.1, ov4 gu 81.6/84.4, ov4@0.875 68.8/71.4; layer totals marlin-all 287.2/288.9, ov4_100 265.8/268.5, ov4_88 253.0/255.6, ov4_88_88 (all four at 0.875) 241.9/246.9. Champion-like (t31b + Marlin gu) derived = 272.2/274.2. pf24: ov4 gu 93.8/92.9 vs marlin 97.4/96.7. PF0: 108.4/107.5 vs 111.6/110.3. Chain gu ~10 us above standalone pf48.
+  conclusion: Interpretation: overlap alone is worth only ~-6 us/layer (~-0.4 ms/step, ~+1% e2e) in situ: the kernel is stream-bound + ~10 us. The byte lever is large once the kernel is stream-bound: -12.5% bytes on all four GEMMs (decode free) gives -27..-30 us/layer (~-1.8 ms/step, ~+5% e2e at a 65% decode share). The real code (0.889-0.895) and its decode cost decide the direction (W1-4).
+validity:     microbench only; random data, timing only.

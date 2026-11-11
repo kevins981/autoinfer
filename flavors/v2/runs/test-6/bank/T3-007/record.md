@@ -1,0 +1,10 @@
+team:         T3
+builds_on:    T1-042
+performance:  n/a (measurement record; timers inert unless AUTOINFER_TIMERS is set)
+WARNING (2026-11-09, KB61): job 19 ran in workspaces/t3-distill.dump, which was never `ws build`-ed (its _C .so is the prebuilt BASELINE symlink): GDN replay was off and the Marlin {64,128,128} tiling absent. The timings below (drafter/step, verify cliff, 781 tok/s) are NOT champion numbers; re-measurement on a built workspace pending. The code-read findings and the in-server acceptance stand.
+summary:
+  hypothesis: The modeled costs behind T3-2 (drafter 0.55 ms per draft step, 0.28 ms per verify token up to an M=64 cliff) hold in-server; the GDN per-draft spec slots may be dead under T1's replay.
+  change:     CUDA-event timers around the target forward / sampling / speculator.propose() (workspaces/t3-distill.dump: vllm/v1/worker/gpu/ai_timers.py + 4 hook lines). Code read of GDN replay/flush/align-copy paths.
+  results:    Observed (GPU job 19, 3.3 GPU-min; T1-042 flags minus the prefill size list; 100 ShareGPT prompts, c=16): drafter +0.80-0.84 ms per extra draft step (propose 1.68 ms at k=2, 16 reqs); sample/reject 1.09 ms; verify forward M=3 17.71, M=42 24.82, M=48 25.89, M=52 29.20, M=56 29.65 ms (cliff just above 48). In-server acceptance k=3: .77/.54-.58/.39-.44 (offline chain .765/.541/.378). k=3 admits only 14 of 16 requests (blocks/request = 1 + 3(1+k); pool ~191 blocks of ~28 MB). Code: replay normal path uses S[0], S[1] only; flush writes S[0..a-1] and align-mode copies read S[a-1] at 1600-token boundaries (long requests), so the spec slots are not dead in general; replay capped at 3 drafts (kMaxLogTokens=4). Sim with measured costs (held-out): K_MAX=3 B=32 1.047 (iso 1.049), K_MAX=4 B=32 1.041 (iso 1.046); everything above M=48 loses.
+  conclusion: Interpretation: confidence-budgeted verification nets about +4.7-4.9% decode-step throughput, about +3-4% end-to-end after the scaling share and selection/varlen overheads, plus a memory fix for K_MAX=3. T3-2's payoff if it works falls from ~+6% to ~+4%, below the 5% bar.
+validity:     Timers only, env-gated; not a serving candidate.

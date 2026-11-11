@@ -1,0 +1,19 @@
+{
+  "id": 378,
+  "pid": 139716,
+  "team": "T37",
+  "agent": "leader-37.w1",
+  "label": "t37w1-boundary2",
+  "timeout_min": 4.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-37.w1/jobs/c2.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-37.w1",
+  "submitted": "2026-11-10T22:33:08+00:00",
+  "state": "done",
+  "started": "2026-11-10T22:33:08+00:00",
+  "ended": "2026-11-10T22:34:31+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.376
+}

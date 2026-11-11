@@ -1,0 +1,24 @@
+{
+  "id": 306,
+  "pid": 968896,
+  "team": "T32",
+  "agent": "leader-32.w1",
+  "label": "t32-1a-smoke",
+  "timeout_min": 12.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-32.w1/job.sh",
+    "smoke",
+    "1",
+    "0",
+    "T32_CAP_NMAX=3",
+    "T32_CAP_NTMAX=12",
+    "T32_CHECK=3"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-32.w1",
+  "submitted": "2026-11-10T16:09:58+00:00",
+  "state": "done",
+  "started": "2026-11-10T16:09:58+00:00",
+  "ended": "2026-11-10T16:12:08+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.158
+}

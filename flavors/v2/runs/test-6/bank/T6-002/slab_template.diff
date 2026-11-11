@@ -1,0 +1,98 @@
+diff --git a/csrc/quantization/marlin/marlin_template.h b/csrc/quantization/marlin/marlin_template.h
+index 14b1044fff..86d334981e 100644
+--- a/csrc/quantization/marlin/marlin_template.h
++++ b/csrc/quantization/marlin/marlin_template.h
+@@ -327,11 +327,20 @@ __global__ void Marlin(
+ 
+   // For larger GEMMs we run multiple batchsize 64 versions in parallel for a
+   // better partitioning with less reductions
++  // The last parallel slab may be partial (host passes the true row count):
++  // rows beyond total_m are masked like the m-tail of a single slab.
++  const int total_m = prob_m;
+   int parallel = 1;
+   if (prob_m > m_block_size) {
+-    parallel = prob_m / m_block_size;
++    parallel = div_ceil(prob_m, m_block_size);
+     prob_m = m_block_size;
+   }
++  int par_id = 0;
++  auto slab_m = [&]() {
++    int r = total_m - par_id * m_block_size;
++    return r < 0 ? 0 : (r < m_block_size ? r : m_block_size);
++  };
++  if (parallel > 1) prob_m = slab_m();
+ 
+   int k_tiles = prob_k / 16 / thread_k_blocks;
+   int n_tiles = prob_n / 16 / thread_n_blocks;
+@@ -369,7 +378,6 @@ __global__ void Marlin(
+   // index of threadblock in current slice; numbered bottom to top
+   int slice_idx = 0;
+ 
+-  int par_id = 0;
+   int locks_off = 0;
+ 
+   if (part2_mn_tiles >= gridDim.x) {
+@@ -438,6 +446,7 @@ __global__ void Marlin(
+       C += 16 * thread_m_blocks * prob_n / 8;
+       slice_col = 0;
+       par_id++;
++      if (parallel > 1) prob_m = slab_m();
+     }
+   };
+ 
+@@ -449,6 +458,7 @@ __global__ void Marlin(
+       slice_iters = k_tiles;
+       A = A0 + 16 * thread_m_blocks / 8 * par_id * lda;
+       C = C0 + 16 * thread_m_blocks / 8 * par_id * prob_n;
++      if (parallel > 1) prob_m = slab_m();
+     }
+   };
+ 
+@@ -461,6 +471,7 @@ __global__ void Marlin(
+       par_id = (slice_col_par + global_mn_tiles - part2_mn_tiles) / n_tiles;
+       A = A0 + 16 * thread_m_blocks / 8 * par_id * lda;
+       C = C0 + 16 * thread_m_blocks / 8 * par_id * prob_n;
++      if (parallel > 1) prob_m = slab_m();
+     }
+     if (!in_part2) {
+       init_part1_slice();
+@@ -624,10 +635,7 @@ __global__ void Marlin(
+   // Precompute which thread should not read memory in which iterations; this is
+   // needed if there are more threads than required for a certain tilesize or
+   // when the batchsize is not a multiple of 16.
+-  bool a_sh_wr_pred[a_sh_wr_iters];
+-  #pragma unroll
+-  for (int i = 0; i < a_sh_wr_iters; i++)
+-    a_sh_wr_pred[i] = a_sh_wr_delta * i + a_sh_wr < a_sh_stride * prob_m;
++  // (computed on the fly: prob_m changes with the parallel slab)
+ 
+   // To ensure that writing and reading A tiles to/from shared memory, the
+   // latter in fragment format, is fully bank conflict free, we need to use a
+@@ -707,7 +715,7 @@ __global__ void Marlin(
+         cp_async4_pred(
+             &sh_a_stage[a_sh_wr_trans[i]],
+             &A[a_gl_rd_delta_i * i + a_gl_rd + a_gl_rd_delta_o * a_off],
+-            a_sh_wr_pred[i]);
++            a_sh_wr_delta * i + a_sh_wr < a_sh_stride * prob_m);
+       }
+       int4* sh_b_stage = sh_b + b_sh_stage * pipe;
+   #pragma unroll
+@@ -1125,7 +1133,7 @@ __global__ void Marlin(
+                 &sh_red[c_sh_wr + c_sh_wr_delta * i],
+                 &C[c_gl_wr + c_gl_wr_delta_o * (i / 2) +
+                    c_gl_wr_delta_i * (i % 2)],
+-                i < (thread_m_blocks - 1) * 4 || 8 * (i / 2) + row < prob_m);
++                8 * (i / 2) + row < prob_m);
+           }
+         }
+         cp_async_fence();
+@@ -1134,8 +1142,7 @@ __global__ void Marlin(
+ 
+   #pragma unroll
+       for (int i = 0; i < (m_block_size_8 ? 2 : thread_m_blocks * 4); i++) {
+-        bool mask = (!m_block_size_8) && (i < (thread_m_blocks - 1) * 4 ||
+-                                          8 * (i / 2) + row < prob_m) ||
++        bool mask = (!m_block_size_8) && (8 * (i / 2) + row < prob_m) ||
+                     (m_block_size_8) && ((threadIdx.x % 4) * 2 + i < prob_m);
+         if (mask) {
+           if (!first) {

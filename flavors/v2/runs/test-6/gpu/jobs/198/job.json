@@ -1,0 +1,19 @@
+{
+  "id": 198,
+  "pid": 572044,
+  "team": "T28",
+  "agent": "leader-28.w2",
+  "label": "t28-k3-B2",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "agents/leader-28.w2/job1/jobB.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-09T21:47:28+00:00",
+  "state": "done",
+  "started": "2026-11-09T21:54:17+00:00",
+  "ended": "2026-11-09T21:55:45+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.47
+}

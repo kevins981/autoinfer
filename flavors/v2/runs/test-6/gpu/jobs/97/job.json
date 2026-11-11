@@ -1,0 +1,20 @@
+{
+  "id": 97,
+  "pid": 198133,
+  "team": "T9",
+  "agent": "leader-9.w1",
+  "label": null,
+  "timeout_min": 14.0,
+  "command": [
+    "./smoke2_job.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/t9-tbo",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/bank/T9-005/smoke7"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-9.w1",
+  "submitted": "2026-11-09T04:45:04+00:00",
+  "state": "done",
+  "started": "2026-11-09T04:45:08+00:00",
+  "ended": "2026-11-09T04:49:38+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.499
+}

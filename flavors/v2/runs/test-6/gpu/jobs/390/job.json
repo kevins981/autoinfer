@@ -1,0 +1,19 @@
+{
+  "id": 390,
+  "pid": 190724,
+  "team": "T38",
+  "agent": "leader-38.w1",
+  "label": null,
+  "timeout_min": 4.0,
+  "command": [
+    "bash",
+    "job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-38.w1/pp_gemm",
+  "submitted": "2026-11-10T23:56:43+00:00",
+  "state": "done",
+  "started": "2026-11-10T23:56:43+00:00",
+  "ended": "2026-11-10T23:57:01+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.286
+}

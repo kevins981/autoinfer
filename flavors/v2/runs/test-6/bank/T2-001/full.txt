@@ -1,0 +1,32 @@
+[gpu] job 6 queued (1 ahead)
+[gpu] job 6 started (timeout 3 min); output: /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/gpu/jobs/6/output.log
+[gpu] team T2 (explore): 19.5 GPU-min left of 20 granted
+[gpu] reminder: each inference server loads the workspace's code when it starts, not when you submitted. Don't edit a workspace this job uses; to keep working meanwhile, copy it: ws create <new name> --from-ws <workspace>
+green 40 SMs sms=40: 36.91 ms 42 TFLOPS
+green 48 SMs default sms: 35.38 ms 44 TFLOPS
+green 48 SMs sms=48: 31.15 ms 50 TFLOPS
+green 64 SMs default sms: 23.84 ms 66 TFLOPS
+green 64 SMs sms=64: 23.33 ms 67 TFLOPS
+=== 3. concurrent: decode on A=128-f, prefill on B=f
+f=32 [green/green sms=default]: decode alone 5.77 -> co-run 6.01 ms (n=316); prefill alone 48.44 ms 32TF -> co-run 54.10 ms 29TF (n=35); window 1905 ms
+f=32 [green/green sms=partition]: decode alone 4.09 -> co-run 7.50 ms (n=255); prefill alone 46.04 ms 34TF -> co-run 48.97 ms 32TF (n=39); window 1919 ms
+f=32 [decode plain-full-stream(sms=128-f)/prefill green(sms=f)]: decode alone 4.08 -> co-run 5.25 ms (n=364); prefill alone 46.05 ms 34TF -> co-run 49.51 ms 32TF (n=38); window 1913 ms
+f=32 [decode plain-full-stream(sms=128-f)/prefill green(default)]: decode alone 4.09 -> co-run 5.27 ms (n=360); prefill alone 48.44 ms 32TF -> co-run 52.83 ms 30TF (n=36); window 1907 ms
+f=40 [green/green sms=default]: decode alone 5.71 -> co-run 7.53 ms (n=254); prefill alone 46.80 ms 33TF -> co-run 48.91 ms 32TF (n=39); window 1918 ms
+f=40 [green/green sms=partition]: decode alone 4.20 -> co-run 7.67 ms (n=252); prefill alone 36.90 ms 42TF -> co-run 40.84 ms 38TF (n=47); window 1934 ms
+f=40 [decode plain-full-stream(sms=128-f)/prefill green(sms=f)]: decode alone 4.19 -> co-run 5.48 ms (n=352); prefill alone 36.91 ms 42TF -> co-run 39.11 ms 40TF (n=49); window 1937 ms
+f=40 [decode plain-full-stream(sms=128-f)/prefill green(default)]: decode alone 4.20 -> co-run 5.26 ms (n=364); prefill alone 46.80 ms 33TF -> co-run 50.33 ms 31TF (n=38); window 1913 ms
+f=48 [green/green sms=default]: decode alone 5.74 -> co-run 9.68 ms (n=200); prefill alone 35.38 ms 44TF -> co-run 38.71 ms 40TF (n=50); window 1945 ms
+f=48 [green/green sms=partition]: decode alone 4.39 -> co-run 11.14 ms (n=174); prefill alone 31.15 ms 50TF -> co-run 33.52 ms 47TF (n=58); window 1957 ms
+f=48 [decode plain-full-stream(sms=128-f)/prefill green(sms=f)]: decode alone 4.39 -> co-run 5.75 ms (n=337); prefill alone 31.15 ms 50TF -> co-run 35.04 ms 45TF (n=55); window 1942 ms
+f=48 [decode plain-full-stream(sms=128-f)/prefill green(default)]: decode alone 4.37 -> co-run 5.60 ms (n=344); prefill alone 35.38 ms 44TF -> co-run 39.24 ms 40TF (n=49); window 1936 ms
+f=64 [green/green sms=default]: decode alone 5.77 -> co-run 28.94 ms (n=69); prefill alone 23.85 ms 66TF -> co-run 28.94 ms 54TF (n=69); window 2023 ms
+f=64 [green/green sms=partition]: decode alone 5.31 -> co-run 28.18 ms (n=70); prefill alone 23.34 ms 67TF -> co-run 28.18 ms 56TF (n=71); window 2001 ms
+f=64 [decode plain-full-stream(sms=128-f)/prefill green(sms=f)]: decode alone 5.31 -> co-run 6.49 ms (n=302); prefill alone 23.34 ms 67TF -> co-run 26.38 ms 59TF (n=74); window 1959 ms
+f=64 [decode plain-full-stream(sms=128-f)/prefill green(default)]: decode alone 5.32 -> co-run 6.63 ms (n=296); prefill alone 23.85 ms 66TF -> co-run 26.76 ms 59TF (n=73); window 1965 ms
+=== 4. plain streams: decode high prio, prefill low prio
+prio: decode alone 3.99 -> co-run 15.93 ms (n=125); prefill alone 12.74 ms 123TF -> co-run 15.93 ms 98TF (n=125); window 2005 ms
+equal-prio plain streams: decode co-run 15.93 ms; prefill co-run 15.93 ms 98TF
+[gpu] job 6 exited with code 0 after 1.2 min
+[gpu] full output: /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/gpu/jobs/6/output.log
+[gpu] team T2 (explore): 18.2 GPU-min left of 20 granted

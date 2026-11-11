@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "completed": 400,
+  "output_throughput": 662.8139269708355,
+  "total_token_throughput": 1424.3559828164364,
+  "median_ttft_ms": 237.9161063581705,
+  "p99_ttft_ms": 1357.4135495722294,
+  "median_tpot_ms": 22.22784148774054,
+  "p99_tpot_ms": 48.95456630264874,
+  "median_itl_ms": 36.82296723127365,
+  "median_e2el_ms": 4455.303963273764,
+  "mtp_acceptance_length": 2.337,
+  "mtp_acceptance_per_position": [
+    0.779,
+    0.558
+  ],
+  "gsm8k_accuracy": 0.94,
+  "gsm8k_no_answer": 3,
+  "gate_gsm8k": "pass",
+  "vs_baseline_pct": 4.97,
+  "p99_vs_baseline": {
+    "p99_ttft_ms": 0.913,
+    "p99_tpot_ms": 1.012
+  },
+  "gate_latency": "pass"
+}

@@ -1,0 +1,337 @@
+--- t7-ovl/vllm/vllm/models/qwen3_5/nvidia/model.py	2026-11-09 03:20:30.021888896 +0000
++++ t9-tbo/vllm/vllm/models/qwen3_5/nvidia/model.py	2026-11-09 04:25:14.205921203 +0000
+@@ -29,6 +29,7 @@
+ from typing import ClassVar, cast
+ 
+ import os
++from types import SimpleNamespace
+ 
+ import torch
+ from torch import nn
+@@ -143,6 +144,16 @@
+ # order may change with the chunk's row count. VLLM_DMA_SPLIT=0 disables it.
+ _SPLIT_MIN_TOKENS = int(os.environ.get("VLLM_DMA_SPLIT_MIN_TOKENS", "256"))
+ _split_aux_stream: torch.cuda.Stream | None = None
++# VLLM_T9_PINGPONG (default 1): extend the token-split chain so each chunk, after its last AR, goes on
++# with the NEXT layer's add+norm and qkvz/ba (or qkv) projection inside the same chain, and chunk 1's
++# ARs run on the second DMA lane instead of the host-staged AR. The cores stay on the full rows, the
++# join stays per layer (the breakable CUDA graph cuts at the core op), sums are the same fp32 adds.
++# 0 = the previous (champion) chain exactly.
++_T9_PINGPONG = os.environ.get("VLLM_T9_PINGPONG", "1") != "0"
++# Test-only: in eager steps recompute the next layer's norm + projection on the full rows and log
++# the difference to the per-chunk result.
++_T9_PP_CHECK = os.environ.get("VLLM_T9_PP_CHECK", "0") == "1"
++_pp_check_n = [0]
+ # Test-only (default off): in eager steps, also run the unsplit chain and log
+ # split-vs-unsplit and DMA-vs-host AR differences.
+ _SPLIT_CHECK = os.environ.get("VLLM_DMA_SPLIT_CHECK", "0") == "1"
+@@ -454,12 +465,15 @@
+         positions: torch.Tensor,
+         inputs_reduced: bool = False,
+         allow_split: bool = False,
++        pre: "SimpleNamespace | None" = None,
++        next_layer: "Qwen3_5DecoderLayer | None" = None,
+         **kwargs: object,
+     ):
+         # output_reduced: this call returned a complete (all-reduced) hidden
+         # state instead of a TP partial (token-split chain); the caller passes
+         # it to the next layer / final norm as inputs_reduced.
+         self.output_reduced = False
++        self.pre_for_next = None
+         if self.use_attn_reduce_scatter_for_moe:
+             assert not inputs_reduced
+             return super().forward(hidden_states, residual, positions, **kwargs)
+@@ -473,14 +487,19 @@
+         # The AR absorbed here also warms this layer's out-projection weight in
+         # L2 (host-staged AR only; it survives the attention/GDN in between).
+         out_proj = self.linear_attn.out_proj if is_gdn else self.self_attn.o_proj
+-        in_proj_input, hidden_states, residual = self.input_layernorm.forward_fused(
+-            hidden_states,
+-            residual,
+-            in_proj,
+-            write_y=is_gdn,
+-            prefetch2=getattr(out_proj, "weight", None),
+-            reduced=inputs_reduced,
+-        )
++        if pre is not None:
++            # The previous layer's chain already ran this layer's add+norm and projections
++            # (residual updated in place); hidden_states is only used for shape/dtype.
++            in_proj_input = None
++        else:
++            in_proj_input, hidden_states, residual = self.input_layernorm.forward_fused(
++                hidden_states,
++                residual,
++                in_proj,
++                write_y=is_gdn,
++                prefetch2=getattr(out_proj, "weight", None),
++                reduced=inputs_reduced,
++            )
+         split = None
+         dma = None
+         if (
+@@ -504,15 +523,20 @@
+                 hidden_states,
+                 qkvz_input=in_proj_input,
+                 defer_out_proj=split is not None,
++                preproj=None if pre is None else (pre.mixed_qkvz, pre.ba),
+             )
+         else:
+             hidden_states = self.self_attn(
+                 hidden_states=hidden_states if in_proj_input is None else in_proj_input,
+                 positions=positions,
+                 defer_out_proj=split is not None,
++                qkv_pre=None if pre is None else pre.qkv,
+             )
+         if split is not None:
+-            return self._split_chain(hidden_states, residual, out_proj, split, dma)
++            return self._split_chain(
++                hidden_states, residual, out_proj, split, dma,
++                next_layer=next_layer if _T9_PINGPONG else None,
++            )
+ 
+         if self.layer_scale:
+             if len(hidden_states.shape) == 2:
+@@ -550,6 +574,84 @@
+         return hidden_states, residual
+ 
+ 
++def _pp_next_ok(nl: "Qwen3_5DecoderLayer") -> bool:
++    return (
++        not nl.layer_scale
++        and nl.use_fused_allreduce_norm
++        and not nl.use_attn_reduce_scatter_for_moe
++        and nl.input_layernorm.reduce_inputs
++    )
++
++
++def _pp_proj_modules(nl: "Qwen3_5DecoderLayer", gdn: bool):
++    return nl.linear_attn.in_proj_qkvz if gdn else nl.self_attn.qkv_proj
++
++
++def _pp_project_next(
++    nl: "Qwen3_5DecoderLayer",
++    gdn: bool,
++    out: torch.Tensor,
++    residual: torch.Tensor,
++    a: int,
++    b: int,
++    bufs: dict[str, torch.Tensor],
++) -> None:
++    """Rows [a, b) of the next layer's input add+norm (the AR is already done) and of its
++    qkvz/ba (GDN) or qkv (attention) projection, written into full-size buffers."""
++    in_proj = _pp_proj_modules(nl, gdn)
++    qa, y, _ = nl.input_layernorm.forward_fused(
++        out[a:b], residual[a:b], in_proj, write_y=gdn, reduced=True
++    )
++    src = qa if qa is not None else y
++    if gdn:
++        mq, _ = nl.linear_attn.in_proj_qkvz(src)
++        ba, _ = nl.linear_attn.in_proj_ba(y)
++        if "mixed_qkvz" not in bufs:
++            bufs["mixed_qkvz"] = torch.empty(
++                (out.shape[0], mq.shape[1]), dtype=mq.dtype, device=mq.device
++            )
++            bufs["ba"] = torch.empty(
++                (out.shape[0], ba.shape[1]), dtype=ba.dtype, device=ba.device
++            )
++        bufs["mixed_qkvz"][a:b].copy_(mq)
++        bufs["ba"][a:b].copy_(ba)
++    else:
++        qkv, _ = nl.self_attn.qkv_proj(src)
++        if "qkv" not in bufs:
++            bufs["qkv"] = torch.empty(
++                (out.shape[0], qkv.shape[1]), dtype=qkv.dtype, device=qkv.device
++            )
++        bufs["qkv"][a:b].copy_(qkv)
++
++
++def _pp_check(nl, gdn, chk, residual, bufs, n) -> None:
++    """Test-only (VLLM_T9_PP_CHECK=1, eager steps): recompute the next layer's add+norm and
++    projection on the full rows from the saved (reduced out, residual) pair and compare with the
++    per-chunk result."""
++    in_proj = _pp_proj_modules(nl, gdn)
++    qa, y, _ = nl.input_layernorm.forward_fused(
++        chk[0], chk[1], in_proj, write_y=gdn, reduced=True
++    )
++    src = qa if qa is not None else y
++    if gdn:
++        ref = nl.linear_attn.in_proj_qkvz(src)[0]
++        ref2 = nl.linear_attn.in_proj_ba(y)[0]
++        pairs = [("qkvz", bufs["mixed_qkvz"], ref), ("ba", bufs["ba"], ref2)]
++    else:
++        pairs = [("qkv", bufs["qkv"], nl.self_attn.qkv_proj(src)[0])]
++    pairs.append(("residual", residual, chk[1]))
++    _pp_check_n[0] += 1
++    if _pp_check_n[0] <= 200 and torch.distributed.get_rank() == 0:
++        msg = []
++        for name, got, ref_ in pairs:
++            d = (got.float() - ref_.float()).abs()
++            msg.append(
++                f"{name}: neq {int((got != ref_).sum().item())}/{got.numel()} "
++                f"maxabs {d.max().item():.4g} max|ref| {ref_.float().abs().max().item():.4g}"
++            )
++        logger.info("PPCHECK n=%d gdn=%s | %s", n, gdn, " | ".join(msg))
++
++
+ def _qwen3_5_split_chain(
+     self: "Qwen3_5DecoderLayer",
+     x: torch.Tensor | QuantizedActivation,
+@@ -557,6 +659,7 @@
+     out_proj: nn.Module,
+     split: tuple[int, int],
+     dma,
++    next_layer: "Qwen3_5DecoderLayer | None" = None,
+ ) -> tuple[torch.Tensor, torch.Tensor]:
+     """out_proj -> AR -> add+norm -> MLP -> AR on two token chunks. Chunk 0 on
+     the current stream with the copy-engine AR, chunk 1 on an aux stream with
+@@ -579,18 +682,37 @@
+     aux = _split_aux_stream
+     cur = torch.cuda.current_stream()
+ 
++    # VLLM_T9_PINGPONG: next layer's norm + projections per chunk inside this chain; chunk 1's ARs on
++    # DMA lane 1 (aux stream) instead of the host-staged AR. One helper = the swap point for the AR.
++    pp = next_layer is not None and _pp_next_ok(next_layer)
++    nxt_gdn = pp and next_layer.layer_type == "linear_attention"
++    bufs: dict[str, torch.Tensor] = {}
++    chk = None
++    if pp and _T9_PP_CHECK and not torch.cuda.is_current_stream_capturing():
++        chk = (torch.empty_like(out), torch.empty_like(residual))
++
++    def _ar(inp: torch.Tensor, lane: int, out_: torch.Tensor | None = None):
++        return dma.all_reduce(inp, out_, lane=lane)
++
+     def chunk(a: int, b: int, use_dma: bool) -> None:
++        lane = 0 if use_dma else 1
++        reduced_here = use_dma or _T9_PINGPONG
+         p = out_proj(x[a:b])[0] if project else x[a:b].contiguous()
+-        if use_dma:
+-            p = dma.all_reduce(p)
++        if reduced_here:
++            p = _ar(p, lane)
+         mlp_in, h, _ = self.post_attention_layernorm.forward_fused(
+-            p, residual[a:b], gate_up, reduced=use_dma
++            p, residual[a:b], gate_up, reduced=reduced_here
+         )
+         d = self.mlp(h if mlp_in is None else mlp_in)
+-        if use_dma:
+-            dma.all_reduce(d, out[a:b])
++        if reduced_here:
++            _ar(d, lane, out[a:b])
+         else:
+             out[a:b].copy_(tensor_model_parallel_all_reduce(d))
++        if pp:
++            if chk is not None:
++                chk[0][a:b].copy_(out[a:b])
++                chk[1][a:b].copy_(residual[a:b])
++            _pp_project_next(next_layer, nxt_gdn, out, residual, a, b, bufs)
+ 
+     check = _SPLIT_CHECK and not torch.cuda.is_current_stream_capturing()
+     if check:
+@@ -606,6 +728,10 @@
+         chunk(c0, num_tokens, False)
+     cur.wait_stream(aux)
+     self.output_reduced = True
++    if pp:
++        self.pre_for_next = SimpleNamespace(**bufs)
++        if chk is not None:
++            _pp_check(next_layer, nxt_gdn, chk, residual, bufs, c0 + c1)
+     if check:
+         xr = out_proj(x)[0] if project else x
+         mlp_in, h, res_ref = self.post_attention_layernorm.forward_fused(
+@@ -759,19 +885,26 @@
+             and get_pp_group().world_size == 1
+         )
+         reduced = False
+-        for layer_idx, layer in enumerate(
+-            islice(self.layers, self.start_layer, self.end_layer),
+-            start=self.start_layer,
+-        ):
++        pre = None
++        layers_list = list(islice(self.layers, self.start_layer, self.end_layer))
++        for layer_idx, layer in enumerate(layers_list, start=self.start_layer):
+             if split_ok:
++                nxt = (
++                    layers_list[layer_idx + 1 - self.start_layer]
++                    if _T9_PINGPONG and layer_idx + 1 < self.end_layer
++                    else None
++                )
+                 hidden_states, residual = layer(
+                     positions=positions,
+                     hidden_states=hidden_states,
+                     residual=residual,
+                     inputs_reduced=reduced,
+                     allow_split=True,
++                    pre=pre,
++                    next_layer=nxt,
+                 )
+                 reduced = getattr(layer, "output_reduced", False)
++                pre = getattr(layer, "pre_for_next", None)
+             else:
+                 hidden_states, residual = layer(
+                     positions=positions,
+--- t7-ovl/vllm/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py	2026-11-09 03:20:30.021888896 +0000
++++ t9-tbo/vllm/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py	2026-11-09 04:24:11.785083174 +0000
+@@ -1321,6 +1321,7 @@
+         hidden_states: torch.Tensor,
+         qkvz_input: QuantizedActivation | None = None,
+         defer_out_proj: bool = False,
++        preproj: tuple[torch.Tensor, torch.Tensor] | None = None,
+     ) -> torch.Tensor:
+         """Forward pass with three parts:
+         1. Input projection
+@@ -1335,7 +1336,11 @@
+         # Part 1: Input Projection
+         # ============================================================
+         qkvz_in = hidden_states if qkvz_input is None else qkvz_input
+-        if self._ba_stream is None:
++        if preproj is not None:
++            # (mixed_qkvz, ba) already projected by the previous layer's token-split
++            # chain (VLLM_T9_PINGPONG), chunk by chunk; same GEMMs, same rows.
++            mixed_qkvz, ba = preproj
++        elif self._ba_stream is None:
+             mixed_qkvz, _ = self.in_proj_qkvz(qkvz_in)
+             ba, _ = self.in_proj_ba(hidden_states)
+         else:
+--- t7-ovl/vllm/vllm/model_executor/models/qwen3_next.py	2026-11-09 03:20:30.021888896 +0000
++++ t9-tbo/vllm/vllm/model_executor/models/qwen3_next.py	2026-11-09 04:24:11.785083174 +0000
+@@ -472,8 +472,12 @@
+         positions: torch.Tensor,
+         hidden_states: torch.Tensor | QuantizedActivation,
+         defer_out_proj: bool = False,
++        qkv_pre: torch.Tensor | None = None,
+     ) -> torch.Tensor:
+-        qkv, _ = self.qkv_proj(hidden_states)
++        if qkv_pre is not None:
++            qkv = qkv_pre  # projected by the previous layer's token-split chain
++        else:
++            qkv, _ = self.qkv_proj(hidden_states)
+         q, k, v, gate = self._project_qkv_gate(qkv, positions)
+         attn_output = self.attn(q, k, v)
+         if gate is not None:
+--- t7-ovl/vllm/vllm/distributed/device_communicators/dma_staged_ar.py	2026-11-09 03:20:30.021888896 +0000
++++ t9-tbo/vllm/vllm/distributed/device_communicators/dma_staged_ar.py	2026-11-09 04:24:01.276942122 +0000
+@@ -99,8 +99,11 @@
+         nbytes = inp.numel() * 2
+         return 0 < nbytes <= _SLOT_BYTES and nbytes % 16 == 0 and inp.is_contiguous()
+ 
+-    def all_reduce(self, inp: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
++    def all_reduce(self, inp: torch.Tensor, out: torch.Tensor | None = None,
++                   lane: int = 0) -> torch.Tensor:
++        """lane 0/1: independent flags, slots and aux stream per lane; all calls of one lane
++        must be issued on one stream (lane 1 is used by the second chunk of the ping-pong chain)."""
+         if out is None:
+             out = torch.empty_like(inp)
+-        self.mod.allreduce(inp, out, 0, self.pieces, 0)
++        self.mod.allreduce(inp, out, lane, self.pieces, 0)
+         return out
+--- t7-ovl/vllm/vllm/distributed/device_communicators/dma_staged_ar.cu	2026-11-09 03:20:30.021888896 +0000
++++ t9-tbo/vllm/vllm/distributed/device_communicators/dma_staged_ar.cu	2026-11-09 04:24:01.248941746 +0000
+@@ -16,7 +16,7 @@
+ #include <fcntl.h>
+ #include <unistd.h>
+ #include <string>
+-#define NL 1
++#define NL 2
+ #define FS 16   // ints per flag (64B)
+ #define NP 4    // max pieces
+ struct Ctx { char* hbase; char* dbase; size_t slot; int rank; bool init=false; void* tmp[NL]; size_t tmp_bytes;

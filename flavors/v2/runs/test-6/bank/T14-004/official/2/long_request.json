@@ -1,0 +1,12 @@
+{
+ "pass": true,
+ "prompt_tokens": 128000,
+ "status": 200,
+ "completion_tokens": 19,
+ "seconds": 56.1,
+ "text": " fifth dimension to a second-grader is a bit tricky, but I'll give it a",
+ "finish_reason": "stop",
+ "error": null,
+ "after_status": 200,
+ "after_error": null
+}

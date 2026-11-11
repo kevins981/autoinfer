@@ -1,0 +1,18 @@
+{
+  "id": 190,
+  "pid": 554524,
+  "team": "T29",
+  "agent": "leader-29.w1",
+  "label": null,
+  "timeout_min": 7.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-29.w1/mb/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/t29-fp8",
+  "submitted": "2026-11-09T21:29:15+00:00",
+  "state": "done",
+  "started": "2026-11-09T21:29:15+00:00",
+  "ended": "2026-11-09T21:30:42+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.461
+}

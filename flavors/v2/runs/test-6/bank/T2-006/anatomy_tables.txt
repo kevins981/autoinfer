@@ -1,0 +1,103 @@
+
+== decode: n=504 (x6.25 per 400-prompt trial = 3150) median period 23.8 ms (mean 27.4, mean prefill tokens 0), median prefill tokens 0, decode tokens 42
+     13.64 ms (median)  marlin
+      5.89 ms (median)  other:hostar_kernel
+      1.97 ms (median)  GDN prefill/decode kernels
+      1.02 ms (median)  lm_head/other GEMM
+      0.79 ms (median)  other:Kernel2
+      0.76 ms (median)  attention
+      0.39 ms (median)  norm/act/rope/elementwise
+      0.12 ms (median)  IDLE inside GPU span
+      0.06 ms (median)  other:reduce_segments
+      0.05 ms (median)  outside GPU span (period - span; host/inter-step gap)
+      0.04 ms (median)  other:sampling/MTP/bookkeeping
+      0.03 ms (median)  other:reduce_kernel
+      0.03 ms (median)  other:scaled_fp8_quant_kernel_strided_group_shape
+  sum 24.9
+
+== mixed pt<150: n=24 (x6.25 per 400-prompt trial = 150) median period 76.0 ms (mean 79.7, mean prefill tokens 83), median prefill tokens 67, decode tokens 45
+     33.03 ms (median)  marlin
+     17.96 ms (median)  outside GPU span (period - span; host/inter-step gap)
+     10.22 ms (median)  other:hostar_kernel
+      4.42 ms (median)  GDN prefill/decode kernels
+      3.03 ms (median)  norm/act/rope/elementwise
+      1.65 ms (median)  IDLE inside GPU span
+      1.55 ms (median)  attention
+      1.16 ms (median)  lm_head/other GEMM
+      0.86 ms (median)  other:Kernel2
+      0.04 ms (median)  other:sampling/MTP/bookkeeping
+      0.04 ms (median)  other:reduce_kernel
+      0.03 ms (median)  other:scaled_fp8_quant_kernel_strided_group_shape
+  sum 74.1
+
+== mixed pt 150-399: n=8 (x6.25 per 400-prompt trial = 50) median period 91.1 ms (mean 121.7, mean prefill tokens 311), median prefill tokens 324, decode tokens 45
+     84.30 ms (median)  marlin
+     11.07 ms (median)  other:hostar_kernel
+      7.51 ms (median)  memcpy(AR/host)
+      5.90 ms (median)  GDN prefill/decode kernels
+      4.93 ms (median)  IDLE inside GPU span
+      3.59 ms (median)  norm/act/rope/elementwise
+      2.18 ms (median)  attention
+      1.32 ms (median)  lm_head/other GEMM
+      0.98 ms (median)  other:Kernel2
+      0.04 ms (median)  other:scaled_fp8_quant_kernel_strided_group_shape
+      0.04 ms (median)  other:sampling/MTP/bookkeeping
+      0.04 ms (median)  other:reduce_kernel
+      0.03 ms (median)  other:nccl
+  sum 89.6
+
+== mixed pt>=400: n=19 (x6.25 per 400-prompt trial = 119) median period 144.2 ms (mean 171.4, mean prefill tokens 804), median prefill tokens 731, decode tokens 45
+    157.73 ms (median)  marlin
+     29.85 ms (median)  other:hostar_kernel
+     12.81 ms (median)  memcpy(AR/host)
+      8.46 ms (median)  GDN prefill/decode kernels
+      5.50 ms (median)  norm/act/rope/elementwise
+      4.69 ms (median)  IDLE inside GPU span
+      3.38 ms (median)  attention
+      1.51 ms (median)  lm_head/other GEMM
+      1.10 ms (median)  other:Kernel2
+      0.06 ms (median)  other:scaled_fp8_quant_kernel_strided_group_shape
+      0.04 ms (median)  other:nccl
+      0.04 ms (median)  other:sampling/MTP/bookkeeping
+      0.04 ms (median)  other:reduce_kernel
+  sum 146.4
+
+== top kernel names per family (summed rank-0 kernel time over all steps, ms/step-of-kind), non-marlin
+-- prefill steps (n=51)
+    25.60 ms/step  other:hostar_kernel | hostar_kernel
+     6.92 ms/step  norm/act/rope/elementwise | act_and_mul_kernel
+     3.62 ms/step  norm/act/rope/elementwise | add_kernel
+     2.01 ms/step  attention | kernel_cutlass_kernel_flashinfernormkernelsfused_add_rmsnormFusedAddRM
+     1.90 ms/step  GDN prefill/decode kernels | gdn_decode_replay_kernel
+     1.30 ms/step  GDN prefill/decode kernels | chunk_fwd_kernel_o
+     1.16 ms/step  attention | kernel_unified_attention
+     1.08 ms/step  lm_head/other GEMM | lmh_gemm_kernel
+     1.07 ms/step  other:Kernel2 | Kernel2
+     1.01 ms/step  norm/act/rope/elementwise | elementwise_kernel
+     0.90 ms/step  norm/act/rope/elementwise | index_elementwise_kernel
+     0.78 ms/step  GDN prefill/decode kernels | chunk_gated_delta_rule_fwd_kernel_h_blockdim64
+     0.62 ms/step  norm/act/rope/elementwise | vectorized_gather_kernel
+     0.61 ms/step  GDN prefill/decode kernels | merge_16x16_to_64x64_inverse_kernel
+     0.40 ms/step  GDN prefill/decode kernels | recompute_w_u_fwd_kernel
+     0.33 ms/step  norm/act/rope/elementwise | vectorized_elementwise_kernel
+     0.31 ms/step  GDN prefill/decode kernels | _causal_conv1d_fwd_kernel
+     0.29 ms/step  GDN prefill/decode kernels | chunk_scaled_dot_kkt_fwd_kernel
+-- decode steps (n=504)
+     5.49 ms/step  other:hostar_kernel | hostar_kernel
+     1.29 ms/step  GDN prefill/decode kernels | gdn_decode_replay_kernel
+     1.29 ms/step  other:Kernel2 | Kernel2
+     1.01 ms/step  lm_head/other GEMM | lmh_gemm_kernel
+     0.47 ms/step  attention | kernel_cutlass_kernel_flashinfernormkernelsfused_add_rmsnormFusedAddRM
+     0.25 ms/step  attention | kernel_unified_attention
+     0.20 ms/step  norm/act/rope/elementwise | act_and_mul_kernel
+     0.17 ms/step  GDN prefill/decode kernels | _causal_conv1d_update_kernel
+     0.15 ms/step  lm_head/other GEMM | splitKreduce_kernel
+     0.06 ms/step  norm/act/rope/elementwise | vectorized_elementwise_kernel
+     0.06 ms/step  other:reduce_segments | reduce_segments
+     0.04 ms/step  norm/act/rope/elementwise | _fused_qk_rmsnorm_rope_gate_kernel
+     0.03 ms/step  other:reduce_kernel | reduce_kernel
+     0.03 ms/step  GDN prefill/decode kernels | gdn_replay_flush_kernel
+     0.03 ms/step  other:scaled_fp8_quant_kernel_strided_group_shape | scaled_fp8_quant_kernel_strided_group_shape
+     0.03 ms/step  attention | reshape_and_cache_kernel_flash
+     0.02 ms/step  norm/act/rope/elementwise | _fused_sigmoid_gate_mul_kernel
+     0.02 ms/step  nccl | ncclDevKernel_AllGather_RING_LL

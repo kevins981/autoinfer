@@ -1,0 +1,25 @@
+/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-6.w1/nsys_C/profile.sqlite: GPU 0, 346 steps
+
+== decode steps: 234 (median prefill tokens 0, decode tokens 12)
+  period 20.78 ms   GPU span 20.76   GPU busy 20.57   GPU idle in window 0.16
+     12.06 ms  FP8 weight GEMM (Marlin)
+      5.99 ms  other
+      1.17 ms  other GEMM (cutlass/cublas: lm_head, small bf16 GEMMs)
+      0.85 ms  GDN / linear attention (delta rule, conv1d)
+      0.67 ms  attention (full) + KV cache write
+      0.27 ms  norms, activations, rope, gating
+      0.03 ms  sampling / spec-decode bookkeeping
+      0.02 ms  all-reduce / all-gather (NCCL)
+
+== prefill steps: 112 (median prefill tokens 63, decode tokens 33)
+  period 77.24 ms   GPU span 77.75   GPU busy 41.78   GPU idle in window 34.23
+     22.67 ms  FP8 weight GEMM (Marlin)
+     12.61 ms  other
+      3.84 ms  GDN / linear attention (delta rule, conv1d)
+      1.23 ms  other GEMM (cutlass/cublas: lm_head, small bf16 GEMMs)
+      1.12 ms  attention (full) + KV cache write
+      0.43 ms  norms, activations, rope, gating
+      0.03 ms  sampling / spec-decode bookkeeping
+      0.02 ms  all-reduce / all-gather (NCCL)
+
+per-step rows: /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-6.w1/nsys_C/steps.csv

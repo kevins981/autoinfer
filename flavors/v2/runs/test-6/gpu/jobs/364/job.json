@@ -1,0 +1,19 @@
+{
+  "id": 364,
+  "pid": 78545,
+  "team": "T36",
+  "agent": "leader-36",
+  "label": "t36-artrace",
+  "timeout_min": 5.0,
+  "command": [
+    "bash",
+    "agents/leader-36/jobs/artrace.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T21:07:21+00:00",
+  "state": "done",
+  "started": "2026-11-10T21:07:21+00:00",
+  "ended": "2026-11-10T21:09:01+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.657
+}

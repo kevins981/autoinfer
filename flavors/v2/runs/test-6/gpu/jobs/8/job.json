@@ -1,0 +1,22 @@
+{
+  "id": 8,
+  "pid": 4190639,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": null,
+  "timeout_min": 6.0,
+  "command": [
+    "agents/leader-2.w1/run_cfgs.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/t2-m1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-2.w1/smoke",
+    "30",
+    "48"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-08T23:44:22+00:00",
+  "state": "done",
+  "started": "2026-11-08T23:44:22+00:00",
+  "ended": "2026-11-08T23:48:25+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.05
+}

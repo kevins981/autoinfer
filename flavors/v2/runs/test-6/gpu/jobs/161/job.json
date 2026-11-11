@@ -1,0 +1,18 @@
+{
+  "id": 161,
+  "pid": 410583,
+  "team": "T25",
+  "agent": "leader-25.w1",
+  "label": null,
+  "timeout_min": 4.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-25.w1/S1b/job_exact.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-25.w1/S1b",
+  "submitted": "2026-11-09T12:42:27+00:00",
+  "state": "done",
+  "started": "2026-11-09T12:42:27+00:00",
+  "ended": "2026-11-09T12:42:37+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.154
+}

@@ -1,0 +1,18 @@
+{
+  "id": 221,
+  "pid": 670060,
+  "team": "T28",
+  "agent": "leader-28.w1",
+  "label": "t28-comb-chk",
+  "timeout_min": 3.0,
+  "command": [
+    "./chk.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-28.w1/sm",
+  "submitted": "2026-11-09T23:34:22+00:00",
+  "state": "done",
+  "started": "2026-11-09T23:34:22+00:00",
+  "ended": "2026-11-09T23:34:32+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.169
+}

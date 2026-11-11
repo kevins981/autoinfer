@@ -1,0 +1,19 @@
+{
+  "id": 361,
+  "pid": 58441,
+  "team": "T36",
+  "agent": "leader-36",
+  "label": "t36-ksweep",
+  "timeout_min": 11.0,
+  "command": [
+    "bash",
+    "agents/leader-36/jobs/ksweep.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T20:44:29+00:00",
+  "state": "done",
+  "started": "2026-11-10T20:44:29+00:00",
+  "ended": "2026-11-10T20:49:01+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.53
+}

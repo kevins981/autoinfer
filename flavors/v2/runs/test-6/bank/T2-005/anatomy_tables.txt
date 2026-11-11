@@ -1,0 +1,105 @@
+
+== decode: n=494 (x6.25 per 400-prompt trial = 3088) median period 26.3 ms (mean 30.0, mean prefill tokens 0), median prefill tokens 0, decode tokens 42
+     15.18 ms (median)  marlin
+      6.07 ms (median)  other:hostar_kernel
+      3.16 ms (median)  GDN prefill/decode kernels
+      1.02 ms (median)  lm_head/other GEMM
+      0.84 ms (median)  attention
+      0.79 ms (median)  other:Kernel2
+      0.39 ms (median)  norm/act/rope/elementwise
+      0.12 ms (median)  IDLE inside GPU span
+      0.06 ms (median)  other:reduce_segments
+      0.05 ms (median)  outside GPU span (period - span; host/inter-step gap)
+      0.04 ms (median)  other:sampling/MTP/bookkeeping
+      0.03 ms (median)  other:reduce_kernel
+      0.03 ms (median)  other:scaled_fp8_quant_kernel_strided_group_shape
+  sum 27.8
+
+== mixed pt<150: n=22 (x6.25 per 400-prompt trial = 138) median period 79.8 ms (mean 88.2, mean prefill tokens 78), median prefill tokens 66, decode tokens 45
+     35.14 ms (median)  marlin
+     17.11 ms (median)  outside GPU span (period - span; host/inter-step gap)
+     10.24 ms (median)  other:hostar_kernel
+      6.11 ms (median)  GDN prefill/decode kernels
+      3.24 ms (median)  norm/act/rope/elementwise
+      1.63 ms (median)  IDLE inside GPU span
+      1.50 ms (median)  attention
+      1.16 ms (median)  lm_head/other GEMM
+      0.89 ms (median)  other:Kernel2
+      0.04 ms (median)  other:sampling/MTP/bookkeeping
+      0.04 ms (median)  other:reduce_kernel
+      0.03 ms (median)  other:scaled_fp8_quant_kernel_strided_group_shape
+      0.03 ms (median)  memcpy(AR/host)
+  sum 77.2
+
+== mixed pt 150-399: n=8 (x6.25 per 400-prompt trial = 50) median period 95.2 ms (mean 123.5, mean prefill tokens 297), median prefill tokens 314, decode tokens 45
+     83.95 ms (median)  marlin
+     10.28 ms (median)  other:hostar_kernel
+      8.18 ms (median)  GDN prefill/decode kernels
+      6.52 ms (median)  memcpy(AR/host)
+      4.68 ms (median)  IDLE inside GPU span
+      3.74 ms (median)  norm/act/rope/elementwise
+      2.15 ms (median)  attention
+      1.29 ms (median)  lm_head/other GEMM
+      0.98 ms (median)  other:Kernel2
+      0.04 ms (median)  other:scaled_fp8_quant_kernel_strided_group_shape
+      0.04 ms (median)  other:sampling/MTP/bookkeeping
+      0.04 ms (median)  other:nccl
+      0.04 ms (median)  other:reduce_kernel
+  sum 102.0
+
+== mixed pt>=400: n=19 (x6.25 per 400-prompt trial = 119) median period 140.5 ms (mean 166.5, mean prefill tokens 825), median prefill tokens 731, decode tokens 45
+    157.70 ms (median)  marlin
+     30.66 ms (median)  other:hostar_kernel
+     12.97 ms (median)  memcpy(AR/host)
+     10.97 ms (median)  GDN prefill/decode kernels
+      5.56 ms (median)  norm/act/rope/elementwise
+      4.50 ms (median)  IDLE inside GPU span
+      3.39 ms (median)  attention
+      1.51 ms (median)  lm_head/other GEMM
+      1.11 ms (median)  other:Kernel2
+      0.06 ms (median)  other:scaled_fp8_quant_kernel_strided_group_shape
+      0.05 ms (median)  other:nccl
+      0.04 ms (median)  other:sampling/MTP/bookkeeping
+      0.04 ms (median)  other:reduce_kernel
+  sum 150.1
+
+== top kernel names per family (summed rank-0 kernel time over all steps, ms/step-of-kind), non-marlin
+-- prefill steps (n=49)
+    26.40 ms/step  other:hostar_kernel | hostar_kernel
+     6.96 ms/step  norm/act/rope/elementwise | act_and_mul_kernel
+     3.98 ms/step  GDN prefill/decode kernels | fused_sigmoid_gating_delta_rule_update_kernel
+     3.69 ms/step  norm/act/rope/elementwise | add_kernel
+     2.03 ms/step  attention | kernel_cutlass_kernel_flashinfernormkernelsfused_add_rmsnormFusedAddRM
+     1.36 ms/step  GDN prefill/decode kernels | chunk_fwd_kernel_o
+     1.15 ms/step  attention | kernel_unified_attention
+     1.08 ms/step  lm_head/other GEMM | lmh_gemm_kernel
+     1.07 ms/step  other:Kernel2 | Kernel2
+     1.06 ms/step  norm/act/rope/elementwise | elementwise_kernel
+     1.01 ms/step  norm/act/rope/elementwise | index_elementwise_kernel
+     0.82 ms/step  GDN prefill/decode kernels | chunk_gated_delta_rule_fwd_kernel_h_blockdim64
+     0.66 ms/step  norm/act/rope/elementwise | vectorized_gather_kernel
+     0.63 ms/step  GDN prefill/decode kernels | merge_16x16_to_64x64_inverse_kernel
+     0.48 ms/step  GDN prefill/decode kernels | recompute_w_u_fwd_kernel
+     0.33 ms/step  norm/act/rope/elementwise | vectorized_elementwise_kernel
+     0.33 ms/step  GDN prefill/decode kernels | _causal_conv1d_fwd_kernel
+     0.32 ms/step  GDN prefill/decode kernels | chunk_scaled_dot_kkt_fwd_kernel
+-- decode steps (n=494)
+     5.56 ms/step  other:hostar_kernel | hostar_kernel
+     2.27 ms/step  GDN prefill/decode kernels | gdn_decode_post_conv_mtp_kernel
+     1.24 ms/step  other:Kernel2 | Kernel2
+     1.01 ms/step  lm_head/other GEMM | lmh_gemm_kernel
+     0.51 ms/step  attention | kernel_cutlass_kernel_flashinfernormkernelsfused_add_rmsnormFusedAddRM
+     0.25 ms/step  attention | kernel_unified_attention
+     0.20 ms/step  norm/act/rope/elementwise | act_and_mul_kernel
+     0.17 ms/step  GDN prefill/decode kernels | _causal_conv1d_update_kernel
+     0.15 ms/step  lm_head/other GEMM | splitKreduce_kernel
+     0.06 ms/step  other:reduce_segments | reduce_segments
+     0.06 ms/step  norm/act/rope/elementwise | vectorized_elementwise_kernel
+     0.04 ms/step  norm/act/rope/elementwise | _fused_qk_rmsnorm_rope_gate_kernel
+     0.03 ms/step  other:reduce_kernel | reduce_kernel
+     0.03 ms/step  other:scaled_fp8_quant_kernel_strided_group_shape | scaled_fp8_quant_kernel_strided_group_shape
+     0.03 ms/step  attention | reshape_and_cache_kernel_flash
+     0.02 ms/step  norm/act/rope/elementwise | _fused_sigmoid_gate_mul_kernel
+     0.02 ms/step  nccl | ncclDevKernel_AllGather_RING_LL
+     0.01 ms/step  norm/act/rope/elementwise | unrolled_elementwise_kernel
+NOTES: profile job 19 (nsys TRACE=node, champion T1-042 in workspace t2-w1, 64 prompts, c=16, rank 0 = GPU 0). cp.py = exclusive attribution on the union timeline of rank-0 kernels+memcpys inside each step's GPU span (priority marlin > hostar > GDN > attention > norm/act > lm_head > memcpy; so concurrent side-stream work is not double counted), plus 'outside GPU span' = step period minus span (GPU lags host: negative effects when async steps overlap are clipped by the median). nsys inflates host-side so absolute periods are ~5-10% longer than unprofiled (decode 26.3 vs ~25.5 ms).

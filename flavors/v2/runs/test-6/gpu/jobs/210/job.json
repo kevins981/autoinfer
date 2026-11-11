@@ -1,0 +1,15 @@
+{
+  "id": 210,
+  "pid": 614476,
+  "team": "T28",
+  "agent": "leader-28.w1",
+  "label": null,
+  "timeout_min": 5.0,
+  "command": [
+    "./job5.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-28.w1/e4",
+  "submitted": "2026-11-09T22:24:03+00:00",
+  "state": "cancelled",
+  "ended": "2026-11-09T22:32:58+00:00"
+}

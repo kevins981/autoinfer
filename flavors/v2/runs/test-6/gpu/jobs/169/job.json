@@ -1,0 +1,18 @@
+{
+  "id": 169,
+  "pid": 431459,
+  "team": "T27",
+  "agent": "leader-27",
+  "label": "t27-screen-mb",
+  "timeout_min": 3.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-27/mb/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-27/mb",
+  "submitted": "2026-11-09T13:54:04+00:00",
+  "state": "done",
+  "started": "2026-11-09T13:54:04+00:00",
+  "ended": "2026-11-09T13:54:08+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.075
+}

@@ -1,0 +1,6 @@
+gemm alone: 435.6 us per gate_up M=320
+D2H alone: 157.0 us per 3.28 MB = 20.9 GB/s
+H2D alone: 134.3 us = 24.4 GB/s
+D2H||H2D: D2H 214.4 us, H2D 261.8 us per copy (duplex)
+gemm x40 || 10 D2H + 10 H2D: gemm 436.4 us/launch, D2H 213.2 us, H2D 258.6 us per copy
+gemm x40 || 20 D2H + 20 H2D: gemm 436.4 us/launch, D2H 205.4 us, H2D 252.7 us per copy

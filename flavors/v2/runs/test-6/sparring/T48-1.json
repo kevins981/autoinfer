@@ -1,0 +1,18 @@
+{
+ "id": "T48-1",
+ "team": "T48",
+ "by": "leader-48",
+ "backend": "codex",
+ "model": "gpt-6.1-sol",
+ "effort": "high",
+ "work": "/scratch/kevinsong/learning/autoinfer/.cache/sparring_work/test-6-T48-1-1794367443",
+ "sid_new": "3b2bdbd5-1248-4072-92fd-bb32dae34464",
+ "session": "01a1c8a2-5419-7ad3-aad2-9025039934ce",
+ "state": "ended",
+ "turns": 8,
+ "started": "2026-11-11T03:24:03.747148+00:00",
+ "ended": "2026-11-11T10:42:01.318074+00:00",
+ "reopened": [
+  "2026-11-11T10:40:34.270650+00:00"
+ ]
+}

@@ -1,0 +1,19 @@
+{
+  "id": 18,
+  "pid": 27252,
+  "team": "T3",
+  "agent": "leader-3.w1",
+  "label": "t3-anat7",
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "job_anat7.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-3.w1",
+  "submitted": "2026-11-09T00:26:16+00:00",
+  "state": "done",
+  "started": "2026-11-09T00:28:06+00:00",
+  "ended": "2026-11-09T00:31:23+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.279
+}

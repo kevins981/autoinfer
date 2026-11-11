@@ -1,0 +1,19 @@
+{
+  "id": 6,
+  "pid": 4186178,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": null,
+  "timeout_min": 3.0,
+  "command": [
+    "python",
+    "agents/leader-2.w1/mb2.py"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-08T23:38:37+00:00",
+  "state": "done",
+  "started": "2026-11-08T23:39:23+00:00",
+  "ended": "2026-11-08T23:40:37+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.228
+}

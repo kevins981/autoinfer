@@ -1,0 +1,199 @@
+{"t": "2026-11-08T23:15:15+00:00", "event": "open", "team": "MGR", "type": "manager", "by": "human"}
+{"t": "2026-11-08T23:15:39+00:00", "event": "open", "team": "T2", "type": "explore", "by": "manager"}
+{"t": "2026-11-08T23:15:39+00:00", "event": "grant", "team": "T2", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-08T23:15:39+00:00", "event": "open", "team": "T3", "type": "explore", "by": "manager"}
+{"t": "2026-11-08T23:15:39+00:00", "event": "grant", "team": "T3", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-08T23:20:39+00:00", "event": "grant", "team": "T3", "kind": "start", "minutes": 80.0, "by": "manager", "note": "self-distilled MTP draft head (2-step unrolled loss, self-generated data); forecast +10% if it works, central +4%, ~35%"}
+{"t": "2026-11-08T23:42:45+00:00", "event": "grant", "team": "T2", "kind": "start", "minutes": 80.0, "by": "manager", "note": "spatial prefill/decode overlap (prefill lane on green-context SM partition); forecast +20% if it works, central +7%, 25-30%"}
+{"t": "2026-11-09T00:35:20+00:00", "event": "grant", "team": "T3", "kind": "last-chance", "minutes": 20.0, "by": "manager", "note": "resync 1: T3-2 payoff fell to ~+4% (<5% bar) on measured in-server costs (T3-007); T3-1 closed earlier on its own kill criterion"}
+{"t": "2026-11-09T00:55:04+00:00", "event": "close", "team": "T2", "by": "manager", "note": "voluntary closure at resync 1: T2-1 gate failed (KB59), no bar-clearing pivot; write-up reports/T2-writeup.md"}
+{"t": "2026-11-09T00:55:05+00:00", "event": "open", "team": "T4", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T00:55:05+00:00", "event": "grant", "team": "T4", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T01:00:23+00:00", "event": "close", "team": "T3", "by": "manager", "note": "voluntary closure at resync 2: T3-2 payoff ~+3% below bar (T3-008), no bar-clearing direction; write-up reports/T3-writeup.md"}
+{"t": "2026-11-09T01:00:31+00:00", "event": "open", "team": "T5", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T01:00:31+00:00", "event": "grant", "team": "T5", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T01:15:09+00:00", "event": "close", "team": "T4", "by": "manager", "note": "voluntary closure: premise failed (T4-001, KB62), no bar-clearing follow-up; write-up reports/T4-writeup.md"}
+{"t": "2026-11-09T01:15:10+00:00", "event": "open", "team": "T6", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T01:15:10+00:00", "event": "grant", "team": "T6", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T01:42:11+00:00", "event": "grant", "team": "T6", "kind": "start", "minutes": 40.0, "by": "manager", "note": "single-pass W8A16 for M=49-256 (parallel slabs sharing L2) + use of decode slack; forecast +5-6% if it works, central +1.5%, 15-20%"}
+{"t": "2026-11-09T01:48:48+00:00", "event": "grant", "team": "T5", "kind": "start", "minutes": 80.0, "by": "manager", "note": "deeper exact speculation at M=64 on built stack (k=3 + Marlin tile override + memory route, then budgeted K_MAX=4); forecast +7% if it works (T5 parts), central +3.5%, ~30%"}
+{"t": "2026-11-09T03:04:12+00:00", "event": "close", "team": "T5", "by": "manager", "note": "voluntary closure at resync 1: deeper speculation ceiling ~+1-2% (KB63); write-up reports/T5-writeup.md"}
+{"t": "2026-11-09T03:04:21+00:00", "event": "open", "team": "T7", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T03:04:21+00:00", "event": "grant", "team": "T7", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T03:13:30+00:00", "event": "close", "team": "T6", "by": "manager", "note": "voluntary closure at resync 1: kernel exact but ~0 in-server at k=2; piggyback killed (T6-005/007); write-up reports/T6-writeup.md"}
+{"t": "2026-11-09T03:13:38+00:00", "event": "open", "team": "T8", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T03:13:38+00:00", "event": "grant", "team": "T8", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T03:31:48+00:00", "event": "close", "team": "T7", "by": "manager", "note": "voluntary closure: seed gate failed (T7-001, KB65); write-up reports/T7-writeup.md"}
+{"t": "2026-11-09T03:31:49+00:00", "event": "open", "team": "T9", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T03:31:49+00:00", "event": "grant", "team": "T9", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T03:46:54+00:00", "event": "grant", "team": "T8", "kind": "start", "minutes": 60.0, "by": "manager", "note": "2-warps/scheduler decode GEMM (M<=48); forecast +5.6% if it works, central +2.5%, ~25%; gated milestones"}
+{"t": "2026-11-09T04:02:13+00:00", "event": "grant", "team": "T9", "kind": "start", "minutes": 60.0, "by": "manager", "note": "copy-engine ping-pong of prefill-size ARs in mixed steps; forecast +5.6% if it works, central +3%, ~30%"}
+{"t": "2026-11-09T04:08:27+00:00", "event": "close", "team": "T8", "by": "manager", "note": "voluntary closure: M1 kill gate (T8-003: 2-warp kernel 129.5 vs Marlin 87.8 us warm); ceiling ~+2.8%; write-up reports/T8-writeup.md"}
+{"t": "2026-11-09T04:08:36+00:00", "event": "open", "team": "T10", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T04:08:36+00:00", "event": "grant", "team": "T10", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T04:29:35+00:00", "event": "close", "team": "T10", "by": "manager", "note": "voluntary closure after seed: no bar-clearing direction; FP8-MMA kill (T10-001, KB69); write-up reports/T10-writeup.md"}
+{"t": "2026-11-09T04:29:35+00:00", "event": "open", "team": "T11", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T04:29:35+00:00", "event": "grant", "team": "T11", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T04:46:43+00:00", "event": "close", "team": "T11", "by": "manager", "note": "voluntary closure: seed premise failed (T11-001, KB70); write-up reports/T11-writeup.md"}
+{"t": "2026-11-09T04:46:43+00:00", "event": "open", "team": "T12", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T04:46:43+00:00", "event": "grant", "team": "T12", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T05:23:41+00:00", "event": "grant", "team": "T9", "kind": "extension", "minutes": 12.0, "by": "manager", "note": "verification: repeated same-job ABBA (400 prompts) of champion candidate T9-005 before promotion"}
+{"t": "2026-11-09T05:42:19+00:00", "event": "grant", "team": "T12", "kind": "extension", "minutes": 12.0, "by": "manager", "note": "finish G1 (draft step 0.573 ms measured, gate <=0.65); part of the gated start"}
+{"t": "2026-11-09T05:49:56+00:00", "event": "close", "team": "T12", "by": "manager", "note": "voluntary closure: G1 failed (T12-002: 32K vocab -7.3%); package payoff < 3%; write-up reports/T12-writeup.md"}
+{"t": "2026-11-09T05:49:56+00:00", "event": "open", "team": "T13", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T05:49:56+00:00", "event": "grant", "team": "T13", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T05:57:11+00:00", "event": "grant", "team": "T9", "kind": "extension", "minutes": 20.0, "by": "manager", "note": "resync 1: beat the champion (T9-005, +0.7%); harvest codec on CE prefill payload + B-lite cross-layer overlap, ABBA-gated"}
+{"t": "2026-11-09T06:56:38+00:00", "event": "close", "team": "T9", "by": "manager", "note": "voluntary closure after its win (T9-005 champion); increments dead (T9-006/007); write-up reports/T9-writeup.md"}
+{"t": "2026-11-09T06:56:39+00:00", "event": "open", "team": "T14", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T06:56:39+00:00", "event": "grant", "team": "T14", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T07:07:12+00:00", "event": "close", "team": "T13", "by": "manager", "note": "voluntary closure after seed: producer-fused AR premise failed (T13-001, KB72); write-up reports/T13-writeup.md"}
+{"t": "2026-11-09T07:07:13+00:00", "event": "open", "team": "T15", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T07:07:13+00:00", "event": "grant", "team": "T15", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T07:29:37+00:00", "event": "grant", "team": "T14", "kind": "last-chance", "minutes": 20.0, "by": "manager", "note": "G1 failed for the package (payoff ~+3.5% < bar); harvest the measured exact Marlin policy on T9-005 (T14-002): 400-prompt same-job ABBA, then official if all B > A"}
+{"t": "2026-11-09T07:30:31+00:00", "event": "close", "team": "T15", "by": "manager", "note": "voluntary closure after seed: no bar-clearing direction (T15-001/002, KB73); write-up reports/T15-writeup.md"}
+{"t": "2026-11-09T07:30:32+00:00", "event": "open", "team": "T16", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T07:30:32+00:00", "event": "grant", "team": "T16", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T07:58:40+00:00", "event": "grant", "team": "T14", "kind": "extension", "minutes": 9.0, "by": "manager", "note": "official eval of T14-004 after a full same-job ABBA (all B > all A, +0.9%)"}
+{"t": "2026-11-09T07:59:30+00:00", "event": "grant", "team": "T14", "kind": "extension", "minutes": 8.0, "by": "manager", "note": "cover official_eval's 20-min reservation for T14-004 (only actual use is charged)"}
+{"t": "2026-11-09T08:13:15+00:00", "event": "close", "team": "T14", "by": "manager", "note": "voluntary closure after its win (T14-004 champion); write-up reports/T14-writeup.md"}
+{"t": "2026-11-09T08:13:15+00:00", "event": "open", "team": "T17", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T08:13:15+00:00", "event": "grant", "team": "T17", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T08:15:54+00:00", "event": "close", "team": "T16", "by": "manager", "note": "voluntary closure after seed: hybrid AR gate failed (T16-001, KB74); write-up reports/T16-writeup.md"}
+{"t": "2026-11-09T08:15:54+00:00", "event": "open", "team": "T18", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T08:15:54+00:00", "event": "grant", "team": "T18", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T08:35:08+00:00", "event": "close", "team": "T18", "by": "manager", "note": "voluntary closure after seed: no bar-clearing direction; write-up reports/T18-writeup.md"}
+{"t": "2026-11-09T08:35:08+00:00", "event": "open", "team": "T19", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T08:35:08+00:00", "event": "grant", "team": "T19", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T09:01:53+00:00", "event": "close", "team": "T17", "by": "manager", "note": "voluntary closure after seed: M0 killed, premise was a write-flush artifact (T17-001, KB76); write-up reports/T17-writeup.md"}
+{"t": "2026-11-09T09:01:54+00:00", "event": "open", "team": "T20", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T09:01:54+00:00", "event": "grant", "team": "T20", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T09:11:22+00:00", "event": "close", "team": "T19", "by": "manager", "note": "voluntary closure after seed: new-request path below the bar (T19-001, KB77); write-up reports/T19-writeup.md"}
+{"t": "2026-11-09T09:11:22+00:00", "event": "open", "team": "T21", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T09:11:22+00:00", "event": "grant", "team": "T21", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T09:39:22+00:00", "event": "close", "team": "T20", "by": "manager", "note": "voluntary closure after seed: LL AR exact but G1 failed in-chain (T20-001, KB78); write-up reports/T20-writeup.md"}
+{"t": "2026-11-09T09:39:23+00:00", "event": "open", "team": "T22", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T09:39:23+00:00", "event": "grant", "team": "T22", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T10:15:41+00:00", "event": "close", "team": "T22", "by": "manager", "note": "voluntary closure after seed: warm floors bound payoff ~+3.5%; down-prefix prefetch -0.9% (T22-001/002, KB79); write-up reports/T22-writeup.md"}
+{"t": "2026-11-09T10:15:41+00:00", "event": "open", "team": "T23", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T10:15:41+00:00", "event": "grant", "team": "T23", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T11:13:44+00:00", "event": "close", "team": "T23", "by": "manager", "note": "voluntary closure after seed: package below bar after M1 downgrade, G2a and W1-3 failed (T23-001..003, KB80); write-up reports/T23-writeup.md"}
+{"t": "2026-11-09T11:13:44+00:00", "event": "open", "team": "T24", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T11:13:44+00:00", "event": "grant", "team": "T24", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T11:34:17+00:00", "event": "close", "team": "T24", "by": "manager", "note": "voluntary closure after seed: warm-GEMM premise failed (T24-001, KB81); write-up reports/T24-writeup.md"}
+{"t": "2026-11-09T11:34:18+00:00", "event": "open", "team": "T25", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T11:34:18+00:00", "event": "grant", "team": "T25", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T11:54:46+00:00", "event": "grant", "team": "T25", "kind": "start", "minutes": 30.0, "by": "manager", "note": "T25-1 tranche 1: G1 passed at gate (+1.2% predicted, T25-001); S1 GPU1-aware MLP rebalance"}
+{"t": "2026-11-09T13:03:58+00:00", "event": "close", "team": "T25", "by": "manager", "note": "voluntary closure: S1 rebalance null in situ twice (T25-002/003, KB82); package below bar; write-up reports/T25-writeup.md"}
+{"t": "2026-11-09T13:03:58+00:00", "event": "open", "team": "T26", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T13:03:58+00:00", "event": "grant", "team": "T26", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T13:38:10+00:00", "event": "close", "team": "T26", "by": "manager", "note": "voluntary closure after seed: swap-AB register-direct GEMM killed (T26-001..003, KB83); write-up reports/T26-writeup.md"}
+{"t": "2026-11-09T13:38:10+00:00", "event": "open", "team": "T27", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T13:38:10+00:00", "event": "grant", "team": "T27", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T13:53:28+00:00", "event": "grant", "team": "T27", "kind": "start", "minutes": 30.0, "by": "manager", "note": "T27-1 tranche 1: budgeted K=3 + screened draft lm_head; forecast +6.8%"}
+{"t": "2026-11-09T14:10:20+00:00", "event": "grant", "team": "T21", "kind": "start", "minutes": 30.0, "by": "manager", "note": "T21-1 tranche 1 after human ruling (prefix caching allowed): hybrid prefix-state cache + prompt-as-draft feeding; forecast +5.5%"}
+{"t": "2026-11-09T15:34:14+00:00", "event": "grant", "team": "T27", "kind": "extension", "minutes": 15.0, "by": "manager", "note": "official_eval top-up for T27-002 (screened draft head; 2 same-job ABBAs, 2nd all-B>all-A, pooled +0.76%)"}
+{"t": "2026-11-09T15:50:35+00:00", "event": "close", "team": "T27", "by": "manager", "note": "closed after win: T27-002 champion (967.3); write-up reports/T27-writeup.md"}
+{"t": "2026-11-09T15:58:04+00:00", "event": "close", "team": "T21", "by": "manager", "note": "closed at resync: M1 +0.5% n=1 vs gate +2.5%; payoff below bar (T21-002, KB86); write-up reports/T21-writeup.md"}
+{"t": "2026-11-09T21:23:19+00:00", "event": "open", "team": "T28", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T21:23:19+00:00", "event": "grant", "team": "T28", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T21:23:19+00:00", "event": "open", "team": "T29", "type": "explore", "by": "manager"}
+{"t": "2026-11-09T21:23:19+00:00", "event": "grant", "team": "T29", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-09T21:34:41+00:00", "event": "grant", "team": "T29", "kind": "start", "minutes": 80.0, "by": "manager", "note": "W8A8 FP8 GEMMs for mixed/prefill steps (M>96); forecast +12.5% if it works, central +5%"}
+{"t": "2026-11-09T21:37:43+00:00", "event": "grant", "team": "T28", "kind": "start", "minutes": 80.0, "by": "manager", "note": "small-M W8A8 FP8 GEMM removing the M=64 cliff -> exact k=3/k=4 speculation; forecast +8.5% if it works, central +3.5%"}
+{"t": "2026-11-09T23:28:00+00:00", "event": "grant", "team": "T29", "kind": "extension", "minutes": 80.0, "by": "manager", "note": "resync 1: beat the champion (T29-004 +8.1% official); continue W8A8 mixed-step direction (host-launch probe, v2 config table, combined stack with T28)"}
+{"t": "2026-11-10T00:28:10+00:00", "event": "close", "team": "T29", "by": "manager", "note": "closed after two wins (T29-004, T29-006); mixed-step floors measured (KB91); write-up reports/T29-writeup.md"}
+{"t": "2026-11-10T00:28:12+00:00", "event": "open", "team": "T30", "type": "explore", "by": "manager"}
+{"t": "2026-11-10T00:28:12+00:00", "event": "grant", "team": "T30", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-10T00:57:50+00:00", "event": "close", "team": "T28", "by": "manager", "note": "closed after last chance: e4m3 at k=2 loss (T28-008), k=3 null (T28-005); variant aimed at the cause tried (T28-007); write-up reports/T28-writeup.md"}
+{"t": "2026-11-10T00:57:50+00:00", "event": "open", "team": "T31", "type": "explore", "by": "manager"}
+{"t": "2026-11-10T00:57:50+00:00", "event": "grant", "team": "T31", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-10T01:32:55+00:00", "event": "grant", "team": "T30", "kind": "start", "minutes": 65.0, "by": "manager", "note": "two-wave layer-pipelined mixed steps (hide exposed TP AR); forecast +8% if it works, central +3%"}
+{"t": "2026-11-10T01:53:54+00:00", "event": "grant", "team": "T31", "kind": "start", "minutes": 80.0, "by": "manager", "note": "register-direct e4m3 decode GEMM cashing AR L2 prefetch; S1 met (kernel v2 warm -15%/forward, lines met except gate_up cold +6%); forecast +7..11% if it works, central +4%"}
+{"t": "2026-11-10T03:25:06+00:00", "event": "close", "team": "T31", "by": "manager", "note": "closed after win T31-003 (+2.5% official); nothing above ~0.5% left; write-up reports/T31-writeup.md; no replacement (human instruction)"}
+{"t": "2026-11-10T03:27:30+00:00", "event": "close", "team": "T30", "by": "manager", "note": "closed: k-wave variant aimed at the cause failed (AR latency chain > wave cover; best ~+2% < bar); write-up reports/T30-writeup.md; no replacement (human instruction)"}
+{"t": "2026-11-10T03:38:19+00:00", "event": "open", "team": "T32", "type": "external", "by": "manager"}
+{"t": "2026-11-10T03:38:19+00:00", "event": "grant", "team": "T32", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-10T14:56:35+00:00", "event": "close", "team": "T32", "by": "human", "note": "human: deck T32-1 assessed (proposals/T32-1.md: no card clears +5%) and own web research (T32-2.md); closed to get a second external data point (T33)"}
+{"t": "2026-11-10T14:56:35+00:00", "event": "open", "team": "T33", "type": "external", "by": "human"}
+{"t": "2026-11-10T14:56:35+00:00", "event": "grant", "team": "T33", "kind": "seed", "minutes": 20.0, "by": "human", "note": "automatic seed"}
+{"t": "2026-11-10T15:39:38+00:00", "event": "close", "team": "T33", "by": "human", "note": "human: deck T33-1 assessed (proposals/T33-1.md: no card clears +5%); second external data point done"}
+{"t": "2026-11-10T15:39:38+00:00", "event": "reopen", "team": "T32", "by": "human", "note": "human: continue T32 after its sparring session (proposals/T32-3.md): seed for its cheap tests, then a proposal under normal funding rules"}
+{"t": "2026-11-10T15:46:27+00:00", "event": "close", "team": "T32", "by": "manager", "note": "leader recommends close: no measured path to +5% (T32-4)"}
+{"t": "2026-11-10T15:50:50+00:00", "event": "reopen", "team": "T32", "by": "human", "note": "human: correction, T32 is not limited to CPU; normal funding rules"}
+{"t": "2026-11-10T15:59:48+00:00", "event": "reopen", "team": "T33", "by": "human", "note": "human: resume leader-33 with the sparring partner available"}
+{"t": "2026-11-10T16:03:08+00:00", "event": "grant", "team": "T32", "kind": "start", "minutes": 80.0, "by": "manager", "note": "T32-5 waves with captured GDN core; Stage 0 gates passed (bank/T32-002); forecast A+C +4.3-5.5% / A+B+C +6.1-7.3%, central +1.8%"}
+{"t": "2026-11-10T16:49:55+00:00", "event": "close", "team": "T32", "by": "manager", "note": "resync: payoff if works below bar (measured ceiling); leader recommends close (T32-6)"}
+{"t": "2026-11-10T16:54:20+00:00", "event": "open", "team": "T34", "type": "explore", "by": "manager"}
+{"t": "2026-11-10T16:54:20+00:00", "event": "grant", "team": "T34", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-10T17:11:38+00:00", "event": "close", "team": "T33", "by": "manager", "note": "leader recommends close after sparring (11 turns) and tests; reports/T33-1.md"}
+{"t": "2026-11-10T18:46:28+00:00", "event": "grant", "team": "T34", "kind": "start", "minutes": 60.0, "by": "manager", "note": "T34-1 hybrid mixed-step AR (H) +codec+fusion+waves; forecast payoff if works ~+5% (at bar), central +2%, odds 15-20%; stage-1 gate ABBA all-B>all-A and >=+1.0% else close"}
+{"t": "2026-11-10T18:52:12+00:00", "event": "close", "team": "T34", "by": "manager", "note": "leader recommends close: stage 1 measured hard limit (transport within ~11% of PCIe duplex floor); reports/T34-writeup.md"}
+{"t": "2026-11-10T19:52:09+00:00", "event": "open", "team": "T35", "type": "moonshot", "by": "manager"}
+{"t": "2026-11-10T19:52:09+00:00", "event": "grant", "team": "T35", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-10T19:52:09+00:00", "event": "grant", "team": "T35", "kind": "extension", "minutes": 10.0, "by": "manager", "note": "moonshot seed (30 total)"}
+{"t": "2026-11-10T20:25:32+00:00", "event": "grant", "team": "T35", "kind": "start", "minutes": 15.0, "by": "manager", "note": "moonshot stage 1: run-ahead L2 weight streamer / streaming-bound decode; upside bound ~+35%"}
+{"t": "2026-11-10T20:27:17+00:00", "event": "open", "team": "T36", "type": "moonshot", "by": "manager"}
+{"t": "2026-11-10T20:27:17+00:00", "event": "grant", "team": "T36", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-10T20:27:18+00:00", "event": "grant", "team": "T36", "kind": "extension", "minutes": 10.0, "by": "manager", "note": "moonshot seed (30 total)"}
+{"t": "2026-11-10T20:37:26+00:00", "event": "close", "team": "T35", "by": "manager", "note": "moonshot core idea shown wrong at milestone 1 (T35-003); leader recommends close"}
+{"t": "2026-11-10T21:16:03+00:00", "event": "close", "team": "T36", "by": "manager", "note": "moonshot: T36-1 core idea answered negative; search found no second direction; reports/T36-writeup.md"}
+{"t": "2026-11-10T21:26:06+00:00", "event": "open", "team": "T37", "type": "moonshot", "by": "manager"}
+{"t": "2026-11-10T21:26:06+00:00", "event": "grant", "team": "T37", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-10T21:26:06+00:00", "event": "grant", "team": "T37", "kind": "extension", "minutes": 10.0, "by": "manager", "note": "moonshot seed (30 total)"}
+{"t": "2026-11-10T21:59:59+00:00", "event": "grant", "team": "T37", "kind": "start", "minutes": 31.0, "by": "manager", "note": "moonshot stage 1: one static row-budgeted step (fill every weight pass); upside ~+18%; milestone 1 = k=3/k=4 with all 16 seqs ABBA vs champion"}
+{"t": "2026-11-10T22:46:26+00:00", "event": "grant", "team": "T37", "kind": "extension", "minutes": 6.0, "by": "manager", "note": "k=3 GSM8K-250 FP8 A/B (promotion condition) + margin"}
+{"t": "2026-11-10T22:53:35+00:00", "event": "close", "team": "T37", "by": "manager", "note": "moonshot closed by leader after win (T37-002 champion) and sparring; reports/T37-writeup.md"}
+{"t": "2026-11-10T22:58:23+00:00", "event": "open", "team": "T38", "type": "moonshot", "by": "manager"}
+{"t": "2026-11-10T22:58:23+00:00", "event": "grant", "team": "T38", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-10T22:58:23+00:00", "event": "grant", "team": "T38", "kind": "extension", "minutes": 10.0, "by": "manager", "note": "moonshot seed (30 total)"}
+{"t": "2026-11-10T23:28:16+00:00", "event": "grant", "team": "T38", "kind": "start", "minutes": 15.0, "by": "manager", "note": "moonshot stage 1: T38-2 self-distilled MTP draft head; milestone 1 ~35 GPU-min; upside +6..9%"}
+{"t": "2026-11-11T01:12:20+00:00", "event": "close", "team": "T38", "by": "manager", "note": "moonshot closed by leader: PP decode r=0.91-0.92 < 0.93 rule; ceiling ~+6% for 100+ GPU-min; sparring supported; reports/T38-writeup.md"}
+{"t": "2026-11-11T01:55:14+00:00", "event": "open", "team": "T39", "type": "research", "by": "manager"}
+{"t": "2026-11-11T01:55:14+00:00", "event": "grant", "team": "T39", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T01:55:14+00:00", "event": "open", "team": "T40", "type": "research", "by": "manager"}
+{"t": "2026-11-11T01:55:14+00:00", "event": "grant", "team": "T40", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T01:55:14+00:00", "event": "open", "team": "T41", "type": "research", "by": "manager"}
+{"t": "2026-11-11T01:55:14+00:00", "event": "grant", "team": "T41", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T01:59:26+00:00", "event": "close", "team": "T39", "by": "manager", "note": "closed by human instruction before any work (research config changed); replaced"}
+{"t": "2026-11-11T01:59:27+00:00", "event": "close", "team": "T40", "by": "manager", "note": "closed by human instruction before any work (research config changed); replaced"}
+{"t": "2026-11-11T01:59:27+00:00", "event": "close", "team": "T41", "by": "manager", "note": "closed by human instruction before any work (research config changed); replaced"}
+{"t": "2026-11-11T01:59:37+00:00", "event": "open", "team": "T42", "type": "research", "by": "manager"}
+{"t": "2026-11-11T01:59:37+00:00", "event": "grant", "team": "T42", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T01:59:37+00:00", "event": "open", "team": "T43", "type": "research", "by": "manager"}
+{"t": "2026-11-11T01:59:37+00:00", "event": "grant", "team": "T43", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T01:59:37+00:00", "event": "open", "team": "T44", "type": "research", "by": "manager"}
+{"t": "2026-11-11T01:59:37+00:00", "event": "grant", "team": "T44", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T01:59:37+00:00", "event": "open", "team": "T45", "type": "research", "by": "manager"}
+{"t": "2026-11-11T01:59:37+00:00", "event": "grant", "team": "T45", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T02:17:49+00:00", "event": "close", "team": "T43", "by": "manager", "note": "research team stops after its first proposal (human rule); proposals/T43-1.md recorded, not judged"}
+{"t": "2026-11-11T02:19:23+00:00", "event": "close", "team": "T42", "by": "manager", "note": "research team stops after its first proposal (human rule); proposals/T42-1.md recorded, not judged"}
+{"t": "2026-11-11T02:23:09+00:00", "event": "reopen", "team": "T42", "by": "manager", "note": "human: research teams continue after first proposal"}
+{"t": "2026-11-11T02:23:09+00:00", "event": "reopen", "team": "T43", "by": "manager", "note": "human: research teams continue after first proposal"}
+{"t": "2026-11-11T02:23:22+00:00", "event": "grant", "team": "T42", "kind": "start", "minutes": 20.0, "by": "manager", "note": "research: certified greedy decisions for the target lm_head (T42-1); stage 1 in seed, stage 2 in-server + ABBA"}
+{"t": "2026-11-11T02:23:22+00:00", "event": "grant", "team": "T43", "kind": "start", "minutes": 10.0, "by": "manager", "note": "research: row-selective AR / decision-depth measurement (T43-1)"}
+{"t": "2026-11-11T02:40:39+00:00", "event": "close", "team": "T43", "by": "manager", "note": "leader recommends close after GPU-free pass and sparring (T43-2); no second direction; KB114 reworded per leader"}
+{"t": "2026-11-11T02:42:57+00:00", "event": "grant", "team": "T44", "kind": "start", "minutes": 15.0, "by": "manager", "note": "research: SM PCIe host traffic is not half duplex when paced (T44-1); stage 1 in-chain test"}
+{"t": "2026-11-11T03:07:40+00:00", "event": "close", "team": "T44", "by": "manager", "note": "leader recommends close (declined second spar; closing reasons from direct interventions); reports/T44-writeup.md"}
+{"t": "2026-11-11T03:12:44+00:00", "event": "open", "team": "T46", "type": "research", "by": "manager"}
+{"t": "2026-11-11T03:12:44+00:00", "event": "grant", "team": "T46", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T03:12:44+00:00", "event": "open", "team": "T47", "type": "research", "by": "manager"}
+{"t": "2026-11-11T03:12:44+00:00", "event": "grant", "team": "T47", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T03:12:44+00:00", "event": "open", "team": "T48", "type": "research", "by": "manager"}
+{"t": "2026-11-11T03:12:44+00:00", "event": "grant", "team": "T48", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T03:13:12+00:00", "event": "open", "team": "T49", "type": "research", "by": "manager"}
+{"t": "2026-11-11T03:13:12+00:00", "event": "grant", "team": "T49", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T03:21:18+00:00", "event": "grant", "team": "T45", "kind": "extension", "minutes": 25.0, "by": "manager", "note": "research: gate_up at M=64 on W8A8 path (T45-004 finding) - same-job ABBA + FP8 A/B + official"}
+{"t": "2026-11-11T03:29:35+00:00", "event": "close", "team": "T42", "by": "manager", "note": "leader recommends close after spar (T42-1 turn 5); reports/T42-writeup.md"}
+{"t": "2026-11-11T10:33:29+00:00", "event": "close", "team": "T45", "by": "manager", "note": "research team done after win T45-005 (champion); reports/T45-writeup.md"}
+{"t": "2026-11-11T10:34:24+00:00", "event": "close", "team": "T49", "by": "manager", "note": "leader closes; spar T49-1 covered the reasons; reports/T49-writeup.md"}
+{"t": "2026-11-11T10:42:00+00:00", "event": "close", "team": "T46", "by": "manager", "note": "leader closes after spar T46-2; reports/T46-writeup.md"}
+{"t": "2026-11-11T10:42:20+00:00", "event": "close", "team": "T48", "by": "manager", "note": "leader closes after spar; reports/T48-writeup.md"}
+{"t": "2026-11-11T10:48:29+00:00", "event": "close", "team": "T47", "by": "manager", "note": "leader closes after T47-001/002; reports/T47-writeup.md"}
+{"t": "2026-11-11T13:41:06+00:00", "event": "open", "team": "T50", "type": "exploit", "by": "manager"}
+{"t": "2026-11-11T13:41:06+00:00", "event": "grant", "team": "T50", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T13:41:06+00:00", "event": "grant", "team": "T50", "kind": "start", "minutes": 80.0, "by": "manager", "note": "exploit team start"}
+{"t": "2026-11-11T13:43:51+00:00", "event": "open", "team": "T51", "type": "exploit-long", "by": "manager"}
+{"t": "2026-11-11T13:43:51+00:00", "event": "grant", "team": "T51", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T14:49:02+00:00", "event": "grant", "team": "T51", "kind": "start", "minutes": 25.0, "by": "manager", "note": "bounded kernel-design step: TP-shape gate_up/down prototype at M=128-160, chain gate <=0.04 ms/row; upside +8% if it works"}
+{"t": "2026-11-11T14:54:24+00:00", "event": "close", "team": "T50", "by": "manager", "note": "exploit team: win T50-002; remaining items <=0.4% e2e; leader recommended closing"}
+{"t": "2026-11-11T14:58:12+00:00", "event": "close", "team": "T51", "by": "manager", "note": "measured kernel gate failed (band 0.06-0.075 vs 0.055); leader recommended; sparring T51-1 agreed"}

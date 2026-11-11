@@ -1,0 +1,4 @@
+# T46 write-up (research, leader-46)
+Records: bank/T46-001 (host embedding: exact, frees 1.27 GB/GPU, ~0.2%), bank/T46-002 (link adds weight bandwidth, capped ~2.4% of HBM; CE staging loses); KB125. Sparring: T46-1, T46-2. Notes: local_kb/leader-46.md. Proposal: proposals/T46-1.md.
+Open premises (leader): (a) single-microbatch PP with prefill filling the idle stage ~36.5 ms/pass vs TP 26.2 (~78 vs ~80 s, a wash); the 36.5 is a sum of T38's per-stage floors, never timed. (b) Only ~1.3-1.6 GB/GPU can be freed: only rarely-read data can leave HBM; a weight read every pass costs ~43 ms per GB at 23 GB/s, so a 6.7 GB/GPU layout (PP/TP hybrid) is out by >100x.
+Also: L2-reuse half-batch split killed by arithmetic (140 vs 135 us); bf16 all-reduce sums have no spare mantissa bits, so a codec saves only exponent bits (<=~16% of bytes). CPU-only lead for exploit teams: ~15 ms per prefill event is almost all all-reduce (T30-002).

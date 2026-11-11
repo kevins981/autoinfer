@@ -1,0 +1,22 @@
+{
+  "id": 184,
+  "pid": 476018,
+  "team": "T21",
+  "agent": "leader-21.w1",
+  "label": null,
+  "timeout_min": 14.0,
+  "command": [
+    "agents/leader-21.w1/jobs/AB.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/t21-a",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-21.w1/out/AB3",
+    "B A",
+    "no"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-09T14:59:55+00:00",
+  "state": "done",
+  "started": "2026-11-09T15:10:10+00:00",
+  "ended": "2026-11-09T15:16:11+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 6.019
+}

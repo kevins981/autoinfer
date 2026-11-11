@@ -1,0 +1,2 @@
+(T1-042 serve args with the speculative-config replaced by:)
+--speculative-config '{"method":"mtp","num_speculative_tokens":2,"use_local_argmax_reduction":true,"draft_lm_head_quantization":"fp8","draft_lm_head_vocab_size":32768,"draft_lm_head_token_file":"<run>/bank/T12-002/draft_vocab_32768.npy","draft_fc_fp8":true}'

@@ -1,0 +1,19 @@
+{
+  "id": 265,
+  "pid": 811400,
+  "team": "T31",
+  "agent": "leader-31.w1",
+  "label": null,
+  "timeout_min": 3.0,
+  "command": [
+    "./job.sh",
+    "gpu1b.json"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-31.w1",
+  "submitted": "2026-11-10T01:45:44+00:00",
+  "state": "done",
+  "started": "2026-11-10T01:51:34+00:00",
+  "ended": "2026-11-10T01:51:51+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.287
+}

@@ -1,0 +1,19 @@
+{
+  "id": 2,
+  "pid": 4177582,
+  "team": "T3",
+  "agent": "leader-3.w1",
+  "label": "t3-gen1",
+  "timeout_min": 10.0,
+  "command": [
+    "bash",
+    "job_gen.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-3.w1",
+  "submitted": "2026-11-08T23:23:47+00:00",
+  "state": "timed out",
+  "started": "2026-11-08T23:23:47+00:00",
+  "ended": "2026-11-08T23:33:49+00:00",
+  "exit_code": 124,
+  "gpu_minutes": 10.0
+}

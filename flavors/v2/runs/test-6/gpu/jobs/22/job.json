@@ -1,0 +1,28 @@
+{
+  "id": 22,
+  "pid": 40145,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "anat2",
+  "timeout_min": 12.0,
+  "command": [
+    "bash",
+    "task/scripts/profile_nsys.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/t2-m1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-2.w1/anat/prof2",
+    "64",
+    "--attention-backend",
+    "TRITON_ATTN",
+    "--compilation-config",
+    "{\"max_prefill_cudagraph_capture_tokens\": 2048, \"prefill_cudagraph_capture_token_sizes\": [1,2,4,8,16,24,32,40,48,56,64,80,96,112,128,160,192,224,256,288,320,352,384,416,448,480,512,544,576,608,640,672,704,736,768,800,832,864,896,928,960,992,1024,1056,1088,1120,1152,1184,1216,1248,1280,1312,1344,1376,1408,1440,1472,1504,1536,1568,1600,1632,1664,1696,1728,1760,1792,1824,1856,1888,1920,1952,1984,2016,2048]}",
+    "--speculative-config",
+    "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"use_local_argmax_reduction\":true,\"draft_lm_head_quantization\":\"fp8\",\"draft_lm_head_vocab_size\":98304}"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-09T00:45:04+00:00",
+  "state": "done",
+  "started": "2026-11-09T00:47:30+00:00",
+  "ended": "2026-11-09T00:50:34+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.074
+}

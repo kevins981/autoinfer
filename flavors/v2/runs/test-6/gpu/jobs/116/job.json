@@ -1,0 +1,19 @@
+{
+  "id": 116,
+  "pid": 269740,
+  "team": "T14",
+  "agent": "leader-14.w1",
+  "label": null,
+  "timeout_min": 15.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-14.w1/insitu/job_insitu.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-14.w1/insitu",
+  "submitted": "2026-11-09T07:15:50+00:00",
+  "state": "done",
+  "started": "2026-11-09T07:15:50+00:00",
+  "ended": "2026-11-09T07:27:18+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 11.472
+}

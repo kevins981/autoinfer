@@ -1,0 +1,28 @@
+[gpu] job 129 started (timeout 3 min); output: /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/gpu/jobs/129/output.log
+[gpu] team T17 (explore): 19.6 GPU-min left of 20 granted
+[gpu] reminder: each inference server loads the workspace's code when it starts, not when you submitted. Don't edit a workspace this job uses; to keep working meanwhile, copy it: ws create <new name> --from-ws <workspace>
+W1109 08:39:45.377000 317690 site-packages/torch/_opaque_base.py:6] torch._opaque_base is deprecated, use torch._custom_class_base instead
+W1109 08:39:45.377000 317690 site-packages/torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1109 08:39:45.378000 317690 site-packages/torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+Your GPU does not have native support for FP8 computation but FP8 quantization is being used. Weight-only FP8 compression will be used leveraging the Marlin kernel. This may degrade performance for compute-heavy workloads.
+flush-only per rep 281.4 us
+T5METHOD M=48 marlin cold 110.6 us
+T5METHOD M=48 mine abl=0 (4=noFixup 8=noCompute 12=both 10=noCompute+noLoad) cold 153.5 us
+T5METHOD M=48 mine abl=4 (4=noFixup 8=noCompute 12=both 10=noCompute+noLoad) cold 129.8 us
+T5METHOD M=48 mine abl=8 (4=noFixup 8=noCompute 12=both 10=noCompute+noLoad) cold 141.9 us
+T5METHOD M=48 mine abl=12 (4=noFixup 8=noCompute 12=both 10=noCompute+noLoad) cold 127.4 us
+T5METHOD M=48 mine abl=10 (4=noFixup 8=noCompute 12=both 10=noCompute+noLoad) cold 12.9 us
+T5METHOD M=64 marlin cold 124.1 us
+T5METHOD M=64 mine abl=0 (4=noFixup 8=noCompute 12=both 10=noCompute+noLoad) cold 163.7 us
+T5METHOD M=64 mine abl=4 (4=noFixup 8=noCompute 12=both 10=noCompute+noLoad) cold 130.3 us
+T5METHOD M=64 mine abl=8 (4=noFixup 8=noCompute 12=both 10=noCompute+noLoad) cold 148.1 us
+T5METHOD M=64 mine abl=12 (4=noFixup 8=noCompute 12=both 10=noCompute+noLoad) cold 127.7 us
+T5METHOD M=64 mine abl=10 (4=noFixup 8=noCompute 12=both 10=noCompute+noLoad) cold 17.1 us
+[gpu] job 129 exited with code 0 after 0.2 min
+[gpu] full output: /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/gpu/jobs/129/output.log
+[gpu] team T17 (explore): 19.4 GPU-min left of 20 granted

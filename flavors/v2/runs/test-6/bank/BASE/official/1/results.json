@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "completed": 400,
+  "output_throughput": 631.4170936634974,
+  "total_token_throughput": 1359.687473054071,
+  "median_ttft_ms": 251.03514175862074,
+  "p99_ttft_ms": 1486.593298651278,
+  "median_tpot_ms": 23.202830286075233,
+  "p99_tpot_ms": 48.39479430409314,
+  "median_itl_ms": 39.627375081181526,
+  "median_e2el_ms": 4698.177928104997,
+  "mtp_acceptance_length": 2.34,
+  "mtp_acceptance_per_position": [
+    0.779,
+    0.56
+  ],
+  "gsm8k_accuracy": 0.928,
+  "gsm8k_no_answer": 5,
+  "gate_gsm8k": "pass"
+}

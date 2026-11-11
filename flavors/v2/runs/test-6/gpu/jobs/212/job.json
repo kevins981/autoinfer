@@ -1,0 +1,15 @@
+{
+  "id": 212,
+  "pid": 624532,
+  "team": "T29",
+  "agent": "leader-29.w1",
+  "label": null,
+  "timeout_min": 21.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-29.w1/t5/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/t29-fp8",
+  "submitted": "2026-11-09T22:33:12+00:00",
+  "state": "running",
+  "started": "2026-11-09T22:49:57+00:00"
+}

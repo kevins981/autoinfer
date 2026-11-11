@@ -1,0 +1,18 @@
+{
+  "id": 62,
+  "pid": 160494,
+  "team": "T8",
+  "agent": "leader-8",
+  "label": "t8-tensor",
+  "timeout_min": 2.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-8/tc/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-8/tc",
+  "submitted": "2026-11-09T03:43:28+00:00",
+  "state": "done",
+  "started": "2026-11-09T03:43:28+00:00",
+  "ended": "2026-11-09T03:43:29+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.016
+}

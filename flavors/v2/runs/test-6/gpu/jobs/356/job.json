@@ -1,0 +1,19 @@
+{
+  "id": 356,
+  "pid": 44833,
+  "team": "T36",
+  "agent": "leader-36",
+  "label": "t36-prof",
+  "timeout_min": 12.0,
+  "command": [
+    "bash",
+    "agents/leader-36/jobs/prof.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T20:29:11+00:00",
+  "state": "done",
+  "started": "2026-11-10T20:29:11+00:00",
+  "ended": "2026-11-10T20:33:59+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.814
+}

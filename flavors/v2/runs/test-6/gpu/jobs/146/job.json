@@ -1,0 +1,21 @@
+{
+  "id": 146,
+  "pid": 342069,
+  "team": "T20",
+  "agent": "leader-20.w1",
+  "label": null,
+  "timeout_min": 6.0,
+  "command": [
+    "./job.sh",
+    "full",
+    "0",
+    "N,A_pf,Tpf_2,Tpf_3,T_3,Tpf_4"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-20.w1/g1",
+  "submitted": "2026-11-09T09:36:32+00:00",
+  "state": "done",
+  "started": "2026-11-09T09:36:32+00:00",
+  "ended": "2026-11-09T09:37:12+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.66
+}

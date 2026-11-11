@@ -1,0 +1,20 @@
+{
+  "id": 275,
+  "pid": 830558,
+  "team": "T31",
+  "agent": "leader-31.w1",
+  "label": null,
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "-c",
+    "source $AUTOINFER_RUN/workspaces/t31-k/env.sh && cd /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-31.w1 && python test_op.py 2>&1 | grep -vE \"Warning|deprecated\""
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-31.w1",
+  "submitted": "2026-11-10T02:07:01+00:00",
+  "state": "done",
+  "started": "2026-11-10T02:10:15+00:00",
+  "ended": "2026-11-10T02:10:26+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.176
+}

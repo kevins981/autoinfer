@@ -1,0 +1,24 @@
+{
+  "id": 68,
+  "pid": 169076,
+  "team": "T8",
+  "agent": "leader-8.w1",
+  "label": "w1-abl2",
+  "timeout_min": 3.0,
+  "command": [
+    "./run2.sh",
+    "0:nopf",
+    "0:pf",
+    "0:pfspin",
+    "7:nopf",
+    "7:pf",
+    "7:pfspin"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-8.w1",
+  "submitted": "2026-11-09T03:56:42+00:00",
+  "state": "done",
+  "started": "2026-11-09T03:57:36+00:00",
+  "ended": "2026-11-09T03:57:46+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.157
+}

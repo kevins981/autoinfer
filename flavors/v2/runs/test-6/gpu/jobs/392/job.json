@@ -1,0 +1,19 @@
+{
+  "id": 392,
+  "pid": 201197,
+  "team": "T38",
+  "agent": "leader-38",
+  "label": "t38-s1",
+  "timeout_min": 20.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-38/s1/run_s1.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/t38-champ/vllm",
+  "submitted": "2026-11-11T00:14:51+00:00",
+  "state": "done",
+  "started": "2026-11-11T00:14:51+00:00",
+  "ended": "2026-11-11T00:21:24+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 6.559
+}

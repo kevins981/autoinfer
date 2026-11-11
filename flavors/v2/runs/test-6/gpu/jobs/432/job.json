@@ -1,0 +1,19 @@
+{
+  "id": 432,
+  "pid": 524359,
+  "team": "T51",
+  "agent": "leader-51.w1",
+  "label": "pig-A",
+  "timeout_min": 14.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-51.w1/jobA.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-11T14:02:52+00:00",
+  "state": "done",
+  "started": "2026-11-11T14:11:06+00:00",
+  "ended": "2026-11-11T14:16:38+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 5.533
+}

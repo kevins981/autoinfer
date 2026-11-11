@@ -1,0 +1,19 @@
+{
+  "id": 349,
+  "pid": 8803,
+  "team": "T34",
+  "agent": "leader-34.w1",
+  "label": null,
+  "timeout_min": 2.0,
+  "command": [
+    "./job.sh",
+    "s5"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-34.w1/h",
+  "submitted": "2026-11-10T18:43:32+00:00",
+  "state": "done",
+  "started": "2026-11-10T18:43:32+00:00",
+  "ended": "2026-11-10T18:43:44+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.192
+}

@@ -1,0 +1,9 @@
+team:         T33
+builds_on:    BASE (standalone synthetic kernel; premise test for an overlapped decode GEMM)
+performance:  "microbench only: synthetic gate_up-scale kernel, concurrent HBM stream + e4m3 MMA ~= max(stream, MMA), not sum, with a 4-stream/12-MMA warp split"
+summary:
+  hypothesis: T31's gate_up decode GEMM (M=48, 89 MB/rank) runs at ~sum of weight-stream (56-63 us) and MMA (53 us) phases = ~85 us. A kernel in which the stream and the MMA work run concurrently on each SM could reach ~max.
+  change:     agents/leader-33.w1/ov.cu: one kernel, 128 CTAs x 1/SM, fixed warp roles (stream warps: ld.global.nc.v4, full 89.1 MB; MMA warps: full gate_up MMA work 3x2176x160 m16n8k32 e4m3 + per-K128 FFMA promotion, operands resident), modes stream-only / MMA-only / both; same regs/smem across modes (A8: 8 warps 186 regs; B16: 16 warps 118 regs). Cold = 384 MB read flush; pf48 = leading 48 MB evict_last resident. No real producer->consumer handoff, no A staging, no epilogue (upper bound on overlap).
+  results:    Observed (GPU0/GPU1, us, medians of 21; jobs 304/305): B16 4+12: MMA-only 36.3/30.2, stream-only 99.1/98.2, both 99.3/98.3 (sum 135); at 0.883x bytes stream 88.2/87.2, both 88.2/87.5; pf48 stream 57.8/55.2, both 58.2/55.6. A8 2+6: both 101.0/100.2 (sum 148). Too few MMA warps or too many stream warps -> MMA becomes critical (A8 6+2 both 132-142; B16 8+8 106-109). Stream saturates HBM (0.95 TB/s) with 2-4 stream warps/SM.
+  conclusion: Interpretation: the "gate_up wall" (KB98) is a property of the kernel's pipeline, not the hardware: stream and MMA can coexist at ~max on sm_89 with 16 warps/SM (4 stream + 12 MMA, <=128 regs). Best case in the in-situ prefetch regime ~56-58 us vs ~85 us today (-27 us/layer); with a 0.883 weight code lower still. Not yet modelled: real smem handoff + barriers, A staging, epilogue/launch (~6.5 us), load balance (W1-2).
+validity:     microbench only.

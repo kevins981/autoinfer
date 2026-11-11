@@ -1,0 +1,19 @@
+{
+  "id": 14,
+  "pid": 12749,
+  "team": "T3",
+  "agent": "leader-3.w1",
+  "label": "t3-kl4",
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "job_kl4.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-3.w1",
+  "submitted": "2026-11-09T00:06:32+00:00",
+  "state": "done",
+  "started": "2026-11-09T00:07:40+00:00",
+  "ended": "2026-11-09T00:11:15+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.586
+}

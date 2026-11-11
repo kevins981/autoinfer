@@ -1,0 +1,38 @@
+total kernel time 3.33 s (both GPUs), 94 kernels
+
+ share   time s     calls  category
+ 50.8%     1.69      1212  other GEMM (cutlass/cublas: lm_head, small bf16 GEMMs)
+ 32.2%     1.07     68454  GDN / linear attention (delta rule, conv1d)
+ 11.4%     0.38    140774  other
+  3.3%     0.11      2946  attention (full) + KV cache write
+  1.0%     0.03      8978  sampling / spec-decode bookkeeping
+  0.7%     0.02      6006  norms, activations, rope, gating
+  0.5%     0.02      1210  all-reduce / all-gather (NCCL)
+
+top 25 kernels:
+ share    avg us     calls  name
+ 28.2%    1587.6       592  ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f_tn
+ 14.0%    1353.2       344  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x2_tn_align8>(T1::Params)
+  9.9%      20.1     16356  <unnamed>::gdn_replay_flush_kernel(const long *, const long *, long, int, const int *, long, const int *, cons
+  9.8%      68.3      4800  fused_sigmoid_gating_delta_rule_update_kernel
+  7.5%    1445.3       172  void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_64x64_32x6_tn_align8>(T1::Params)
+  3.2%      61.7      1734  kernel_unified_attention
+  2.8%      18.9      4896  chunk_fwd_kernel_o
+  2.8%       3.0     31028  void at::native::vectorized_gather_kernel<(int)16, long>(char *, char *, T2 *, int, long, long, long, long, bo
+  2.6%       3.0     29088  void at::native::elementwise_kernel<(int)128, (int)4, void at::native::gpu_kernel_impl_nocast<at::native::dire
+  2.3%      15.8      4896  chunk_gated_delta_rule_fwd_kernel_h_blockdim64
+  1.7%      11.8      4896  merge_16x16_to_64x64_inverse_kernel
+  1.4%       9.2      4896  recompute_w_u_fwd_kernel
+  1.2%       4.2      9600  void at::native::index_elementwise_kernel<(int)128, (int)4, void at::native::index_copy_kernel_impl<at::native
+  1.2%       5.8      6620  void at::native::index_elementwise_kernel<(int)128, (int)4, void at::native::gpu_index_kernel<void at::native:
+  1.0%     327.7       102  void cutlass::Kernel2<enable_sm89_to_sm90<cutlass::gemm::kernel::DefaultGemmWithVisitor<cutlass::float_e4m3_t,
+  0.9%       6.1      4896  chunk_scaled_dot_kkt_fwd_kernel
+  0.9%       6.1      4896  _causal_conv1d_fwd_kernel
+  0.7%       5.2      4800  _causal_conv1d_update_kernel
+  0.7%       4.6      4896  _fused_post_conv_kernel
+  0.6%       4.3      4896  void at::native::index_elementwise_kernel<(int)128, (int)4, void at::native::gpu_index_kernel<void at::native:
+  0.6%       3.8      4896  layer_norm_fwd_kernel
+  0.5%      15.0      1210  ncclDevKernel_AllGather_RING_LL(ncclDevKernelArgsStorage<(unsigned long)4096>)
+  0.5%       1.5     11102  void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase &)::[l
+  0.4%       2.6      4896  void at::native::elementwise_kernel<(int)128, (int)2, void at::native::gpu_kernel_impl_nocast<at::native::<unn
+  0.4%      11.6      1110  postprocess_mamba_fused_kernel

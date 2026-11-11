@@ -1,0 +1,19 @@
+{
+  "id": 438,
+  "pid": 552481,
+  "team": "T51",
+  "agent": "leader-51.w1",
+  "label": "m1b-chain",
+  "timeout_min": 3.5,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-51.w1/m1/job3.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-51.w1/m1",
+  "submitted": "2026-11-11T14:45:15+00:00",
+  "state": "done",
+  "started": "2026-11-11T14:45:16+00:00",
+  "ended": "2026-11-11T14:46:59+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.73
+}

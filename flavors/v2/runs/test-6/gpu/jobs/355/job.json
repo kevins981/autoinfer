@@ -1,0 +1,19 @@
+{
+  "id": 355,
+  "pid": 37553,
+  "team": "T35",
+  "agent": "leader-35",
+  "label": "t35-k2",
+  "timeout_min": 10.0,
+  "command": [
+    "bash",
+    "agents/leader-35/k_sweep.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T20:20:06+00:00",
+  "state": "done",
+  "started": "2026-11-10T20:20:06+00:00",
+  "ended": "2026-11-10T20:22:57+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.844
+}

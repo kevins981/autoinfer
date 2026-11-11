@@ -1,0 +1,18 @@
+{
+  "id": 408,
+  "pid": 280034,
+  "team": "T45",
+  "agent": "leader-45",
+  "label": null,
+  "timeout_min": 10.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-45/rowband/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-45/rowband",
+  "submitted": "2026-11-11T03:01:20+00:00",
+  "state": "done",
+  "started": "2026-11-11T03:05:28+00:00",
+  "ended": "2026-11-11T03:06:16+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.801
+}

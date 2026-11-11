@@ -1,0 +1,19 @@
+{
+  "id": 371,
+  "pid": 109422,
+  "team": "T37",
+  "agent": "leader-37",
+  "label": "t37-k3full",
+  "timeout_min": 9.0,
+  "command": [
+    "bash",
+    "agents/leader-37/jobs/k3full.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T21:55:09+00:00",
+  "state": "done",
+  "started": "2026-11-10T21:55:10+00:00",
+  "ended": "2026-11-10T21:58:20+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.169
+}

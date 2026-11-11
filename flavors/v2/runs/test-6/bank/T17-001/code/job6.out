@@ -1,0 +1,19 @@
+[gpu] job 133 queued (1 ahead)
+[gpu] job 133 started (timeout 2 min); output: /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/gpu/jobs/133/output.log
+[gpu] team T17 (explore): 19.4 GPU-min left of 20 granted
+[gpu] reminder: each inference server loads the workspace's code when it starts, not when you submitted. Don't edit a workspace this job uses; to keep working meanwhile, copy it: ws create <new name> --from-ws <workspace>
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+TM M=64 abl=8: compute-done min/med/max 89.9/105.9/110.5; end min/med/max 91.1/112.6/118.1
+TM M=64 abl=24: compute-done min/med/max 90.8/106.4/110.3; end min/med/max 91.7/112.5/118.3
+TM M=64 abl=40: compute-done min/med/max 12.0/15.6/16.9; end min/med/max 14.0/22.3/25.2
+TM M=64 abl=0: compute-done min/med/max 115.6/118.9/127.4; end min/med/max 116.1/125.8/134.5
+TM M=64 abl=300: compute-done min/med/max 114.8/118.9/125.0; end min/med/max 115.3/125.4/133.0
+TM M=64 abl=316: compute-done min/med/max 103.4/109.8/117.2; end min/med/max 104.1/115.6/124.3
+[gpu] job 133 exited with code 0 after 0.0 min
+[gpu] full output: /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/gpu/jobs/133/output.log
+[gpu] team T17 (explore): 19.3 GPU-min left of 20 granted

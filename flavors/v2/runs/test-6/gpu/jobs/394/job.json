@@ -1,0 +1,21 @@
+{
+  "id": 394,
+  "pid": 254101,
+  "team": "T43",
+  "agent": "leader-43.w1",
+  "label": null,
+  "timeout_min": 8.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-43.w1/job_dd.sh",
+    "smoke",
+    "8",
+    "64"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/t43-dd",
+  "submitted": "2026-11-11T02:28:04+00:00",
+  "state": "done",
+  "started": "2026-11-11T02:28:04+00:00",
+  "ended": "2026-11-11T02:29:25+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.347
+}

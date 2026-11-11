@@ -1,0 +1,13 @@
+{
+  "record": "BASE",
+  "n": 2,
+  "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "baseline_commit": "4527515cd705db206ae927cf5acef506abc64bdd",
+  "harness": "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness",
+  "harness_version": "fac9917",
+  "workspace": "eval-BASE-2",
+  "requested_by": "human",
+  "team": null,
+  "started": "2026-11-07T03:37:35+00:00",
+  "ended": "2026-11-07T03:48:19+00:00"
+}

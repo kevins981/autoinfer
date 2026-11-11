@@ -1,0 +1,22 @@
+{
+ "deck": "T32-1",
+ "team": "T32",
+ "state": "done",
+ "agent": "codex",
+ "model": "gpt-6.1-sol",
+ "effort": "medium",
+ "cards_wanted": 15,
+ "window": [
+  "2024-11-10",
+  "2026-11-10"
+ ],
+ "work": "/scratch/kevinsong/learning/autoinfer/.cache/scout_work/test-6-T32-1-1794281899",
+ "cards_dir": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/scout/T32-1",
+ "started": "2026-11-10T03:38:19.687704+00:00",
+ "by": "manager",
+ "rc": 0,
+ "cards": 15,
+ "has_index": true,
+ "minutes": 7.9,
+ "ended": "2026-11-10T03:46:12.516328+00:00"
+}

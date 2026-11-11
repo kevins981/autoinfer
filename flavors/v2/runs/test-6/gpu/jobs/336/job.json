@@ -1,0 +1,20 @@
+{
+  "id": 336,
+  "pid": 1003400,
+  "team": "T33",
+  "agent": "leader-33.w1",
+  "label": "T33w1-pipe",
+  "timeout_min": 3.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-33.w1/job6.sh",
+    "0",
+    "9"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-33.w1",
+  "submitted": "2026-11-10T16:53:23+00:00",
+  "state": "done",
+  "started": "2026-11-10T16:53:23+00:00",
+  "ended": "2026-11-10T16:53:25+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.021
+}

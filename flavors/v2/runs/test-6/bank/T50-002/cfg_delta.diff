@@ -1,0 +1,40 @@
+diff --git a/vllm/model_executor/layers/quantization/utils/t29_bs_gemm/configs.json b/vllm/model_executor/layers/quantization/utils/t29_bs_gemm/configs.json
+new file mode 100644
+index 0000000000..3c6af1c062
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/t29_bs_gemm/configs.json
+@@ -0,0 +1,176 @@
++{
++ "17408x5120": {
++  "96": [
++   127,
++   1
++  ],
++  "128": [
++   127,
++   1
++  ],
++  "192": [
++   103,
++   1
++  ],
++  "256": [
++   103,
++   1
++  ],
++  "320": [
++   103,
++   1
++  ],
++  "384": [
++   103,
++   1
++  ],
++  "512": [
++   103,
++   1
++  ],
++  "1024": [
++   103,
++   1
++  ],

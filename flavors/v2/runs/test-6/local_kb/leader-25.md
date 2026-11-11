@@ -1,0 +1,19 @@
+# leader-25 (T25, explore) notes
+- Read T2-T24 writeups + KB. Re-costed: decode floor ~21 ms serial chain even w/ perfect GEMM (25.3 measured); prefill at bf16 roof; INT8 slicing dead; PP dead; n-gram dead (T12); MTP hidden-state input = post-norm, same as DeepSeek MTP practice (no bug).
+- Mixed steps: floor ~20 s vs ~37 s real -> ~17% of wall above floor, split into 1-2% items (T19 L2, T23-001).
+- GPU0 2235 MHz vs GPU1 2520-2655 (T14-004 official gpu_clocks.csv). T19: rank0 Marlin 131 vs rank1 113 ms at 400-800 rows.
+- KV pool 84% used at 16 reqs (mostly GDN spec blocks); graph pool 2.46 GiB/rank; model 14.37 GiB.
+- Decode step anatomy dump: agents/leader-25/win.txt (T14 B1 nsys rank0): lmh 1.02 ms, draft step ~0.85 ms (draft lmh Kernel2 306 us), sampling gap ~0.1 ms, pre-forward prep ~0.12 ms.
+- Proposal: proposals/T25-1.md (package led by S1 GPU1 rebalance). G1 = per-GPU Marlin N-subrange microbench.
+- Manager approved T25-1: start 80 in tranches (30 at G1 pass, 50 at G2 pass). Conditions: S1 memory proof (no OOM, 128K, per-rank mem/KV vs champion; KV not below 128K+16 seqs), measure layout-switch cost in situ, no clock changes, read-flush G1, S4 last/optional drop at first null.
+- Worker leader-25.w1 started on G1 (task: agents/leader-25/task_w1_G1.md), ws t25-s1 (build log agents/leader-25/build_s1.log).
+- G1 (T25-001): GPU0 +11-19% slower MLP at M>=128, +4% at M48. Balance .94/1.06 typical; weighted wall gain ~+1.2% (0.8-1.6). Marginal pass. S1 central now ~0.8-1%.
+- S1(a) uneven MLP split (AI_MLP_SPLIT) assigned to w1, <=10 GPU-min, record T25-002. S1(b) = duplicate slice for even decode.
+- Tranche 30 released after G1. Manager: package now clears bar only via S4 (~+4.5% w/o S4); S1 alone harvest is the point. Step (a) needs 128K + 16-seq load before ABBA, per-rank KV stated.
+- Job 157 (7.2 min) wasted: split wired in wrong model file (server uses vllm/models/qwen3_5/nvidia/model.py). Granted w1 +7 (S1a cap 17), split-on only, fail-fast check. Defaults n0=8064/n1=9344.
+- Job 158: split active (rank1 model 14.90 GiB, rank0 13.74), rank1 runtime OOM; champion headroom <0.5 GiB on GPU1. Exactness offline: <=2 bf16 ulp, 79% bitwise. Told w1: port T5-005 two-slot GDN then KV 4.2 GiB (plain KV cut would stall: 84% pool used at 16 reqs). S1a cap 25.
+- Job 159: S1a works (two-slot ported, KV 4.3 GiB, pool 237,658 tok; r1 23.7 GiB used). 64-prompt 766.5 (not A/B), gsm8k50 88%, 128K pass, peak KV 68%. Review: diff ok; must drop .orig, code default 0.5367, serve_args = champion + kv. ABBA A(champ via env-off, same ws) B B A, 300 prompts, <=20 min.
+- G2 ABBA job 160 (10.2 min): A 939.0/930.9 vs B 929.6/932.4 -> -0.4% (noise). No stalls/preempt. TPOT p50 B 15.5-15.6 vs A 15.2-15.4 (+~1.5%) = decode penalty: at M48 GPU1 f=1.073 -> 163*1.073=175 vs 169 us/layer (+6 us x64 = ~0.4 ms/step); my +2us estimate was for f=1.05. So (a) = mixed gain - decode loss ~ 0. (b) duplicate slice keeps decode even: GPU0 holds 8704 (as champ), GPU1 holds [8064,17408) (same mem as (a)); needs Marlin N/K subrange on repacked layout.
+- Manager approved S1(b) on remaining 21.9 min. Checks: decode bitwise = champion; no extra graph set/memory vs (a) else rerun 128K; ABBA all-B>all-A. Pass -> ask official tranche; fail -> write up S1, resync with S2/S3 or close. w1 assigned T25-003.
+- T25-003 (ws t25-s1b): Marlin ldb_n row-pitch arg + planar silu_and_mul; rank1 gate_up permuted; decode bitwise = champion both ranks (offline, all M); mixed <=2ulp. Smoke job 163 4.2 min. rank0 mem back to champion (14.37, graphs 2.50), rank1 14.90/2.47. ABBA go, cap 12, 128K in B1.
+- G3 ABBA job 164: B -0.7% (all-B>all-A fails), TPOT fixed. S1 null. Closed: reports/T25-writeup.md, worker stopped, 6.3 min returned.

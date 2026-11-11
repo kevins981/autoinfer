@@ -1,0 +1,18 @@
+{
+  "id": 419,
+  "pid": 465187,
+  "team": "T48",
+  "agent": "leader-48",
+  "label": null,
+  "timeout_min": 3.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-48/comp/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-48/comp",
+  "submitted": "2026-11-11T10:26:05+00:00",
+  "state": "done",
+  "started": "2026-11-11T10:33:01+00:00",
+  "ended": "2026-11-11T10:33:18+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.286
+}

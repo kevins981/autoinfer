@@ -1,0 +1,19 @@
+{
+  "id": 115,
+  "pid": 269438,
+  "team": "T15",
+  "agent": "leader-15",
+  "label": "t15-copipe",
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "job1.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-15/mb",
+  "submitted": "2026-11-09T07:14:54+00:00",
+  "state": "done",
+  "started": "2026-11-09T07:15:19+00:00",
+  "ended": "2026-11-09T07:15:20+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.023
+}

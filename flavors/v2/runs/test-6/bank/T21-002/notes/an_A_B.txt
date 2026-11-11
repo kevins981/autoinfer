@@ -1,0 +1,80 @@
+/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-21.w1/out/TR/../../../leader-19.w1/L1/analyze.py:145: RuntimeWarning: Mean of empty slice.
+  P(f"Server-side (arrival -> first SSE chunk): mean {fe_t.mean():.0f}, median {np.median(fe_t):.0f}, p90 {pct(fe_t,90):.0f}, p99 {pct(fe_t,99):.0f}, max {fe_t.max():.0f} ms; "
+/scratch/kevinsong/learning/qwen38_opt/env/lib/python3.12/site-packages/numpy/_core/_methods.py:144: RuntimeWarning: invalid value encountered in scalar divide
+  ret = ret.dtype.type(ret / rcount)
+/scratch/kevinsong/learning/qwen38_opt/env/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:3860: RuntimeWarning: Mean of empty slice.
+  return _methods._mean(a, axis=axis, dtype=dtype,
+# L1 report: new-request path on the champion (T14-004), T19_TRACE on
+
+Requests traced: 403 (2 are bench warm-ups, the first 2 by add time); steps: 2761; outs: 2761
+
+## d. Throughput
+
+- bench json output_throughput: **908.6 tok/s** (completed 400, duration 99.9s, total output tokens 90780). T14-004 official 956.6; job 120 (300 prompts) 927-939.
+- relative to 956.6: -5.02%
+- trace window (first measured add -> last finish): 101.1s
+
+## a. Step periods (interval between consecutive 'output received' timestamps)
+
+Steps in window: 2704; mean period 37.4 ms (median 25.5); sum 101.0s; window 101.0s
+
+- pure decode: n=2162 (80.0% of steps), period median **25.4 ms**, mean 25.1, p90 25.8, p99 29.5
+- mixed (>=1 prefill token in step): n=542, share of time 46.3%, mean 86.3 ms
+
+Mixed by prefill tokens in step:
+
+| prefill tokens | n | median ms | mean ms | p10 | p90 | mean ptok | mean #new reqs | share of time |
+|---|---|---|---|---|---|---|---|---|
+| 0-64 | 331 | 61.7 | 56.1 | 29.6 | 64.0 | 14 | 0.80 | 18.4% |
+| 64-128 | 40 | 64.2 | 66.1 | 61.4 | 72.4 | 86 | 0.55 | 2.6% |
+| 128-192 | 21 | 87.8 | 84.1 | 73.7 | 90.6 | 161 | 0.57 | 1.7% |
+| 192-256 | 12 | 98.2 | 95.7 | 85.5 | 101.2 | 233 | 0.42 | 1.1% |
+| 256-400 | 57 | 114.4 | 119.9 | 111.4 | 132.2 | 330 | 0.70 | 6.8% |
+| 400-800 | 67 | 183.9 | 180.5 | 143.7 | 217.2 | 597 | 0.54 | 12.0% |
+| 800-inf | 14 | 236.4 | 266.1 | 226.3 | 353.8 | 980 | 1.57 | 3.7% |
+
+Linear fit period = a + b * prefill_tokens (least squares) over mixed steps:
+
+| range | n | a (ms) | b (ms/token) | R^2 |
+|---|---|---|---|---|
+| 0-inf | 542 | 51.6 | 0.2162 | 0.96 |
+| 0-150 | 380 | 52.5 | 0.2066 | 0.21 |
+| 0-400 | 461 | 52.5 | 0.2029 | 0.78 |
+| 150-inf | 162 | 44.3 | 0.2283 | 0.99 |
+| 400-inf | 81 | 41.9 | 0.2314 | 0.98 |
+
+Mixed steps by number of new requests (N) in the step:
+
+| new reqs | n | median ms | mean ms | mean ptok |
+|---|---|---|---|---|
+| 0 | 177 | 69.7 | 104.1 | 243 |
+| 1 | 344 | 62.5 | 73.5 | 102 |
+| 2 | 16 | 114.9 | 130.6 | 355 |
+| 3 | 4 | 133.4 | 119.2 | 296 |
+| 13 | 1 | 497.4 | 497.4 | 1859 |
+
+Host-side pieces (ms, means): schedule() 0.53, execute_model submit 0.11, output processing (update_from_output etc.) 0.37, blocked-wait before output 36.2. Mean batch-queue depth when scheduling (before append): 1.00.
+
+## b. Request lifecycle
+
+| stage (ms) | n | mean | median | p90 | p99 |
+|---|---|---|---|---|---|
+| send -> send awaited done | 401 | 0.2 | 0.2 | 0.3 | 0.5 |
+| frontend send -> core add_request (ZMQ + core loop pickup) | 401 | 2.8 | 2.0 | 5.7 | 8.0 |
+| core add -> first scheduled (queue wait) | 401 | 20.0 | 6.0 | 44.6 | 157.9 |
+| first scheduled -> first token processed in core | 401 | 193.4 | 156.9 | 300.4 | 560.4 |
+| core first-token out -> frontend first_out | 401 | 2.1 | 2.0 | 2.4 | 3.8 |
+| core add -> first token (core side) | 401 | 213.4 | 177.9 | 344.7 | 636.1 |
+| core add -> finish (core) | 401 | 3862.5 | 3225.5 | 9016.0 | 13018.5 |
+
+Steps from first-scheduled step to the step whose output gave the first token: histogram {0: 182, 1: 219}
+
+Client TTFT (bench json summary; per-request ttfts were NOT saved - needs --save-detailed, which I did not pass): mean 244, median 207, p90 372, p99 733 ms
+Traceback (most recent call last):
+  File "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-21.w1/out/TR/../../../leader-19.w1/L1/analyze.py", line 145, in <module>
+    P(f"Server-side (arrival -> first SSE chunk): mean {fe_t.mean():.0f}, median {np.median(fe_t):.0f}, p90 {pct(fe_t,90):.0f}, p99 {pct(fe_t,99):.0f}, max {fe_t.max():.0f} ms; "
+                                                                                                                                                             ^^^^^^^^^^
+  File "/scratch/kevinsong/learning/qwen38_opt/env/lib/python3.12/site-packages/numpy/_core/_methods.py", line 43, in _amax
+    return umr_maximum(a, axis, None, out, keepdims, initial, where)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: zero-size array to reduction operation maximum which has no identity

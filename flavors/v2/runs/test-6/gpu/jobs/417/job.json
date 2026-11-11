@@ -1,0 +1,21 @@
+{
+  "id": 417,
+  "pid": 463827,
+  "team": "T45",
+  "agent": "leader-45",
+  "label": "official:T45-005",
+  "timeout_min": 20.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/eval-T45-005-1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/bank/T45-005/official/1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/bank/T45-005/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-11T10:25:33+00:00",
+  "state": "done",
+  "started": "2026-11-11T10:25:33+00:00",
+  "ended": "2026-11-11T10:32:36+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 7.054
+}

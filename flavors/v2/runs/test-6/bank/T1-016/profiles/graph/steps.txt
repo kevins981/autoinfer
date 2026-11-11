@@ -1,0 +1,21 @@
+/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-5/agents/leader-2.w7/prof_stack/graph/profile.sqlite: GPU 0, 555 steps
+
+== decode steps: 504 (median prefill tokens 0, decode tokens 40)
+  period 27.23 ms   GPU span 28.86   GPU busy 28.77   GPU idle in window 0.11
+     27.15 ms  CUDA graph (graph-level trace)
+      1.39 ms  other
+      0.07 ms  GDN / linear attention (delta rule, conv1d)
+      0.04 ms  sampling / spec-decode bookkeeping
+
+== prefill steps: 51 (median prefill tokens 262, decode tokens 45)
+  period 97.95 ms   GPU span 119.35   GPU busy 117.71   GPU idle in window -5.41
+    100.81 ms  CUDA graph (graph-level trace)
+      9.57 ms  GDN / linear attention (delta rule, conv1d)
+      3.41 ms  other
+      1.60 ms  other GEMM (cutlass/cublas: lm_head, small bf16 GEMMs)
+      1.06 ms  attention (full) + KV cache write
+      0.17 ms  norms, activations, rope, gating
+      0.04 ms  sampling / spec-decode bookkeeping
+      0.01 ms  all-reduce / all-gather (NCCL)
+
+per-step rows: /scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-5/agents/leader-2.w7/prof_stack/graph/steps.csv

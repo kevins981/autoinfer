@@ -1,0 +1,12 @@
+team:         T28
+builds_on:    T28-005 (measurement only: nsys of the k=3 e4m3 decode step; workspace t28-comb.b = t28-comb + a two-slot log line)
+performance:  "measurement: in situ at M=64 (k=3) the e4m3 GEMMs take 15.06 ms/step (256 launches, mean 58.8 us) vs Marlin M=48 13.0 ms (KB77/79, also nsys-timed): +2.0 ms (+16%). π-quant 0.49 ms/step (256 launches at the 1.9 us launch floor). Host AR 7.05 ms (k=2: ~6.0-6.4)."
+summary:
+  hypothesis: attribute the +3.83 ms k=3 step growth of T28-005 (null ABBA) to GEMM, quant, AR, drafter.
+  change:     none (profile). task/scripts/profile_nsys.sh, TRACE=node, rank 0, 48 prompts c=16, bank/T29-004 args at k=3, env T29_W8A8=2 T28_E4M3=1 VLLM_GDN_TWO_SLOT=1. Job 224 (2.9 GPU-min). Files agents/leader-28.w1/prof/k3e4/ (sqlite, steps.txt, kern_sum.csv), prof/an.py.
+  results:    Observed, medians over 105 decode steps at 16 requests x 4 tokens (M=64), rank 0: step period 28.83 ms, GPU idle ~0.2 ms.
+    e4m3 GEMMs 15.06 ms / 256 launches: cfg 256x2x16x4 st3: 7.58 ms (80 launches, 94.7 us); 256x2x8x8 st3: 4.19 (64, 65.5 us); 256x2x8x8 st4: 1.93 (48, 40.2 us); 128x2x8x4 st3: 1.34 (64, 21.0 us).
+    π-quant _quant_perm_kernel 0.489 ms / 256 launches (1.9 us each). hostar_kernel 7.05 ms / 141 launches (50 us each, incl. peer wait). Drafter: stock bf16 Marlin 0.65 ms (12 launches) + lmh screen 1.05 ms. GDN 2.23 (replay 1.97 / 48). small bf16 + lm_head GEMMs 2.03. attention 0.52. other 0.95.
+    Standalone warm per shape agrees with in situ (gate_up 108 standalone warm vs 94.7 in situ, i.e. the AR-window prefetch IS cashed by the e4m3 kernel).
+  conclusion: Interpretation (leader): the k=3 step growth +3.8 ms = GEMM +2.0 (e4m3 at M=64 vs Marlin M=48) + quant +0.5 + AR +0.7..1.0 (64 vs 48 tokens per AR) + 3rd draft ~0.7 + glue. The GEMM shortfall is the kernel's register structure: block-local fp32 accumulators double frag_c, so tmb=4 (one 64-row pass) spills and the kernel runs tmb=2/3 parallel slabs that re-stream B through L2 (Marlin's own slab path, which T6 found worth it only at M=72-120). The quant is NOT the problem (0.49 ms, not the 0.9 feared). Even with a perfect M=64 GEMM (= Marlin M=48), k=3's fixed costs (draft 0.7 + AR ~1.0 + glue 0.2 + quant 0.5 = ~2.4 ms, +9.6% of step) against E +13.7% cap the decode gain at ~+3.7% (~+2.4% e2e), ~+3.8% e2e with a fused quant. Deeper speculation on this stack is capped by the per-token AR bytes (PCIe floor, KB23) and the byte-bound drafter (KB80), no longer by the GEMM.
+validity:     measurement only.

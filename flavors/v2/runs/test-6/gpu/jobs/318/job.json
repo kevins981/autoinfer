@@ -1,0 +1,24 @@
+{
+  "id": 318,
+  "pid": 978204,
+  "team": "T32",
+  "agent": "leader-32.w1",
+  "label": "t32-1a-dbg2",
+  "timeout_min": 8.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-32.w1/job.sh",
+    "dbg",
+    "1",
+    "0",
+    "T32_CAP_NMAX=2",
+    "T32_CAP_NTMAX=6",
+    "T32_CHECK=2"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-32.w1",
+  "submitted": "2026-11-10T16:20:12+00:00",
+  "state": "done",
+  "started": "2026-11-10T16:20:12+00:00",
+  "ended": "2026-11-10T16:21:37+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.415
+}

@@ -1,0 +1,146 @@
+5933c5933
+< index be483f5a88..c2c7da0a09 100644
+---
+> index be483f5a88..afda88eb2b 100644
+5954c5954
+< @@ -132,6 +136,52 @@ from .ops.fused_norm_quant import FP8_DTYPE, gemma_add_rms_norm_quant
+---
+> @@ -132,6 +136,55 @@ from .ops.fused_norm_quant import FP8_DTYPE, gemma_add_rms_norm_quant
+5971a5972,5974
+> +# VLLM_T29_ORDER (T29, default 0): order the two chunks of the split chain with events (scheduling only).
+> +# 1 = chunk 1's out_proj / MLP wait for chunk 0's out_proj / MLP; 2 = also chunk 1's ARs after chunk 0's.
+> +_T29_ORDER = int(os.environ.get("VLLM_T29_ORDER", "0"))
+6007c6010
+< @@ -217,6 +267,8 @@ class Qwen3_5RMSNorm(nn.Module):
+---
+> @@ -217,6 +270,8 @@ class Qwen3_5RMSNorm(nn.Module):
+6016c6019
+< @@ -228,12 +280,16 @@ class Qwen3_5RMSNorm(nn.Module):
+---
+> @@ -228,12 +283,16 @@ class Qwen3_5RMSNorm(nn.Module):
+6035c6038
+< @@ -264,6 +320,13 @@ class Qwen3_5RMSNorm(nn.Module):
+---
+> @@ -264,6 +323,13 @@ class Qwen3_5RMSNorm(nn.Module):
+6049c6052
+< @@ -401,9 +464,19 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+---
+> @@ -401,9 +467,19 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+6069c6072
+< @@ -412,20 +485,58 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+---
+> @@ -412,20 +488,58 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+6135c6138
+< @@ -464,6 +575,211 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+---
+> @@ -464,6 +578,287 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+6276a6280,6292
+> +    evs = {}
+> +
+> +    def _sig(name: str) -> None:  # chunk 0: mark a phase done on its stream
+> +        if _T29_ORDER:
+> +            e = torch.cuda.Event()
+> +            e.record()
+> +            evs[name] = e
+> +
+> +    def _wait(name: str) -> None:  # chunk 1: wait for chunk 0's phase
+> +        e = evs.get(name)
+> +        if e is not None:
+> +            torch.cuda.current_stream().wait_event(e)
+> +
+6278a6295
+> +        first = a == 0
+6279a6297,6298
+> +        if not first:
+> +            _wait("out")
+6280a6300,6301
+> +        if first:
+> +            _sig("out")
+6281a6303,6304
+> +            if not first and _T29_ORDER >= 2:
+> +                _wait("ar1")
+6282a6306,6307
+> +            if first and _T29_ORDER >= 2:
+> +                _sig("ar1")
+6285a6311,6312
+> +        if not first:
+> +            _wait("mlp")
+6286a6314,6315
+> +        if first:
+> +            _sig("mlp")
+6287a6317,6318
+> +            if not first and _T29_ORDER >= 2:
+> +                _wait("ar2")
+6288a6320,6321
+> +            if first and _T29_ORDER >= 2:
+> +                _sig("ar2")
+6341c6374,6420
+< +Qwen3_5DecoderLayer._split_chain = _qwen3_5_split_chain
+---
+> +_T29_ORDER_CHECK = os.environ.get("VLLM_T29_ORDER_CHECK", "0") == "1"
+> +_ord_chk: dict = {}
+> +
+> +
+> +def _t29_snap(layer, o, r):
+> +    t = [o.clone(), r.clone()]
+> +    pre = getattr(layer, "pre_for_next", None)
+> +    if pre is not None:
+> +        for k in sorted(vars(pre)):
+> +            v = getattr(pre, k)
+> +            if isinstance(v, torch.Tensor):
+> +                t.append(v.clone())
+> +            elif isinstance(v, (tuple, list)):
+> +                t += [u.clone() for u in v if isinstance(u, torch.Tensor)]
+> +    return t
+> +
+> +
+> +def _qwen3_5_split_chain_checked(self, x, residual, out_proj, split, dma, next_layer=None):
+> +    global _T29_ORDER
+> +    n = sum(split)
+> +    if (not _T29_ORDER_CHECK or not _T29_ORDER or n > 1536 or torch.cuda.is_current_stream_capturing()
+> +            or _ord_chk.get(n, 0) >= 2):
+> +        return _qwen3_5_split_chain(self, x, residual, out_proj, split, dma, next_layer)
+> +    _ord_chk[n] = _ord_chk.get(n, 0) + 1
+> +    mode = _T29_ORDER
+> +    xs = x.clone() if isinstance(x, torch.Tensor) else x
+> +    res_in = residual.clone()
+> +    snaps = []
+> +    try:
+> +        for m in (0, 0, mode):
+> +            _T29_ORDER = m
+> +            r_ = res_in.clone()
+> +            o_, r_ = _qwen3_5_split_chain(self, xs.clone() if isinstance(xs, torch.Tensor) else xs, r_, out_proj,
+> +                                          split, dma, next_layer)
+> +            torch.cuda.synchronize()
+> +            snaps.append(_t29_snap(self, o_, r_))
+> +    finally:
+> +        _T29_ORDER = mode
+> +    ctrl = all(torch.equal(a_, b_) for a_, b_ in zip(snaps[0], snaps[1])) and len(snaps[0]) == len(snaps[1])
+> +    same = all(torch.equal(a_, b_) for a_, b_ in zip(snaps[0], snaps[2])) and len(snaps[0]) == len(snaps[2])
+> +    logger.warning("T29ORDERCHECK layer=%d M=%d split=%s tensors=%d mode0_vs_mode0_bitwise=%s mode0_vs_mode%d_bitwise=%s",
+> +                   self.layer_idx, n, split, len(snaps[0]), ctrl, mode, same)
+> +    # the real call (mode as configured) on the original input: its result is what the model uses
+> +    return _qwen3_5_split_chain(self, x, residual, out_proj, split, dma, next_layer)
+> +
+> +
+> +Qwen3_5DecoderLayer._split_chain = _qwen3_5_split_chain_checked
+6347c6426
+< @@ -579,15 +895,42 @@ class Qwen3_5Model(nn.Module, EagleModelMixin):
+---
+> @@ -579,15 +974,42 @@ class Qwen3_5Model(nn.Module, EagleModelMixin):
+6399c6478
+< @@ -596,11 +939,14 @@ class Qwen3_5Model(nn.Module, EagleModelMixin):
+---
+> @@ -596,11 +1018,14 @@ class Qwen3_5Model(nn.Module, EagleModelMixin):
+6417c6496
+< @@ -672,6 +1018,9 @@ class Qwen3_5ForCausalLMBase(
+---
+> @@ -672,6 +1097,9 @@ class Qwen3_5ForCausalLMBase(
+6427c6506
+< @@ -766,6 +1115,10 @@ class Qwen3_5ForCausalLMBase(
+---
+> @@ -766,6 +1194,10 @@ class Qwen3_5ForCausalLMBase(
+6438c6517
+< @@ -915,6 +1268,9 @@ class Qwen3_5ForConditionalGeneration(Qwen3VLForConditionalGeneration, IsHybrid)
+---
+> @@ -915,6 +1347,9 @@ class Qwen3_5ForConditionalGeneration(Qwen3VLForConditionalGeneration, IsHybrid)

@@ -1,0 +1,18 @@
+{
+  "id": 431,
+  "pid": 521004,
+  "team": "T50",
+  "agent": "leader-50",
+  "label": "t50-abba1",
+  "timeout_min": 24.0,
+  "command": [
+    "./job_abba1.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-50",
+  "submitted": "2026-11-11T14:01:34+00:00",
+  "state": "done",
+  "started": "2026-11-11T14:01:34+00:00",
+  "ended": "2026-11-11T14:11:04+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 9.505
+}

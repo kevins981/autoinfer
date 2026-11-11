@@ -1,0 +1,38 @@
+16-req decode steps (M=48 target runs of 130): 425
+
+rank 0: per call over 128 layer ARs x 425 steps (us)
+  dur   mean   42.0 med   42.0 p10   41.2 p90   43.0
+  a     mean   20.8 med   20.8 p10   20.2 p90   21.2
+  b     mean    0.3 med    0.0 p10    0.0 p90    1.0
+  c     mean   21.0 med   21.0 p10   20.5 p90   21.2
+  cmax  mean   20.9 med   21.0 p10   20.5 p90   21.2
+  gap   mean  165.3 med  181.5 p10  113.0 p90  201.0
+  per-step totals (ms): dur 5.38  a 2.67  b(wait) 0.04  c 2.68
+  attn/GDN out-proj (even): dur med 41.5 a 20.5 b 0.0 b-mean 0.0 c 21.0
+  MLP down (odd): dur med 42.2 a 21.0 b 0.0 b-mean 0.5 c 21.0
+  embed AR (pos0): dur med 41.2 b 0.0;  post-lm_head AR (pos129): dur 41.2 b 0.0
+
+rank 1: per call over 128 layer ARs x 425 steps (us)
+  dur   mean   48.9 med   48.0 p10   45.0 p90   51.5
+  a     mean   21.1 med   21.0 p10   20.8 p90   21.2
+  b     mean    7.4 med    6.5 p10    3.8 p90   10.0
+  c     mean   20.4 med   20.5 p10   20.0 p90   21.0
+  cmax  mean   20.1 med   20.2 p10   18.5 p90   20.8
+  gap   mean  158.4 med  168.8 p10  105.2 p90  196.5
+  per-step totals (ms): dur 6.26  a 2.70  b(wait) 0.95  c 2.61
+  attn/GDN out-proj (even): dur med 50.0 a 21.0 b 8.5 b-mean 9.8 c 20.5
+  MLP down (odd): dur med 46.2 a 21.0 b 4.8 b-mean 5.1 c 20.2
+  embed AR (pos0): dur med 58.8 b 17.2;  post-lm_head AR (pos129): dur 55.0 b 13.2
+
+fraction of layer ARs where rank0 waits more than rank1: 0.018
+min(b0,b1) per call (both waiting = pure transport latency floor): mean    0.3 med    0.0 p10    0.0 p90    1.0
+|b0-b1| (skew proxy): mean    7.2 med    6.5 p10    2.8 p90   10.0
+  GDN layers rank0: b out-proj med 0.0 mean 0.1 | b mlp med 0.0 mean 0.5
+  GDN layers rank1: b out-proj med 8.8 mean 9.6 | b mlp med 4.8 mean 5.1
+  full-attn layers rank0: b out-proj med 0.0 mean 0.0 | b mlp med 0.0 mean 0.6
+  full-attn layers rank1: b out-proj med 8.2 mean 10.3 | b mlp med 4.8 mean 4.9
+
+step period (consecutive 16-req steps) us: mean 30017.8 med 30115.5 p10 29681.8 p90 30178.8 n 351
+target fwd span (layer0 AR start -> last layer AR end) us: mean 26376.1 med 26383.0 p10 25988.0 p90 26466.9
+ro[0]-wp[1] (= offset0-1 + latency): mean 42193007.8 med 42193006.5 p10 42192950.8 p90 42193065.0 min 42192913.25
+ro[1]-wp[0] (= offset1-0 + latency): mean -42193000.2 med -42193000.2 p10 -42193057.5 p90 -42192944.8 min -42193068.25

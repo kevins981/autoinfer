@@ -1,0 +1,13 @@
+{
+  "record": "T1-002",
+  "n": 1,
+  "diff_sha256": "aa45793e6358bdb85dd08a218e1bbac4d5de2c232f8c69536bb093bb99eab4f6",
+  "baseline_commit": "4527515cd705db206ae927cf5acef506abc64bdd",
+  "harness": "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness",
+  "harness_version": "f6efaee",
+  "workspace": "eval-T1-002-1",
+  "requested_by": "leader-1",
+  "team": "T1",
+  "started": "2026-11-07T00:00:11+00:00",
+  "ended": "2026-11-07T00:06:12+00:00"
+}

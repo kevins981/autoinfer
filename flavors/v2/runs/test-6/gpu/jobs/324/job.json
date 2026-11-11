@@ -1,0 +1,18 @@
+{
+  "id": 324,
+  "pid": 983715,
+  "team": "T32",
+  "agent": "leader-32.w1",
+  "label": "t32-1a-offon2",
+  "timeout_min": 16.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-32.w1/both.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-32.w1",
+  "submitted": "2026-11-10T16:25:34+00:00",
+  "state": "done",
+  "started": "2026-11-10T16:25:34+00:00",
+  "ended": "2026-11-10T16:29:54+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.345
+}

@@ -1,0 +1,19 @@
+{
+  "id": 370,
+  "pid": 106595,
+  "team": "T37",
+  "agent": "leader-37",
+  "label": "t37-c32",
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "agents/leader-37/jobs/c32.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T21:49:15+00:00",
+  "state": "done",
+  "started": "2026-11-10T21:49:15+00:00",
+  "ended": "2026-11-10T21:51:14+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.984
+}

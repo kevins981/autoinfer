@@ -1,0 +1,22 @@
+{
+  "id": 27,
+  "pid": 58519,
+  "team": "T4",
+  "agent": "leader-4.w1",
+  "label": "t4-ovl-dma",
+  "timeout_min": 5.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-4.w1/job.sh",
+    "dma",
+    "",
+    "ovl3.py"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-4.w1",
+  "submitted": "2026-11-09T01:12:41+00:00",
+  "state": "done",
+  "started": "2026-11-09T01:12:41+00:00",
+  "ended": "2026-11-09T01:13:01+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.334
+}

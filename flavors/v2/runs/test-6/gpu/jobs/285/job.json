@@ -1,0 +1,18 @@
+{
+  "id": 285,
+  "pid": 847427,
+  "team": "T31",
+  "agent": "leader-31.w2",
+  "label": "W2-5-abba",
+  "timeout_min": 16.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-31.w2/w25/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-31.w2/w25",
+  "submitted": "2026-11-10T02:25:21+00:00",
+  "state": "done",
+  "started": "2026-11-10T02:25:53+00:00",
+  "ended": "2026-11-10T02:35:40+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 9.782
+}

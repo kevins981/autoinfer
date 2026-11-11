@@ -1,0 +1,25 @@
+G0 [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448, 512, 640, 768, 896, 1024, 1280, 1536, 1792, 2048]
+G0 current       mean Marlin+AR per mixed step  122.2 ms
+G64              mean Marlin+AR per mixed step  119.5 ms
+G32              mean Marlin+AR per mixed step  118.0 ms
+exact (no pad)   mean Marlin+AR per mixed step  116.5 ms
+padding waste current grid, mean rows 29.040816326530614  G64 24.79591836734694
+G0 + masked-kernel(16)      121.0 ms
+G16 + masked-kernel(16)     116.3 ms
+exact + masked(16)          113.7 ms
+n 49 mean M 369.6530612244898 median 276
+G0 stock      122.2 ms/step  ngraphs 31
+G64 stock     119.5 ms/step  ngraphs 42
+G32 stock     118.0 ms/step  ngraphs 73
+G16 stock     118.4 ms/step  ngraphs 131
+G8 stock      116.8 ms/step  ngraphs 256
+--- AR sends only real rows (device-side count), Marlin at padded size
+G0      119.0 ms/step
+G64     116.7 ms/step
+G32     116.3 ms/step
+--- + masked Marlin (16-row granularity)
+G0      117.7 ms/step
+G32     115.1 ms/step
+subset M<=450 n 33 G0 stock 66.2
+subset M<=450 n 33 G32 stock 65.8
+subset M<=450 n 33 G32+ARreal 63.9

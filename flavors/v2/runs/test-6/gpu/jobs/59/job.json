@@ -1,0 +1,21 @@
+{
+  "id": 59,
+  "pid": 156867,
+  "team": "T7",
+  "agent": "leader-7.w1",
+  "label": null,
+  "timeout_min": 6.0,
+  "command": [
+    "./job.sh",
+    "full",
+    "0",
+    "128,256,384"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-7.w1",
+  "submitted": "2026-11-09T03:29:22+00:00",
+  "state": "cancelled",
+  "started": "2026-11-09T03:29:22+00:00",
+  "ended": "2026-11-09T03:29:31+00:00",
+  "exit_code": 130,
+  "gpu_minutes": 0.162
+}

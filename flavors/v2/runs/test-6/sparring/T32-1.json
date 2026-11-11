@@ -1,0 +1,18 @@
+{
+ "id": "T32-1",
+ "team": "T32",
+ "by": "leader-32",
+ "backend": "codex",
+ "model": "gpt-6.1-sol",
+ "effort": "high",
+ "work": "/scratch/kevinsong/learning/autoinfer/.cache/sparring_work/test-6-T32-1-1794324504",
+ "sid_new": "af7d003c-9f5e-486f-aa11-fa322f12d606",
+ "session": "01a1c613-2246-7ee2-982b-718003778c3a",
+ "state": "ended",
+ "turns": 9,
+ "started": "2026-11-10T15:28:24.880274+00:00",
+ "ended": "2026-11-10T15:53:47.729249+00:00",
+ "reopened": [
+  "2026-11-10T15:50:29.646848+00:00"
+ ]
+}

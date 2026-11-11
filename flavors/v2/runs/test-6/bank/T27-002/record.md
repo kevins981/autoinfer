@@ -1,0 +1,25 @@
+team:         T27
+builds_on:    T14-004 (workspace t27-scr, fresh from T14-004; no budget, k=2)
+performance:  "OFFICIAL #1: 967.3 tok/s (966.3/968.3), +1.1% vs T14-004 956.6, GSM8K 93.6%, TTFT p99 1141, TPOT p99 33.0, 128K pass. Earlier unofficial: ABBA job 183 (A B B A) A 939.0/931.5 B 937.5/947.8 (+0.8%, not all-B>all-A); repeat job 186 (B A A B) B 946.2/940.1 A 937.1/935.6 (+0.7%, all-B>all-A). Pooled 8 starts: B 942.9 vs A 935.8 (+0.76%)"
+summary:
+  hypothesis: the MTP drafter only proposes tokens, so its FP8 lm_head can be screened (PCA of the drafter hidden state -> approximate logits -> top-64 -> exact FP8 rescoring) at ~1/3 of the 336 us; verification unchanged, acceptance ~unchanged.
+  change:     vllm/model_executor/layers/t27_screen.py (3 Triton kernels + torch.mm + the head's own activation quant), hook in LogitsProcessor.get_top_tokens (draft head only, bf16 rows<=64, no soft-cap/scale), attach in eagle/utils.py load_eagle_model (only when draft_lm_head_quantization=fp8 and draft_lm_head_vocab_size set). Switch T27_SCREEN (default 1; 0 = champion path). PCA file: bank/T27-002/pca_train_n160.pt (T27_SCREEN_PCA overrides; path logged at load). Memory: U fp8 48 MiB + P bf16 10 MiB + scratch ~14 MiB per rank.
+  results:    Observed:
+    microbench (job 179, M=16, one rank, graph replay, L2 flushed): champion draft lm_head 335.7 us, screen 115.1 us (h@P 19, quant 5, scores 58, chunk top-64 19, merge+exact 24); M=8 107.6, M=1 106.7. Random-weight equivalence: kernel vs torch ref of same screen math 1/640 argmax mismatches; vs champion 145/640 (synthetic weights vs real-data PCA: not meaningful).
+    ABBA job 183 (11.5 GPU-min, fresh server each, order A B B A, 300 prompts c=16):
+      A1 939.0 | TTFT p50/p99 160/1145 | TPOT p50/p99 15.59/32.4 | ITL mean/med 36.4/25.4 | MTP acc 2.337
+      B1 937.5 | 165/1117 | 15.35/34.9 | 35.9/24.9 | 2.320
+      B2 947.8 | 175/1116 | 15.20/30.2 | 35.7/24.9 | 2.326
+      A2 931.5 | 164/979  | 15.61/38.3 | 36.5/25.4 | 2.333
+      A mean 935.3, B mean 942.7 (+0.8%); acceptance A 2.335 vs B 2.323 (-0.5%); decode ITL median 25.4 -> 24.9 ms.
+    on B2's server: long_request 128000 pass (56.1 s); gsm8k50 88.0% (44/50); nvidia-smi 23828 MiB on both GPUs after the run (A runs were not measured).
+    screen attached on both ranks in B runs: "T27 screen attached: V=49152 D=5120 R=1024 (U 48.0 MiB)".
+  conclusion: Interpretation: per-step draft saving 2 x (336-115) us ~ 0.44 ms of 25.4 (1.7% of a decode step, ~1% e2e), measured +0.8% e2e with -0.5% acceptance: consistent, but the ABBA spread (7-10 tok/s) is as large as the effect. Not distinguishable from noise with 2+2 starts. Memory: 128K passes, 23.8 GB used (limit 24).
+R1 conditions (PCA data pipeline): PCA fitted on T3's self-generated data only (target Qwen3.8-27B-FP8 generated all prompts and responses on the champion engine; no external or benchmark data): prompts from the hand-written TOPICS/STYLES lists in agents/leader-3.w1/gen_driver_phaseA.py (387 kept) + 13 Magpie-style raw (counts in agents/leader-3.w1/PROVENANCE.md); responses T=0, 384 tokens; hidden states = post-final-norm drafter input, bf16, 188,068 tokens total; split.json seed 20261108, 40 held-out / 360 train prompt ids; PCA uses the first 160 train sequences only (fit_eval.py, n_train=160); r=1024 and k=64 chosen on held-out (r=1024 k=64: recall .9963; draft acc a1 .7796 vs .7805, a2(cum) .5593 vs .5605, n=14138 positions). Acceptance before/after in the server: 2.335 -> 2.323 (above).
+validity:     (leader-27 review) Exact: target verification unchanged (full-vocab head, greedy-ids path); only draft proposals can differ, on screen misses. R1 (ALLOWED) conditions met: PCA fitted on T3 self-generated data only (gen_driver_phaseA.py self-instruct + Magpie from target, agents/leader-3.w1/PROVENANCE.md; split.json seed 20261108; 160 TRAIN seqs), r=1024 k=64 chosen on 40 HELD-OUT seqs (fit_eval_n160.out: recall .9963, a1 .7796 vs .7805, a2 .5593 vs .5605); in-server acceptance A 2.335 vs B 2.323; 128K pass, gsm8k50 88%, no OOM (+~50 MB/rank U). No benchmark-keyed behavior. Valid. Gain +0.8% pooled but NOT all-B > all-A (B1 937.5 < A1 939.0): not proposed for official.
+
+Repeat ABBA (leader-27, job 186, workspace t27-scr, order B A A B, 300 prompts c=16, fresh starts, VLLM_GDN_TWO_SLOT=0, champion serve_args):
+  Observed: B1 946.2 (TTFT p50 181, TPOT p50 15.07, acc 2.33) | A1 937.1 (186, 15.15, 2.338) | A2 935.6 (173, 15.53, 2.334) | B2 940.1 (172, 15.35, 2.333). Both B > both A, +0.7%. Screen attach + PCA path logged on both ranks in B runs. Script agents/leader-27/abba2/abba2.sh.
+  Interpretation: with job 183, a consistent ~+0.7-0.8% (expected ~+1% from -0.44 ms/decode step); acceptance unchanged within noise.
+
+official #1 (2026-11-09T15:50): 967.3 tok/s at c=16 (mean of 2 trials: 966.3 / 968.3, CV 0.1%) (+52.1% vs BASE), GSM8K 93.6%, MTP acceptance 2.328, TTFT p50 167 ms, TPOT p50 14.9 ms; gates: GSM8K pass, latency pass, 128K request pass (official/1/results.json)

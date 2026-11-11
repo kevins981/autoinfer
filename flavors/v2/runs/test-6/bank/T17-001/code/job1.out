@@ -1,0 +1,31 @@
+[gpu] job 127 started (timeout 4 min); output: /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/gpu/jobs/127/output.log
+[gpu] team T17 (explore): 19.9 GPU-min left of 20 granted
+[gpu] reminder: each inference server loads the workspace's code when it starts, not when you submitted. Don't edit a workspace this job uses; to keep working meanwhile, copy it: ws create <new name> --from-ws <workspace>
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-11-09 08:31:52 315326:315326 SyncActivityProfilerHandler.cpp:46] profiler_stop
+TIME gate_up M=64 cold  marlin: med  103.5 us (min 103.3 max 103.7)
+TIME gate_up M=64 cold  mine  : med  134.4 us (min 133.1 max 134.9)
+TIME gate_up M=64 warm  marlin: med  108.9 us (min 108.0 max 109.8)
+TIME gate_up M=64 warm  mine  : med  134.3 us (min 133.5 max 135.9)
+TIME gate_up M=64 chain marlin: med  102.7 us (min 102.4 max 103.0)
+TIME gate_up M=64 chain mine  : med  133.9 us (min 133.3 max 135.3)
+[gpu] job 127 exited with code 0 after 0.2 min
+[gpu] full output: /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/gpu/jobs/127/output.log
+[gpu] team T17 (explore): 19.7 GPU-min left of 20 granted

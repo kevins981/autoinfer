@@ -1,0 +1,18 @@
+{
+  "id": 274,
+  "pid": 829749,
+  "team": "T31",
+  "agent": "leader-31.w2",
+  "label": "W2-3b",
+  "timeout_min": 4.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-31.w2/pf/w23.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-31.w2/pf",
+  "submitted": "2026-11-10T02:06:01+00:00",
+  "state": "done",
+  "started": "2026-11-10T02:09:37+00:00",
+  "ended": "2026-11-10T02:10:15+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.629
+}

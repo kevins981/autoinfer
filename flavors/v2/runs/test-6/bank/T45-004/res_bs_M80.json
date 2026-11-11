@@ -1,0 +1,49 @@
+{
+ "standalone": {},
+ "variants": {
+  "V0b champ AR39/50 + in-AR pf": {
+   "med": 386.133352915446,
+   "min": 385.9626849492391,
+   "max": 389.6213372548421,
+   "prof": {
+    "ar1": 39.8,
+    "norm1": 3.7,
+    "small": 4.7,
+    "qkvz": 47.3,
+    "conv": 4.7,
+    "gdn": 37.8,
+    "quant": 1.7,
+    "gdn_out": 21.2,
+    "ar2": 50.8,
+    "norm2": 4.2,
+    "gate_up": 111.9,
+    "silu": 3.4,
+    "down": 58.0,
+    "stream_kernel_mean_dur": null,
+    "span_us": 389.8
+   }
+  },
+  "V1b serial no-pf AR39/50 cold": {
+   "med": 423.20815722147626,
+   "min": 423.1894810994466,
+   "max": 423.2446750005086,
+   "prof": {
+    "ar1": 39.7,
+    "norm1": 3.7,
+    "small": 4.7,
+    "qkvz": 51.3,
+    "conv": 4.7,
+    "gdn": 37.8,
+    "quant": 1.7,
+    "gdn_out": 21.3,
+    "ar2": 50.7,
+    "norm2": 4.2,
+    "gate_up": 143.2,
+    "silu": 3.4,
+    "down": 57.2,
+    "stream_kernel_mean_dur": null,
+    "span_us": 424.3
+   }
+  }
+ }
+}

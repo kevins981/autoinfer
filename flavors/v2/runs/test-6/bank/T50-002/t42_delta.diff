@@ -1,0 +1,1137 @@
+--- t42-a/vllm/vllm/model_executor/layers/logits_processor.py	2026-11-11 03:00:06.505462413 +0000
++++ t42-cs/vllm/vllm/model_executor/layers/logits_processor.py	2026-11-11 02:58:22.119754592 +0000
+@@ -301,6 +301,29 @@
+             or not self.use_all_gather
+         ):
+             return None
++        cert = getattr(lm_head, "_lmh_cert", None)  # AutoInfer T42: certified target lm_head
++        if cert is not None and embedding_bias is None:
++            tp_size = lm_head.tp_size
++            si = lm_head.shard_indices
++            width = cert.n
++            if si.num_org_vocab_padding != 0 or si.org_vocab_start_index != (
++                lm_head.tp_rank * width
++            ) or self.org_vocab_size - si.org_vocab_start_index < width:
++                return None
++            vals, idx = cert.greedy_local(hidden_states)
++            gidx = idx + si.org_vocab_start_index
++            if tp_size == 1:
++                return gidx.to(torch.int64)
++            pair = torch.stack([vals, gidx.float()], dim=-1)  # [rows, 2]
++            gathered = tensor_model_parallel_all_gather(pair, dim=-1)
++            gathered = gathered.view(hidden_states.shape[0], tp_size, 2)
++            best_v = gathered[:, 0, 0]
++            best_i = gathered[:, 0, 1]
++            for r in range(1, tp_size):
++                take = gathered[:, r, 0] > best_v
++                best_v = torch.where(take, gathered[:, r, 0], best_v)
++                best_i = torch.where(take, gathered[:, r, 1], best_i)
++            return best_i.to(torch.int64)
+         logits = self._apply_head(lm_head, hidden_states, embedding_bias)
+         if logits.dtype not in (torch.bfloat16, torch.float32) or logits.ndim != 2:
+             return None
+--- t42-a/vllm/vllm/v1/worker/gpu/model_runner.py	2026-11-11 03:00:06.509462477 +0000
++++ t42-cs/vllm/vllm/v1/worker/gpu/model_runner.py	2026-11-11 02:58:22.119754592 +0000
+@@ -356,6 +356,7 @@
+         # model_state exists (num_new_sampled_tokens_per_step from ModelState).
+         self.sampler: Sampler | None = None
+         self._greedy_ids_disabled = False
++        self._lmh_certified = False
+         self.rejection_sampler: RejectionSampler | None = None
+         self.batch_sharder: BatchSharder | None = None
+         self.prompt_logprobs_worker: PromptLogprobsWorker | None = None
+@@ -441,11 +442,18 @@
+             # After the drafter copied what it needs from the target lm_head:
+             # store the target lm_head losslessly encoded (frees the raw shard).
+             if not load_dummy_weights:
++                from vllm.model_executor.layers.lmh_cert import (
++                    maybe_certify_target_lm_head,
++                )
+                 from vllm.model_executor.layers.lmh_codec import (
+                     maybe_encode_target_lm_head,
+                 )
+ 
+-                maybe_encode_target_lm_head(self.model)
++                # T42: certified greedy head (plane in HBM, exact rows on host);
++                # otherwise the lossless code as before.
++                self._lmh_certified = maybe_certify_target_lm_head(self.model)
++                if not self._lmh_certified:
++                    maybe_encode_target_lm_head(self.model)
+         time_after_load = time.perf_counter()
+ 
+         self.model_memory_usage = m.consumed_memory
+@@ -1817,6 +1825,41 @@
+                 )
+         return out
+ 
++    def _certified_greedy_logits(
++        self,
++        sample_hidden_states: torch.Tensor,
++        input_batch: InputBatch,
++        grammar_output: GrammarOutput | None,
++    ) -> torch.Tensor | None:
++        """T42: with a certified target lm_head the full logits exist only on host.
++        For a batch where nothing but the argmax reads the logits (every request
++        pure greedy, no grammar, no drafts to verify), return logits that are
++        -inf except 0 at each row's exact greedy id: the sampler then picks the
++        same ids as from the full logits. Otherwise None (exact full logits)."""
++        if (
++            not self._lmh_certified
++            or grammar_output is not None
++            or input_batch.num_draft_tokens != 0
++            or self.sampler is None
++            or input_batch.num_reqs == 0
++            or type(self.model_state).compute_sample_logits
++            is not _DEFAULT_COMPUTE_SAMPLE_LOGITS
++            or not hasattr(self.model, "compute_greedy_tokens")
++            or not self.sampler.all_pure_greedy(input_batch.idx_mapping_np)
++        ):
++            return None
++        ids = self.model.compute_greedy_tokens(sample_hidden_states)
++        if ids is None:
++            return None
++        logits = torch.full(
++            (sample_hidden_states.shape[0], self.vocab_size),
++            float("-inf"),
++            dtype=sample_hidden_states.dtype,
++            device=sample_hidden_states.device,
++        )
++        logits.scatter_(1, ids.view(-1, 1), 0.0)
++        return logits
++
+     def sample(
+         self,
+         hidden_states: torch.Tensor,
+@@ -1849,7 +1892,11 @@
+             )
+             if greedy_out is not None:
+                 return greedy_out, greedy_out.num_sampled, greedy_out.num_rejected
+-            logits = self.model_state.compute_sample_logits(sample_hidden_states)
++            logits = self._certified_greedy_logits(
++                sample_hidden_states, input_batch, grammar_output
++            )
++            if logits is None:
++                logits = self.model_state.compute_sample_logits(sample_hidden_states)
+ 
+         # A diffusion prefill has no logit rows even when a bitmask row
+         # arrived for it.
+--- t42-a/vllm/vllm/model_executor/layers/lmh_codec.py	2026-11-11 03:00:06.505462413 +0000
++++ t42-cs/vllm/vllm/model_executor/layers/lmh_codec.py	2026-11-11 02:58:22.119754592 +0000
+@@ -88,6 +88,9 @@
+ 
+ def lm_head_prefetch_tensor(head) -> torch.Tensor | None:
+     """What the final-norm AR should L2-prefetch for this head (the encoded buffer if encoded)."""
++    plane = getattr(head, "_lmh_cert_plane", None)  # T42: certified head -> prefetch its screening plane
++    if plane is not None:
++        return plane if _PREFETCH else None
+     enc = getattr(head, "_lmh_codec_enc", None)
+     if enc is not None:
+         return enc if _PREFETCH else None
+--- /dev/null	2026-11-10 18:24:51.528000000 +0000
++++ t42-cs/vllm/vllm/model_executor/layers/lmh_cert.py	2026-11-11 03:00:37.737954614 +0000
+@@ -0,0 +1,380 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Certified greedy decisions for the target lm_head (AutoInfer T42; study: bank/T42-002).
++
++At load, each rank's bf16 lm_head shard is replaced in HBM by a 7-bit integer plane (0.57 vs 0.99 GB for the
++lossless code). The exact bf16 shard moves to pinned host memory. A greedy decision is:
++  screen (int8 MMA over the plane, rigorous per-(row, id) bound) -> exchange of the per-row lower bound across
++  TP ranks -> candidates = ids whose upper bound can still reach it -> exact bf16 logits of the candidates with
++  lmh_codec's own MMA chain (rows gathered from host) -> (max, first argmax) per rank, combined as before.
++The reference argmax is provably a candidate (proof: bank/T42-002/code/PROOF.md), so the decision equals argmax
++over the baseline's bf16 logits, first index on ties. Rows whose certificate cannot be used (buffer caps) are
++recomputed exactly over the whole shard from host (counted, logged). Paths that need full logits (non-greedy
++sampling, logprobs) compute them exactly from the host copy: correct but slow (~0.1 s per call).
++
++VLLM_LMH_CERT=0 disables it (lmh_codec then encodes the head as before).
++"""
++
++import hashlib
++import os
++import re
++
++import torch
++
++import vllm.envs as envs
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++_ENABLED = os.environ.get("VLLM_LMH_CERT", "1") != "0"
++_MMAX = 64
++_ECAP = 65536      # emitted (id, U) entries per row (screen, running LB)
++_PAIRCAP = 8192    # kept (row, id) pairs per call
++_STAGECAP = 2048   # unique candidate rows staged in HBM per call (more: read from host directly)
++_CAPR = 1024       # kept candidates per row (more: exact full-shard fallback for that row)
++_LOG_EVERY = int(os.environ.get("VLLM_LMH_CERT_LOG_EVERY", "2048"))
++_DTC = 2.0 ** -11  # assumed bound on the champion kernel's fp32 accumulation error, relative to sum |h w|
++_mod = None
++
++
++def _load_ext():
++    global _mod
++    if _mod is not None:
++        return _mod
++    from torch.utils.cpp_extension import load
++
++    if "TORCH_EXTENSIONS_DIR" not in os.environ:
++        os.environ["TORCH_EXTENSIONS_DIR"] = os.path.join(envs.VLLM_CACHE_ROOT, "torch_extensions")
++    src = os.path.join(os.path.dirname(__file__), "lmh_cert.cu")
++    with open(src, "rb") as f:
++        tag = hashlib.sha1(f.read()).hexdigest()[:10]
++    name = f"vllm_lmh_cert_{tag}"
++    build_dir = os.path.join(os.environ["TORCH_EXTENSIONS_DIR"], name)
++    os.makedirs(build_dir, exist_ok=True)
++    major, minor = torch.cuda.get_device_capability()
++    os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{major}.{minor}")
++    _mod = load(name, [src], build_directory=build_dir, verbose=False, extra_cuda_cflags=["-O3"])
++    return _mod
++
++
++def _ru32(x64: torch.Tensor) -> torch.Tensor:
++    """float64 (>= 0) -> float32 rounded up."""
++    f = x64.float()
++    return torch.where(f.double() < x64, torch.nextafter(f, torch.full_like(f, float("inf"))), f)
++
++
++@torch.no_grad()
++def build_plane(w: torch.Tensor, mod):
++    """Plane records [N/8 * KC * 912 B], A_v, B_v (bound coefficients), verified bitwise against q."""
++    n, k = w.shape
++    kc_n = k // 128
++    planes = torch.empty((n // 8, kc_n, 228), dtype=torch.int32, device=w.device)
++    A = torch.empty(n, dtype=torch.float32, device=w.device)
++    B = torch.empty_like(A)
++    bad = 0
++    ch = 4096
++    for r0 in range(0, n, ch):
++        r1 = min(n, r0 + ch)
++        wf = w[r0:r1].float().view(-1, kc_n, 128)
++        mx = wf.abs().amax(2)
++        s32 = torch.where(mx > 0, mx / 63, torch.ones_like(mx))
++        sb = s32.bfloat16()
++        sb = torch.where(sb.float() < s32, (sb.view(torch.int16) + 1).view(torch.bfloat16), sb)  # round up
++        s = sb.float()
++        q = torch.round(wf / s[..., None]).clamp(-64, 63)
++        wd = wf.double()
++        what = s.double()[..., None] * q.double()
++        rn = (wd - what).pow(2).sum((1, 2)).sqrt() * (1 + 1e-9)
++        wh = what.pow(2).sum((1, 2)).sqrt() * (1 + 1e-9)
++        wn = wd.pow(2).sum((1, 2)).sqrt() * (1 + 1e-9)
++        del wd, what
++        A[r0:r1] = _ru32((rn + _DTC * wn + 2.0 ** -18 * wh) * (1 + 1e-9))
++        B[r0:r1] = _ru32(wh * (1 + 2.0 ** -18) * (1 + 1e-9))
++        qi = q.to(torch.int8)
++        del q, wf
++        # [n8, row, kc, j, half, t, byte] -> [n8, kc, row, t, j, half, byte]: lane = row*4 + t, reg = 2j + half
++        qq = qi.view(-1, 8, kc_n, 4, 2, 4, 4).permute(0, 2, 1, 5, 3, 4, 6).reshape(-1, kc_n, 32, 8, 4)
++        by = qq.to(torch.int64) & 0x7F
++        x = by[..., 0] | (by[..., 1] << 8) | (by[..., 2] << 16) | (by[..., 3] << 24)
++        del by, qq
++        nw = torch.stack([(x[..., 2 * i] & 0x0F0F0F0F) | ((x[..., 2 * i + 1] & 0x0F0F0F0F) << 4) for i in range(4)], -1)
++        p1 = torch.stack([sum(((x[..., 4 * i + j] >> 4) & 0x03030303) << (2 * j) for j in range(4)) for i in range(2)], -1)
++        p2 = sum(((x[..., i] >> 6) & 0x01010101) << i for i in range(8))
++        s16 = sb.view(-1, 8, kc_n).permute(0, 2, 1).contiguous().view(torch.int16).to(torch.int64) & 0xFFFF
++        sc = s16[..., 0::2] | (s16[..., 1::2] << 16)
++        rec = torch.cat([nw.reshape(-1, kc_n, 128), p1.reshape(-1, kc_n, 64), p2.reshape(-1, kc_n, 32), sc], -1)
++        rec = torch.where(rec >= 2 ** 31, rec - 2 ** 32, rec).to(torch.int32)
++        planes[r0 // 8:r1 // 8] = rec
++        del x, nw, p1, p2, rec
++        bad += mod.plane_verify(qi.view(-1, k).contiguous(), planes[r0 // 8:r1 // 8].view(torch.uint8).reshape(-1))
++        del qi
++    return planes.view(torch.uint8).reshape(-1), A, B, bad
++
++
++def _numa_nodes_of(ptr: int) -> str:
++    """Page placement of the mapping containing ptr, from /proc/self/numa_maps (N<node>=<pages>)."""
++    try:
++        best = None
++        with open("/proc/self/numa_maps") as f:
++            for line in f:
++                addr = int(line.split()[0], 16)
++                if addr <= ptr and (best is None or addr > best[0]):
++                    best = (addr, line)
++        if best is None:
++            return "unknown"
++        nodes = re.findall(r"\bN(\d+)=(\d+)", best[1])
++        return ", ".join(f"node{n}: {int(p)} pages" for n, p in nodes) or best[1].strip()[:120]
++    except Exception as e:  # informational only
++        return f"unavailable ({e})"
++
++
++class LmhCertMethod:
++    """quant_method of a target lm_head whose exact weights live in pinned host memory."""
++
++    def __init__(self, orig_method, plane, A, B, w_host, n, k, tp_rank, tp_size, device):
++        self.orig_method = orig_method
++        self.mod = _load_ext()
++        self.plane, self.A, self.B = plane, A, B
++        self.w_host = w_host
++        self.whp = self.mod.host_dev_ptr(w_host.data_ptr())  # registered mapped by maybe_certify
++        self.n, self.k = n, k
++        self.tp_rank, self.tp_size = tp_rank, tp_size
++        i32 = dict(dtype=torch.int32, device=device)
++        self.hq = torch.zeros((_MMAX, (k // 128) * 256), dtype=torch.int8, device=device)
++        self.hs = torch.zeros(_MMAX, dtype=torch.float32, device=device)
++        self.hn = torch.zeros_like(self.hs)
++        self.hqe = torch.zeros_like(self.hs)
++        self.c1 = torch.zeros(2 * _MMAX, **i32)          # lb | ecnt
++        self.lb, self.ecnt = self.c1[:_MMAX], self.c1[_MMAX:]
++        self.c2 = torch.zeros(1 + 2 * _MMAX, **i32)      # pair count | kept | fallback flags
++        self.pcnt, self.kept, self.fb = self.c2[:1], self.c2[1:1 + _MMAX], self.c2[1 + _MMAX:]
++        self.ebuf = torch.zeros((_MMAX, _ECAP, 2), **i32)
++        self.pairs = torch.zeros((_PAIRCAP, 2), **i32)
++        self.src = torch.zeros(_PAIRCAP, **i32)
++        self.map = torch.full((n,), -1, **i32)
++        self.stage = torch.empty((_STAGECAP, k), dtype=torch.bfloat16, device=device)
++        self.keys = torch.zeros(_MMAX, dtype=torch.int64, device=device)
++        self.vals = torch.zeros(_MMAX, dtype=torch.float32, device=device)
++        self.idx = torch.zeros(_MMAX, **i32)
++        self.rows = torch.zeros(_MMAX, **i32)
++        self.nrows = torch.zeros(1, **i32)
++        self.stats = torch.zeros(8, dtype=torch.int64, device=device)
++        self.stats_host = torch.zeros(8, dtype=torch.int64, pin_memory=True)
++        self.calls = 0
++        self.full_calls = 0
++        self.last_fb = 0
++
++    def __getattr__(self, name):
++        return getattr(self.__dict__["orig_method"], name)
++
++    def buffer_bytes(self) -> int:
++        ts = [self.hq, self.c1, self.c2, self.ebuf, self.pairs, self.src, self.map, self.stage, self.keys, self.vals,
++              self.idx, self.rows, self.nrows, self.stats, self.A, self.B, self.hs, self.hn, self.hqe]
++        return sum(t.numel() * t.element_size() for t in ts)
++
++    # ---- exact full logits (slow path: everything that needs logits rather than the argmax) ----
++    def apply(self, layer, x: torch.Tensor, bias: torch.Tensor | None = None) -> torch.Tensor:
++        assert bias is None, "lm_head cert: bias not supported"
++        lead = x.shape[:-1]
++        x2 = x.reshape(-1, self.k)
++        if not x2.is_contiguous():
++            x2 = x2.contiguous()
++        out = torch.empty((x2.shape[0], self.n), dtype=x2.dtype, device=x2.device)
++        if x2.shape[0]:
++            self.mod.full_logits(x2, self.whp, self.n, out)
++        self.full_calls += 1
++        if self.full_calls in (1, 10, 100) or self.full_calls % 1000 == 0:
++            logger.warning("lm_head cert: exact full logits streamed from host (%d calls so far; slow path)",
++                           self.full_calls)
++        return out.reshape(*lead, self.n)
++
++    def embedding(self, layer, input_):
++        raise RuntimeError("lm_head cert: the target lm_head weight lives in host memory")
++
++    # ---- certified greedy: per-rank (max value fp32, first argmax int32) usable by the cross-rank combine ----
++    def greedy_local(self, x: torch.Tensor):
++        from vllm.distributed import tensor_model_parallel_all_gather
++
++        x = x.contiguous()
++        outs_v, outs_i = [], []
++        for c0 in range(0, x.shape[0], _MMAX):
++            xc = x[c0:c0 + _MMAX]
++            m = xc.shape[0]
++            self.c1.zero_()
++            self.c2.zero_()
++            self.keys.zero_()
++            self.mod.hprep(xc, m, self.hq, self.hs, self.hn, self.hqe)
++            self.mod.screen(self.hq, m, self.plane, self.A, self.B, self.hs, self.hn, self.hqe, self.n, self.lb,
++                            self.ecnt, self.ebuf, _ECAP)
++            if self.tp_size > 1:
++                lb_all = tensor_model_parallel_all_gather(self.lb[:m].view(torch.float32).unsqueeze(1), dim=-1)
++                lb_all = lb_all.contiguous().view(torch.int32)
++            else:
++                lb_all = self.lb[:m].unsqueeze(1).contiguous()
++            self.mod.finalize(m, lb_all, self.tp_size, self.ecnt, self.ebuf, _ECAP, self.pcnt, self.pairs, self.src,
++                              self.map, self.kept, self.fb, _CAPR)
++            self.mod.gather_rescore(xc, self.pcnt, self.pairs, self.src, self.map, self.whp, self.stage, self.keys)
++            self.mod.fallback_decode(xc, m, self.fb, self.kept, self.rows, self.nrows, self.stats, self.whp, self.n,
++                                     self.keys, self.vals, self.idx)
++            if x.shape[0] <= _MMAX:
++                outs_v.append(self.vals[:m])
++                outs_i.append(self.idx[:m])
++            else:
++                outs_v.append(self.vals[:m].clone())
++                outs_i.append(self.idx[:m].clone())
++        self._log_stats()
++        if len(outs_v) == 1:
++            return outs_v[0], outs_i[0]
++        return torch.cat(outs_v), torch.cat(outs_i)
++
++    def _log_stats(self):
++        self.calls += 1
++        if self.calls % _LOG_EVERY != 1:
++            return
++        # values copied by the previous checkpoint (no sync now); then queue a fresh async copy
++        s = self.stats_host.tolist()
++        if s[3]:
++            logger.info("lm_head cert stats (rank %d): calls %d, rows %d, candidates/row mean %.2f max %d, "
++                        "fallback rows %d, full-logit calls %d", self.tp_rank, s[4], s[3], s[1] / s[3], s[2], s[0],
++                        self.full_calls)
++        if s[0] > self.last_fb:
++            logger.warning("lm_head cert: %d rows fell back to the exact full-shard path (host)", s[0] - self.last_fb)
++            self.last_fb = s[0]
++        self.stats_host.copy_(self.stats, non_blocking=True)
++
++
++def _target_lm_head(model):
++    lm = model.get_language_model() if hasattr(model, "get_language_model") else model
++    return getattr(lm, "lm_head", None) or getattr(model, "lm_head", None)
++
++
++def _combine(vals, idx, start, tp_size):
++    """Cross-rank combine exactly as LogitsProcessor.get_greedy_tokens (lowest rank wins ties)."""
++    from vllm.distributed import tensor_model_parallel_all_gather
++
++    gidx = idx + start
++    if tp_size == 1:
++        return vals, gidx.to(torch.int64)
++    pair = torch.stack([vals, gidx.float()], dim=-1)
++    g = tensor_model_parallel_all_gather(pair, dim=-1).view(vals.shape[0], tp_size, 2)
++    bv, bi = g[:, 0, 0], g[:, 0, 1]
++    for r in range(1, tp_size):
++        take = g[:, r, 0] > bv
++        bv = torch.where(take, g[:, r, 0], bv)
++        bi = torch.where(take, g[:, r, 1], bi)
++    return bv, bi.to(torch.int64)
++
++
++@torch.no_grad()
++def maybe_certify_target_lm_head(model) -> bool:
++    """Replace the target lm_head shard by the certified plane + host copy. False: nothing changed."""
++    if not _ENABLED:
++        logger.info("lm_head cert: disabled (VLLM_LMH_CERT=0)")
++        return False
++    from vllm.distributed import tensor_model_parallel_all_gather
++    from vllm.model_executor.layers.vocab_parallel_embedding import (
++        ParallelLMHead,
++        UnquantizedEmbeddingMethod,
++    )
++    from vllm.v1.worker.gpu.sample.greedy_argmax import greedy_argmax_with_value
++
++    head = _target_lm_head(model)
++    w = getattr(head, "weight", None)
++    ok = (
++        isinstance(head, ParallelLMHead)
++        and type(head.quant_method) is UnquantizedEmbeddingMethod
++        and getattr(head, "bias", None) is None
++        and isinstance(w, torch.Tensor)
++        and w.is_cuda
++        and w.dtype == torch.bfloat16
++        and w.dim() == 2
++        and w.is_contiguous()
++        and w.shape[0] % 8 == 0
++        and w.shape[1] % 512 == 0
++    )
++    if ok:
++        si = head.shard_indices
++        n, k = w.shape
++        ok = si.num_org_vocab_padding == 0 and si.org_vocab_start_index == head.tp_rank * n and \
++            si.org_vocab_end_index - si.org_vocab_start_index == n
++    tp_size = head.tp_size if ok else 1
++    # every rank must take the same decision (the certified path exchanges data across ranks)
++    if tp_size > 1 or (isinstance(head, ParallelLMHead) and head.tp_size > 1):
++        flag = torch.tensor([[1.0 if ok else 0.0]], device=torch.cuda.current_device())
++        ok = bool(tensor_model_parallel_all_gather(flag, dim=-1).min().item() > 0)
++    if not ok:
++        logger.warning("lm_head cert: target lm_head not eligible, keeping the champion path")
++        return False
++    n, k = w.shape
++    dev = w.device
++    mod = _load_ext()
++    mem0 = torch.cuda.memory_allocated(dev)
++    plane, A, B, bad = build_plane(w, mod)
++    # exact host copy (pinned; first-touched by this NUMA-bound process) + bitwise check
++    w_host = torch.empty((n, k), dtype=torch.bfloat16)  # plain pages, first-touched here, then registered
++    w_host.copy_(w)
++    mod.host_register(w_host.data_ptr(), w_host.numel() * w_host.element_size())
++    host_ok = all(torch.equal(w_host[r0:r0 + 16384].to(dev), w[r0:r0 + 16384]) for r0 in range(0, n, 16384))
++    method = LmhCertMethod(head.quant_method, plane, A, B, w_host, n, k, head.tp_rank, head.tp_size, dev)
++    # self-test vs the exact full-shard logits (same chain as lmh_codec) from the device copy, combined across ranks.
++    # Inputs are identical on all ranks: rank 0's vocab rows (gathered) and seeded random rows.
++    gen = torch.Generator(device=dev).manual_seed(0)
++    rows0 = w[torch.arange(0, n, n // 64, device=dev)[:64]].contiguous()
++    rows0 = tensor_model_parallel_all_gather(rows0, dim=-1)[:, :k].contiguous() if head.tp_size > 1 else rows0
++    tests = []
++    x = (rows0.float() * 400).to(torch.bfloat16); tests.append(("vocab rows x400", x))
++    x = ((rows0.float() + rows0.roll(1, 0).float()) * 200).to(torch.bfloat16); tests.append(("row pairs", x))
++    x = (rows0.float() * 300 + torch.randn(64, k, device=dev, generator=gen) * 0.3).to(torch.bfloat16)
++    tests.append(("rows+noise M=48", x[:48].contiguous()))
++    tests.append(("rows+noise M=17", x[:17].contiguous()))
++    tests.append(("gaussian M=5", torch.randn(5, k, device=dev, generator=gen).to(torch.bfloat16)))
++    oh = torch.zeros(3, k, device=dev); oh[torch.arange(3), torch.tensor([7, 1000, 4097])] = 20.0
++    tests.append(("one-hot M=3", oh.to(torch.bfloat16)))
++    start = head.tp_rank * n
++    mism, rows = 0, 0
++    for name, xt in tests:
++        ref_logits = torch.empty((xt.shape[0], n), dtype=torch.bfloat16, device=dev)
++        mod.full_logits(xt, w.data_ptr(), n, ref_logits)
++        rv, ri = greedy_argmax_with_value(ref_logits, n)
++        rv, rid = _combine(rv, ri, start, head.tp_size)
++        cv, ci = method.greedy_local(xt)
++        cv, cid = _combine(cv, ci, start, head.tp_size)
++        bad_rows = int(((rid != cid) | (rv != cv)).sum().item())
++        mism += bad_rows
++        rows += xt.shape[0]
++        if bad_rows:
++            logger.error("lm_head cert self-test %s: %d mismatching rows", name, bad_rows)
++    torch.cuda.synchronize(dev)
++    st = method.stats.tolist()
++    all_ok = bad == 0 and host_ok and mism == 0
++    if head.tp_size > 1:
++        flag = torch.tensor([[1.0 if all_ok else 0.0]], device=dev)
++        all_ok = bool(tensor_model_parallel_all_gather(flag, dim=-1).min().item() > 0)
++    if not all_ok:
++        logger.error("lm_head cert: SELF-TEST FAILED (plane bad words %d, host copy ok %s, decision mismatches %d/%d); "
++                     "keeping the champion path", bad, host_ok, mism, rows)
++        del method
++        return False
++    head.quant_method = method
++    head._lmh_cert = method
++    head._lmh_cert_plane = plane
++    raw_bytes = w.numel() * w.element_size()
++    head.weight.data = torch.empty((0, k), dtype=w.dtype, device=dev)
++    del w
++    torch.cuda.empty_cache()
++    mem1 = torch.cuda.memory_allocated(dev)
++    logger.info(
++        "lm_head cert: target lm_head shard %dx%d certified (rank %d): plane %.4f GB + buffers %.1f MB in HBM replace "
++        "the raw %.3f GB shard (allocated %.3f -> %.3f GB); exact bf16 copy pinned on host (%s); self-test %d rows "
++        "0 mismatches (%d fallback rows, mean candidates %.1f)",
++        n, k, head.tp_rank, plane.numel() / 1e9, method.buffer_bytes() / 1e6, raw_bytes / 1e9, mem0 / 1e9, mem1 / 1e9,
++        _numa_nodes_of(w_host.data_ptr()), rows, st[0], st[1] / max(st[3], 1))
++    method.stats.zero_()
++    return True
++
++
++def certified_greedy_local(lm_head, hidden_states: torch.Tensor):
++    """(vals fp32, local idx int32) from the certified head, or None if the head is not certified."""
++    method = getattr(lm_head, "_lmh_cert", None)
++    if method is None:
++        return None
++    return method.greedy_local(hidden_states)
+--- /dev/null	2026-11-10 18:24:51.528000000 +0000
++++ t42-cs/vllm/vllm/model_executor/layers/lmh_cert.cu	2026-11-11 02:59:02.228422957 +0000
+@@ -0,0 +1,622 @@
++// AutoInfer T42: certified greedy decisions for the target lm_head (leader-42.w1; standalone study: bank/T42-002).
++// A 7-bit integer plane of the lm_head shard (912 B records per (n8 tile, k128): nibble / 2-bit / 1-bit planes as int8
++// m16n8k32 B fragments + 8 bf16 scales rounded up from max|w|/63) screens all ids with a rigorous Cauchy-Schwarz bound
++// (proof: bank/T42-002/code/PROOF.md). Ids that can still be the argmax are rescored EXACTLY with the lmh_codec
++// kernel's own mma.m16n8k16 chain from a pinned host copy of the raw bf16 shard; rows whose certificate cannot be
++// used (buffer caps) are recomputed over the full shard from host. The decision equals argmax over the baseline's
++// bf16 logits, first index on ties.
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <cuda_bf16.h>
++#include <cuda_runtime.h>
++
++#define REC 912
++#define KC_MAX 64
++
++static __device__ __forceinline__ uint4 ldg_nc(const void* p) {
++  uint4 r;
++  asm volatile("ld.global.nc.L1::no_allocate.v4.u32 {%0,%1,%2,%3}, [%4];"
++               : "=r"(r.x), "=r"(r.y), "=r"(r.z), "=r"(r.w) : "l"(p));
++  return r;
++}
++static __device__ __forceinline__ uint2 ldg_nc2(const void* p) {
++  uint2 r;
++  asm volatile("ld.global.nc.L1::no_allocate.v2.u32 {%0,%1}, [%2];" : "=r"(r.x), "=r"(r.y) : "l"(p));
++  return r;
++}
++static __device__ __forceinline__ uint32_t ldg_nc1(const void* p) {
++  uint32_t r;
++  asm volatile("ld.global.nc.L1::no_allocate.u32 %0, [%1];" : "=r"(r) : "l"(p));
++  return r;
++}
++static __device__ __forceinline__ void cp_async16(void* smem, const void* gmem, bool valid) {
++  unsigned s = (unsigned)__cvta_generic_to_shared(smem);
++  int sz = valid ? 16 : 0;
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;" :: "r"(s), "l"(gmem), "r"(sz));
++}
++static __device__ __forceinline__ void ldsm_x4(const void* smem, uint32_t& r0, uint32_t& r1, uint32_t& r2, uint32_t& r3) {
++  unsigned s = (unsigned)__cvta_generic_to_shared(smem);
++  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];"
++               : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(s));
++}
++static __device__ __forceinline__ void mma_s8(int* c, const uint32_t* a, uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};"
++               : "+r"(c[0]), "+r"(c[1]), "+r"(c[2]), "+r"(c[3])
++               : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
++}
++static __device__ __forceinline__ void mma16816(float* c, const uint32_t* a, uint32_t b0, uint32_t b1) {
++  asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};"
++               : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
++               : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
++}
++// ordered encoding of floats (monotone as unsigned); 0 = "below everything"
++static __device__ __forceinline__ unsigned f2ord(float f) {
++  unsigned u = __float_as_uint(f);
++  return (u & 0x80000000u) ? ~u : (u | 0x80000000u);
++}
++static __device__ __forceinline__ float ord2f(unsigned k) {
++  if (k == 0) return -INFINITY;
++  unsigned u = (k & 0x80000000u) ? (k & 0x7FFFFFFFu) : ~k;
++  return __uint_as_float(u);
++}
++static __device__ __forceinline__ float bf_ru(float x) { return __bfloat162float(__float2bfloat16_ru(x)); }
++static __device__ __forceinline__ float bf_rd(float x) { return __bfloat162float(__float2bfloat16_rd(x)); }
++
++// ---------------- plane decode ----------------
++struct PRec { uint4 n; uint2 p1; uint32_t p2; float2 sc; };
++static __device__ __forceinline__ void load_rec(const uint8_t* G, int lane, PRec& r) {
++  r.n = ldg_nc(G + 16 * lane);
++  r.p1 = ldg_nc2(G + 512 + 8 * lane);
++  r.p2 = ldg_nc1(G + 768 + 4 * lane);
++  const uint32_t s = ldg_nc1(G + 896 + 4 * (lane & 3));
++  r.sc = make_float2(__uint_as_float(s << 16), __uint_as_float(s & 0xFFFF0000u));
++}
++static __device__ __forceinline__ void decode_rec(const PRec& r, uint32_t q[8]) {
++  const uint32_t nw[4] = {r.n.x, r.n.y, r.n.z, r.n.w};
++  const uint32_t pw[2] = {r.p1.x, r.p1.y};
++#pragma unroll
++  for (int i = 0; i < 8; i++) {
++    uint32_t lo = (nw[i >> 1] >> (4 * (i & 1))) & 0x0F0F0F0Fu;
++    uint32_t mid = ((pw[i >> 2] >> (2 * (i & 3))) & 0x03030303u) << 4;
++    uint32_t hi = (r.p2 >> i) & 0x01010101u;
++    q[i] = lo | mid | (hi << 6) | (hi << 7);
++  }
++}
++// verification of the packing: decode every group and compare with the int8 q [N][K]
++__global__ void plane_verify_kernel(const int8_t* __restrict__ Q, long N, long K, const uint8_t* __restrict__ plane,
++                                    unsigned long long* bad) {
++  const int lane = threadIdx.x & 31;
++  const long KC = K / 128, ng = (N / 8) * KC;
++  const long g = (long)blockIdx.x * (blockDim.x / 32) + threadIdx.x / 32;
++  if (g >= ng) return;
++  const long n8 = g / KC, kc = g % KC;
++  PRec r; load_rec(plane + g * REC, lane, r);
++  uint32_t q[8]; decode_rec(r, q);
++  const long row = n8 * 8 + (lane >> 2); const int t = lane & 3;
++  int nb = 0;
++#pragma unroll
++  for (int i = 0; i < 8; i++) {
++    const int j = i >> 1, half = i & 1;
++    const uint32_t ref = *reinterpret_cast<const uint32_t*>(Q + row * K + kc * 128 + 32 * j + 16 * half + 4 * t);
++    nb += (ref != q[i]);
++  }
++  if (nb) atomicAdd(bad, (unsigned long long)nb);
++}
++
++// ---------------- h prep: one block per row ----------------
++// hq [M][KC][2][128] int8 (a then b), hs = s_h, hn = ||h||_2 (ru), hqe = ||h - s_h qh||_2 (ru)
++__global__ void hprep_kernel(const __nv_bfloat16* __restrict__ X, int K, int8_t* __restrict__ hq, float* hs, float* hn, float* hqe) {
++  const int m = blockIdx.x, tid = threadIdx.x;
++  const __nv_bfloat16* x = X + (long)m * K;
++  __shared__ float smax[32];
++  __shared__ double s2[32], e2[32];
++  float mx = 0.f;
++  for (int i = tid; i < K; i += blockDim.x) mx = fmaxf(mx, fabsf(__bfloat162float(x[i])));
++  for (int o = 16; o; o >>= 1) mx = fmaxf(mx, __shfl_xor_sync(0xffffffffu, mx, o));
++  if ((tid & 31) == 0) smax[tid >> 5] = mx;
++  __syncthreads();
++  if (tid < 32) {
++    float v = tid < (int)(blockDim.x / 32) ? smax[tid] : 0.f;
++    for (int o = 16; o; o >>= 1) v = fmaxf(v, __shfl_xor_sync(0xffffffffu, v, o));
++    if (tid == 0) smax[0] = v;
++  }
++  __syncthreads();
++  mx = smax[0];
++  const float s = mx > 0.f ? mx / 16256.f : 1.f;
++  // per-thread fp32 partial sums of <= K/blockDim (<= 20) squares; error <= 21*2^-24 relative, inflated below
++  float fh = 0.f, fe = 0.f;
++  for (int i = tid; i < K; i += blockDim.x) {
++    const float h = __bfloat162float(x[i]);
++    int qh = __float2int_rn(h / s);
++    qh = max(-16319, min(16319, qh));
++    int a = __float2int_rn((float)qh * (1.f / 128.f));
++    a = max(-127, min(127, a));
++    const int b = qh - 128 * a;  // |b| <= 64 for |qh| <= 16319
++    const int kc = i >> 7, kk = i & 127;
++    hq[((long)m * (K / 128) + kc) * 256 + kk] = (int8_t)a;
++    hq[((long)m * (K / 128) + kc) * 256 + 128 + kk] = (int8_t)b;
++    const float d = fabsf(fmaf(-s, (float)qh, h)) * (1.f + 1.2e-7f);  // |rn(h - s qh)| (1 + u) >= |h - s qh|
++    fh = fmaf(h, h, fh);
++    fe = fmaf(d, d, fe);
++  }
++  double sh = (double)fh * (1.0 + 1e-5) + 1e-30, se = (double)fe * (1.0 + 1e-5) + 1e-30;
++  for (int o = 16; o; o >>= 1) { sh += __shfl_xor_sync(0xffffffffu, sh, o); se += __shfl_xor_sync(0xffffffffu, se, o); }
++  if ((tid & 31) == 0) { s2[tid >> 5] = sh; e2[tid >> 5] = se; }
++  __syncthreads();
++  if (tid == 0) {
++    double a = 0, b = 0;
++    for (int w = 0; w < (int)(blockDim.x / 32); w++) { a += s2[w]; b += e2[w]; }
++    // fp64 sums of <= 5120 squares: relative error < 1e-12; inflate by 1e-9 then round up
++    hs[m] = s;
++    hn[m] = __double2float_ru(sqrt(a * (1.0 + 1e-9)) * (1.0 + 1e-9));
++    hqe[m] = __double2float_ru(sqrt(b * (1.0 + 1e-9)) * (1.0 + 1e-9));
++  }
++}
++
++// ---------------- screen ----------------
++// lb: per-row ordered running max of L (atomicMax); emission: (id, U) per row where bf16_ru(U) >= bf16_rd(thr_now)
++template <int MT, int NT, int WARPS, int STAGES, bool MAGIC>
++__global__ void __launch_bounds__(WARPS * 32)
++screen_kernel(const int8_t* __restrict__ hq, int M, long K, const uint8_t* __restrict__ plane,
++              const float* __restrict__ vA, const float* __restrict__ vB,
++              const float* __restrict__ hs, const float* __restrict__ hn, const float* __restrict__ hqe, long N,
++              unsigned* lb, int* ecnt, int2* ebuf, int ecap) {
++  extern __shared__ uint4 smem[];  // [STAGES][MT*16 rows][16 vec] swizzled (a: vec 0-7, b: vec 8-15)
++  constexpr int ROWS = MT * 16, VEC_PER_STAGE = ROWS * 16;
++  const int lane = threadIdx.x & 31, warp = threadIdx.x / 32, tid = threadIdx.x;
++  const long KC = K / 128;
++  const long n8_base = ((long)blockIdx.x * WARPS + warp) * NT;
++  const bool warp_active = n8_base * 8 < N;
++
++  auto load_x = [&](int kc, int stage) {
++    uint4* s = smem + stage * VEC_PER_STAGE;
++    for (int v = tid; v < VEC_PER_STAGE; v += WARPS * 32) {
++      const int r = v >> 4, c = v & 15;
++      const bool ok = r < M;
++      const int8_t* src = hq + ((long)(ok ? r : 0) * KC + kc) * 256 + c * 16;
++      cp_async16(s + r * 16 + (c ^ (r & 7)), src, ok);
++    }
++  };
++#pragma unroll
++  for (int s = 0; s < STAGES - 1; s++) {
++    if (s < KC) load_x(s, s);
++    asm volatile("cp.async.commit_group;");
++  }
++  float acc[MT][NT][4];
++#pragma unroll
++  for (int i = 0; i < MT; i++)
++#pragma unroll
++    for (int j = 0; j < NT; j++) acc[i][j][0] = acc[i][j][1] = acc[i][j][2] = acc[i][j][3] = 0.f;
++
++  PRec cur[NT], nxt[NT];
++  if (warp_active) {
++#pragma unroll
++    for (int nt = 0; nt < NT; nt++) load_rec(plane + ((n8_base + nt) * KC + 0) * REC, lane, cur[nt]);
++  }
++  for (long kc = 0; kc < KC; kc++) {
++    if (warp_active && kc + 1 < KC) {
++#pragma unroll
++      for (int nt = 0; nt < NT; nt++) load_rec(plane + ((n8_base + nt) * KC + kc + 1) * REC, lane, nxt[nt]);
++    }
++    asm volatile("cp.async.wait_group %0;" :: "n"(STAGES - 2));
++    __syncthreads();
++    {
++      const long kn = kc + STAGES - 1;
++      if (kn < KC) load_x(kn, kn % STAGES);
++      asm volatile("cp.async.commit_group;");
++    }
++    if (warp_active) {
++      uint32_t bq[NT][8];
++#pragma unroll
++      for (int nt = 0; nt < NT; nt++) decode_rec(cur[nt], bq[nt]);
++      int ia[MT][NT][4], ib[MT][NT][4];
++#pragma unroll
++      for (int i = 0; i < MT; i++)
++#pragma unroll
++        for (int j = 0; j < NT; j++)
++#pragma unroll
++          for (int e = 0; e < 4; e++) ia[i][j][e] = ib[i][j][e] = 0;
++      const uint4* s = smem + (kc % STAGES) * VEC_PER_STAGE;
++#pragma unroll
++      for (int j = 0; j < 4; j++) {
++#pragma unroll
++        for (int mt = 0; mt < MT; mt++) {
++          uint32_t aa[4], ab[4];
++          const int q = lane >> 3, r = mt * 16 + (q & 1) * 8 + (lane & 7), c = 2 * j + (q >> 1);
++          ldsm_x4(s + r * 16 + (c ^ (r & 7)), aa[0], aa[1], aa[2], aa[3]);
++          ldsm_x4(s + r * 16 + ((8 + c) ^ (r & 7)), ab[0], ab[1], ab[2], ab[3]);
++#pragma unroll
++          for (int nt = 0; nt < NT; nt++) {
++            mma_s8(ia[mt][nt], aa, bq[nt][2 * j], bq[nt][2 * j + 1]);
++            mma_s8(ib[mt][nt], ab, bq[nt][2 * j], bq[nt][2 * j + 1]);
++          }
++        }
++      }
++#pragma unroll
++      for (int mt = 0; mt < MT; mt++)
++#pragma unroll
++        for (int nt = 0; nt < NT; nt++)
++#pragma unroll
++          for (int e = 0; e < 4; e++) {
++            float fI;
++            if (MAGIC) {  // |ia|, |ib| < 2^22: exact floats; fmaf(fa, 128, fb) = rn(128 ia + ib) = (float)I bitwise
++              const float fa = __int_as_float(ia[mt][nt][e] + 0x4B400000) - 12582912.f;
++              const float fb = __int_as_float(ib[mt][nt][e] + 0x4B400000) - 12582912.f;
++              fI = fmaf(fa, 128.f, fb);
++            } else {
++              fI = (float)(ia[mt][nt][e] * 128 + ib[mt][nt][e]);  // exact int: |I| < 2^28
++            }
++            acc[mt][nt][e] = fmaf(fI, (e & 1) ? cur[nt].sc.y : cur[nt].sc.x, acc[mt][nt][e]);
++          }
++#pragma unroll
++      for (int nt = 0; nt < NT; nt++) cur[nt] = nxt[nt];
++    }
++  }
++  asm volatile("cp.async.wait_group 0;");
++  if (!warp_active) return;
++  const int g = lane >> 2, t = lane & 3;
++  float U[MT][NT][4], L[MT][NT][4];
++  float lmax[MT][2];
++#pragma unroll
++  for (int mt = 0; mt < MT; mt++) {
++    lmax[mt][0] = lmax[mt][1] = -INFINITY;
++#pragma unroll
++    for (int hf = 0; hf < 2; hf++) {
++      const int r = mt * 16 + g + 8 * hf;
++      const bool rv = r < M;
++      const float shr = rv ? hs[r] : 0.f, hnr = rv ? hn[r] : 0.f, hqr = rv ? hqe[r] : 0.f;
++#pragma unroll
++      for (int nt = 0; nt < NT; nt++)
++#pragma unroll
++        for (int e1 = 0; e1 < 2; e1++) {
++          const int e = 2 * hf + e1;
++          const long col = (n8_base + nt) * 8 + 2 * t + e1;
++          const bool ok = rv && col < N;
++          const float a = acc[mt][nt][e] * shr;
++          const float bnd = ok ? __fmaf_ru(hnr, vA[col], __fmul_ru(hqr, vB[col])) : 0.f;
++          U[mt][nt][e] = ok ? __fadd_ru(a, bnd) : -INFINITY;
++          L[mt][nt][e] = ok ? __fsub_rd(a, bnd) : -INFINITY;
++          lmax[mt][hf] = fmaxf(lmax[mt][hf], L[mt][nt][e]);
++        }
++    }
++  }
++#pragma unroll
++  for (int mt = 0; mt < MT; mt++)
++#pragma unroll
++    for (int hf = 0; hf < 2; hf++) {
++      float v = lmax[mt][hf];
++      v = fmaxf(v, __shfl_xor_sync(0xffffffffu, v, 1));
++      v = fmaxf(v, __shfl_xor_sync(0xffffffffu, v, 2));
++      const int r = mt * 16 + g + 8 * hf;
++      unsigned thr = 0;
++      if (t == 0 && r < M) {
++        const unsigned mine = f2ord(v);
++        const unsigned now = __ldcg(lb + r);
++        if (mine > now) atomicMax(lb + r, mine);
++        thr = max(mine, now);
++      }
++      thr = __shfl_sync(0xffffffffu, thr, lane & ~3);
++      const float T = bf_rd(ord2f(thr));
++      if (r < M) {
++#pragma unroll
++        for (int nt = 0; nt < NT; nt++)
++#pragma unroll
++          for (int e1 = 0; e1 < 2; e1++) {
++            const float u = U[mt][nt][2 * hf + e1];
++            if (bf_ru(u) >= T) {
++              const int pos = atomicAdd(ecnt + r, 1);
++              if (pos < ecap) ebuf[(long)r * ecap + pos] = make_int2((int)((n8_base + nt) * 8 + 2 * t + e1), __float_as_int(u));
++            }
++          }
++      }
++    }
++}
++
++
++// ---------------- finalize: filter emitted entries against the final (cross-rank) LB ----------------
++// lb_all [M][tp] ordered keys of every rank's LB; keeps (m, v) with bf16_ru(U) >= bf16_rd(max_r lb_all[m][r]).
++__global__ void finalize_kernel(int M, const unsigned* lb_all, int tp, const int* ecnt, const int2* ebuf, int ecap,
++                                int* pair_cnt, int2* pairs, int* src, int paircap, int* map, int* kept, int* fallback, int capr) {
++  const int m = blockIdx.x;
++  if (m >= M) return;
++  const int n = ecnt[m];
++  if (n > ecap) { if (threadIdx.x == 0) { fallback[m] = 1; kept[m] = 0; } return; }
++  unsigned lbk = 0;
++  for (int r = 0; r < tp; r++) lbk = max(lbk, lb_all[m * tp + r]);
++  const float T = bf_rd(ord2f(lbk));
++  __shared__ int nk;
++  if (threadIdx.x == 0) nk = 0;
++  __syncthreads();
++  for (int i = threadIdx.x; i < n; i += blockDim.x) {
++    const int2 e = ebuf[(long)m * ecap + i];
++    if (bf_ru(__int_as_float(e.y)) >= T) {
++      const int k = atomicAdd(&nk, 1);
++      if (k >= capr) continue;
++      const int p = atomicAdd(pair_cnt, 1);
++      if (p >= paircap) { fallback[m] = 1; continue; }
++      pairs[p] = make_int2(m, e.x);
++      const int own = atomicCAS(map + e.x, -1, p);
++      src[p] = own < 0 ? p : own;
++    }
++  }
++  __syncthreads();
++  if (threadIdx.x == 0) { kept[m] = nk; if (nk > capr) fallback[m] = 1; }
++}
++
++// ---------------- gather: copy owner rows (p < stagecap) from the host-mapped shard into HBM staging; unmap ----------------
++__global__ void gather_kernel(const int* pair_cnt, int paircap, const int2* pairs, const int* src, const uint4* W, long K,
++                              uint4* stage, int stagecap) {
++  const int np = min(min(*pair_cnt, paircap), stagecap);
++  const int vpr = K / 8;
++  const long total = (long)np * vpr;
++  for (long i = (long)blockIdx.x * blockDim.x + threadIdx.x; i < total; i += (long)gridDim.x * blockDim.x) {
++    const int p = i / vpr, c = i % vpr;
++    if (src[p] != p) continue;
++    stage[(long)p * vpr + c] = W[(long)pairs[p].y * vpr + c];
++  }
++}
++__global__ void unmap_kernel(const int* pair_cnt, int paircap, const int2* pairs, int* map) {
++  const int np = min(*pair_cnt, paircap);
++  for (int p = blockIdx.x * blockDim.x + threadIdx.x; p < np; p += gridDim.x * blockDim.x) map[pairs[p].y] = -1;
++}
++
++static __device__ __forceinline__ unsigned long long make_key(float v, unsigned idx) {
++  const __nv_bfloat16 bv = __float2bfloat16_rn(v);
++  float fv = __bfloat162float(bv);
++  if (fv != fv) fv = -INFINITY;  // as greedy_argmax: NaN -> -inf
++  return ((unsigned long long)f2ord(fv) << 32) | (unsigned long long)(0xFFFFFFFFu - idx);
++}
++
++// ---------------- rescore: exact bf16 logits with lmh_codec's MMA chain, diagonal trick ----------------
++// warp per octet of pairs; A row g = h_{m_g}, B col g = w_{v_g}; D[g][g] gets the same per-element MMA chain as
++// lmh_codec's tile. Row source: staging row src[p] if src[p] < stagecap, else the host-mapped shard row v.
++__global__ void rescore_kernel(const __nv_bfloat16* __restrict__ X, long K, const int* pair_cnt, int paircap,
++                               const int2* __restrict__ pairs, const int* __restrict__ src,
++                               const __nv_bfloat16* __restrict__ stage, int stagecap, const __nv_bfloat16* __restrict__ Wh,
++                               unsigned long long* keys) {
++  const int np = min(*pair_cnt, paircap);
++  const int lane = threadIdx.x & 31;
++  const int g = lane >> 2, t = lane & 3;
++  const int nwarps = gridDim.x * (blockDim.x / 32);
++  for (int o = blockIdx.x * (blockDim.x / 32) + threadIdx.x / 32; o * 8 < np; o += nwarps) {
++    const int p = o * 8 + g;
++    const bool valid = p < np;
++    const int2 pr = valid ? pairs[p] : make_int2(0, 0);
++    const int sp = valid ? src[p] : 0;
++    const uint32_t* hrow = reinterpret_cast<const uint32_t*>(X + (long)pr.x * K);
++    const uint32_t* wrow = reinterpret_cast<const uint32_t*>(
++        sp < stagecap ? stage + (long)sp * K : Wh + (long)pr.y * K);
++    float acc[4] = {0.f, 0.f, 0.f, 0.f};
++    const long KC = K / 128;  // KC % PF == 0 (checked on the host)
++    constexpr int PF = 4;
++    uint32_t rb[PF][16], ra[PF][16];
++#pragma unroll
++    for (int sl = 0; sl < PF; sl++) {
++#pragma unroll
++      for (int j = 0; j < 8; j++) {
++        const long o0 = (sl * 128 + 16 * j + 2 * t) / 2, o1 = (sl * 128 + 16 * j + 2 * t + 8) / 2;
++        rb[sl][2 * j] = wrow[o0]; rb[sl][2 * j + 1] = wrow[o1]; ra[sl][2 * j] = hrow[o0]; ra[sl][2 * j + 1] = hrow[o1];
++      }
++    }
++    for (long kc0 = 0; kc0 < KC; kc0 += PF) {
++#pragma unroll
++      for (int sl = 0; sl < PF; sl++) {
++#pragma unroll
++        for (int j = 0; j < 8; j++) {  // same chain as lmh_codec: kc ascending, k16 steps ascending, from 0
++          uint32_t a[4] = {ra[sl][2 * j], 0u, ra[sl][2 * j + 1], 0u};
++          mma16816(acc, a, rb[sl][2 * j], rb[sl][2 * j + 1]);
++        }
++        const long kn = kc0 + sl + PF;
++        if (kn < KC) {
++#pragma unroll
++          for (int j = 0; j < 8; j++) {
++            const long o0 = (kn * 128 + 16 * j + 2 * t) / 2, o1 = (kn * 128 + 16 * j + 2 * t + 8) / 2;
++            rb[sl][2 * j] = wrow[o0]; rb[sl][2 * j + 1] = wrow[o1]; ra[sl][2 * j] = hrow[o0]; ra[sl][2 * j + 1] = hrow[o1];
++          }
++        }
++      }
++    }
++    const int n = g;  // diagonal element (n, n) lives in lane (g = n, t = n >> 1), c[n & 1]
++    if ((t == (n >> 1)) && valid) atomicMax(keys + pr.x, make_key((n & 1) ? acc[1] : acc[0], (unsigned)pr.y));
++  }
++}
++
++// ---------------- exact full-shard logits (fallback rows / full-logits path), B read from W (host-mapped ok) ----------------
++// rows: list of row indices (or identity when null), count *nrows_ptr (device) or nrows; processes up to 64 rows per pass
++// with lmh_codec's exact per-element chain (m16 tiles, kc ascending, k16 ascending). out: bf16 logits [row][ldo] or
++// keys: atomicMax per row.
++__global__ void __launch_bounds__(128) rawgemm_kernel(const __nv_bfloat16* __restrict__ X, long K, const int* rows,
++                                                      const int* nrows_ptr, int nrows, int pass,
++                                                      const __nv_bfloat16* __restrict__ W, long N,
++                                                      __nv_bfloat16* out, long ldo, unsigned long long* keys) {
++  const int n_all = nrows_ptr ? *nrows_ptr : nrows;
++  const int r0 = pass * 64;
++  if (r0 >= n_all) return;
++  const int nr = min(64, n_all - r0);
++  const int lane = threadIdx.x & 31, g = lane >> 2, t = lane & 3;
++  int rid[4][2];
++#pragma unroll
++  for (int mt = 0; mt < 4; mt++)
++#pragma unroll
++    for (int hf = 0; hf < 2; hf++) {
++      const int i = mt * 16 + g + 8 * hf;
++      rid[mt][hf] = i < nr ? (rows ? rows[r0 + i] : r0 + i) : -1;
++    }
++  const long KC = K / 128, n8s = N / 8;
++  const int nwarps = gridDim.x * (blockDim.x / 32);
++  for (long n8 = blockIdx.x * (blockDim.x / 32) + threadIdx.x / 32; n8 < n8s; n8 += nwarps) {
++    const uint32_t* wrow = reinterpret_cast<const uint32_t*>(W + (n8 * 8 + g) * K);
++    float acc[4][4];
++#pragma unroll
++    for (int mt = 0; mt < 4; mt++) acc[mt][0] = acc[mt][1] = acc[mt][2] = acc[mt][3] = 0.f;
++    uint32_t bw[16], bn[16];
++#pragma unroll
++    for (int j = 0; j < 8; j++) { bw[2 * j] = wrow[(16 * j + 2 * t) / 2]; bw[2 * j + 1] = wrow[(16 * j + 2 * t + 8) / 2]; }
++    for (long kc = 0; kc < KC; kc++) {
++      if (kc + 1 < KC) {
++#pragma unroll
++        for (int j = 0; j < 8; j++) {
++          bn[2 * j] = wrow[((kc + 1) * 128 + 16 * j + 2 * t) / 2];
++          bn[2 * j + 1] = wrow[((kc + 1) * 128 + 16 * j + 2 * t + 8) / 2];
++        }
++      }
++#pragma unroll
++      for (int j = 0; j < 8; j++) {
++#pragma unroll
++        for (int mt = 0; mt < 4; mt++) {
++          if (mt * 16 >= nr) break;
++          uint32_t a[4];
++          const long o0 = (kc * 128 + 16 * j + 2 * t) / 2, o1 = (kc * 128 + 16 * j + 2 * t + 8) / 2;
++          const uint32_t* h0 = reinterpret_cast<const uint32_t*>(X + (long)max(rid[mt][0], 0) * K);
++          const uint32_t* h1 = reinterpret_cast<const uint32_t*>(X + (long)max(rid[mt][1], 0) * K);
++          a[0] = rid[mt][0] >= 0 ? h0[o0] : 0u; a[1] = rid[mt][1] >= 0 ? h1[o0] : 0u;
++          a[2] = rid[mt][0] >= 0 ? h0[o1] : 0u; a[3] = rid[mt][1] >= 0 ? h1[o1] : 0u;
++          mma16816(acc[mt], a, bw[2 * j], bw[2 * j + 1]);
++        }
++      }
++#pragma unroll
++      for (int i = 0; i < 16; i++) bw[i] = bn[i];
++    }
++#pragma unroll
++    for (int mt = 0; mt < 4; mt++) {
++      if (mt * 16 >= nr) break;
++#pragma unroll
++      for (int hf = 0; hf < 2; hf++) {
++        const int r = rid[mt][hf];
++        const long col = n8 * 8 + 2 * t;
++        if (out) {
++          if (r >= 0)
++            *reinterpret_cast<__nv_bfloat162*>(out + (long)r * ldo + col) =
++                __float22bfloat162_rn(make_float2(acc[mt][2 * hf], acc[mt][2 * hf + 1]));
++        } else {
++          unsigned long long k = max(make_key(acc[mt][2 * hf], (unsigned)col), make_key(acc[mt][2 * hf + 1], (unsigned)col + 1));
++          k = max(k, __shfl_xor_sync(0xffffffffu, k, 1));
++          k = max(k, __shfl_xor_sync(0xffffffffu, k, 2));
++          if (t == 0 && r >= 0) atomicMax(keys + r, k);
++        }
++      }
++    }
++  }
++}
++
++// fallback list + stats: one block. stats[0] fallback rows, [1] sum kept, [2] max kept, [3] rows, [4] calls
++__global__ void fblist_kernel(int M, const int* fb, const int* kept, int* rows, int* nrows, long long* stats) {
++  __shared__ int n;
++  if (threadIdx.x == 0) n = 0;
++  __syncthreads();
++  for (int m = threadIdx.x; m < M; m += blockDim.x) {
++    if (fb[m]) rows[atomicAdd(&n, 1)] = m;
++    atomicAdd((unsigned long long*)(stats + 1), (unsigned long long)kept[m]);
++    atomicMax((unsigned long long*)(stats + 2), (unsigned long long)kept[m]);
++  }
++  __syncthreads();
++  if (threadIdx.x == 0) {
++    *nrows = n;
++    stats[0] += n; stats[3] += M; stats[4] += 1;
++  }
++}
++
++// keys -> (local max value fp32, local argmax int32); key 0 (no candidate on this rank) -> (-inf, 0)
++__global__ void keys_decode_kernel(int M, const unsigned long long* keys, float* vals, int* idx) {
++  const int m = blockIdx.x * blockDim.x + threadIdx.x;
++  if (m >= M) return;
++  const unsigned long long k = keys[m];
++  if (k == 0) { vals[m] = -INFINITY; idx[m] = 0; return; }
++  vals[m] = ord2f((unsigned)(k >> 32));
++  idx[m] = (int)(0xFFFFFFFFu - (unsigned)(k & 0xFFFFFFFFu));
++}
++
++// ---------------- host ----------------
++static cudaStream_t cur() { return at::cuda::getCurrentCUDAStream(); }
++
++int64_t plane_verify(torch::Tensor Q, torch::Tensor plane) {
++  const long N = Q.size(0), K = Q.size(1), ng = (N / 8) * (K / 128);
++  auto bad = torch::zeros({1}, Q.options().dtype(torch::kInt64));
++  plane_verify_kernel<<<(ng + 7) / 8, 256, 0, cur()>>>((const int8_t*)Q.data_ptr(), N, K, (const uint8_t*)plane.data_ptr(),
++                                                       (unsigned long long*)bad.data_ptr());
++  return bad.cpu().item<int64_t>();
++}
++void hprep(torch::Tensor X, int64_t M, torch::Tensor hq, torch::Tensor hs, torch::Tensor hn, torch::Tensor hqe) {
++  hprep_kernel<<<M, 256, 0, cur()>>>((const __nv_bfloat16*)X.data_ptr(), X.size(1), (int8_t*)hq.data_ptr(), hs.data_ptr<float>(),
++                                     hn.data_ptr<float>(), hqe.data_ptr<float>());
++}
++template <int MT, int NT, int WARPS, int STAGES>
++static void launch_screen(const torch::Tensor& hq, int M, long K, const torch::Tensor& plane, const torch::Tensor& vA,
++                          const torch::Tensor& vB, const torch::Tensor& hs, const torch::Tensor& hn, const torch::Tensor& hqe,
++                          long N, torch::Tensor& lb, torch::Tensor& ecnt, torch::Tensor& ebuf, int ecap) {
++  const long n8 = N / 8, per_cta = (long)WARPS * NT;
++  const int grid = (n8 + per_cta - 1) / per_cta;
++  const int smem = STAGES * MT * 16 * 16 * 16;
++  auto k = screen_kernel<MT, NT, WARPS, STAGES, true>;
++  static bool init = false;  // set before graph capture (the load-time self-test calls every MT)
++  if (!init) { cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, smem); init = true; }
++  k<<<grid, WARPS * 32, smem, cur()>>>((const int8_t*)hq.data_ptr(), M, K, (const uint8_t*)plane.data_ptr(),
++                                       vA.data_ptr<float>(), vB.data_ptr<float>(), hs.data_ptr<float>(), hn.data_ptr<float>(),
++                                       hqe.data_ptr<float>(), N, (unsigned*)lb.data_ptr(), ecnt.data_ptr<int>(),
++                                       (int2*)ebuf.data_ptr(), ecap);
++}
++void screen(torch::Tensor hq, int64_t M, torch::Tensor plane, torch::Tensor vA, torch::Tensor vB, torch::Tensor hs,
++            torch::Tensor hn, torch::Tensor hqe, int64_t N, torch::Tensor lb, torch::Tensor ecnt, torch::Tensor ebuf, int64_t ecap) {
++  TORCH_CHECK(M >= 1 && M <= 64);
++  const long K = hq.size(1) / 2;  // hq [64][KC*256]
++  if (M > 48) launch_screen<4, 2, 4, 3>(hq, M, K, plane, vA, vB, hs, hn, hqe, N, lb, ecnt, ebuf, ecap);
++  else if (M > 32) launch_screen<3, 2, 4, 3>(hq, M, K, plane, vA, vB, hs, hn, hqe, N, lb, ecnt, ebuf, ecap);
++  else if (M > 16) launch_screen<2, 2, 4, 3>(hq, M, K, plane, vA, vB, hs, hn, hqe, N, lb, ecnt, ebuf, ecap);
++  else launch_screen<1, 2, 4, 3>(hq, M, K, plane, vA, vB, hs, hn, hqe, N, lb, ecnt, ebuf, ecap);
++}
++void finalize(int64_t M, torch::Tensor lb_all, int64_t tp, torch::Tensor ecnt, torch::Tensor ebuf, int64_t ecap,
++              torch::Tensor pair_cnt, torch::Tensor pairs, torch::Tensor src, torch::Tensor map, torch::Tensor kept,
++              torch::Tensor fallback, int64_t capr) {
++  finalize_kernel<<<M, 256, 0, cur()>>>(M, (const unsigned*)lb_all.data_ptr(), tp, ecnt.data_ptr<int>(),
++                                        (const int2*)ebuf.data_ptr(), ecap, pair_cnt.data_ptr<int>(), (int2*)pairs.data_ptr(),
++                                        src.data_ptr<int>(), pairs.size(0), map.data_ptr<int>(), kept.data_ptr<int>(),
++                                        fallback.data_ptr<int>(), capr);
++}
++void gather_rescore(torch::Tensor X, torch::Tensor pair_cnt, torch::Tensor pairs, torch::Tensor src, torch::Tensor map,
++                    int64_t Wh, torch::Tensor stage, torch::Tensor keys) {
++  const long K = X.size(1);
++  TORCH_CHECK((K / 128) % 4 == 0);
++  const int paircap = pairs.size(0), stagecap = stage.size(0);
++  gather_kernel<<<512, 256, 0, cur()>>>(pair_cnt.data_ptr<int>(), paircap, (const int2*)pairs.data_ptr(), src.data_ptr<int>(),
++                                        (const uint4*)Wh, K, (uint4*)stage.data_ptr(), stagecap);
++  unmap_kernel<<<16, 256, 0, cur()>>>(pair_cnt.data_ptr<int>(), paircap, (const int2*)pairs.data_ptr(), map.data_ptr<int>());
++  rescore_kernel<<<256, 128, 0, cur()>>>((const __nv_bfloat16*)X.data_ptr(), K, pair_cnt.data_ptr<int>(), paircap,
++                                         (const int2*)pairs.data_ptr(), src.data_ptr<int>(),
++                                         (const __nv_bfloat16*)stage.data_ptr(), stagecap, (const __nv_bfloat16*)Wh,
++                                         (unsigned long long*)keys.data_ptr());
++}
++// fallback rows (flagged in fb) get the exact max over the whole shard from W (host-mapped); then keys -> (vals, idx)
++void fallback_decode(torch::Tensor X, int64_t M, torch::Tensor fb, torch::Tensor kept, torch::Tensor rows, torch::Tensor nrows,
++                     torch::Tensor stats, int64_t W, int64_t N, torch::Tensor keys, torch::Tensor vals, torch::Tensor idx) {
++  fblist_kernel<<<1, 64, 0, cur()>>>(M, fb.data_ptr<int>(), kept.data_ptr<int>(), rows.data_ptr<int>(), nrows.data_ptr<int>(),
++                                     (long long*)stats.data_ptr());
++  // at most 64 rows: one pass; the kernel exits at once when no row is flagged
++  rawgemm_kernel<<<1024, 128, 0, cur()>>>((const __nv_bfloat16*)X.data_ptr(), X.size(1), rows.data_ptr<int>(),
++                                          nrows.data_ptr<int>(), 0, 0, (const __nv_bfloat16*)W, N, nullptr, 0,
++                                          (unsigned long long*)keys.data_ptr());
++  keys_decode_kernel<<<1, 64, 0, cur()>>>(M, (const unsigned long long*)keys.data_ptr(), vals.data_ptr<float>(),
++                                          idx.data_ptr<int>());
++}
++// exact full logits out[M][N] (bf16) of X against W (device or host-mapped), lmh_codec's per-element chain
++void full_logits(torch::Tensor X, int64_t W, int64_t N, torch::Tensor out) {
++  const int M = X.size(0);
++  TORCH_CHECK(X.is_contiguous() && out.is_contiguous() && out.size(1) == N);
++  for (int pass = 0; pass * 64 < M; pass++)
++    rawgemm_kernel<<<1024, 128, 0, cur()>>>((const __nv_bfloat16*)X.data_ptr(), X.size(1), nullptr, nullptr, M, pass,
++                                            (const __nv_bfloat16*)W, N, (__nv_bfloat16*)out.data_ptr(), N, nullptr);
++}
++int64_t host_dev_ptr(int64_t hptr) {
++  void* d = nullptr;
++  TORCH_CHECK(cudaHostGetDevicePointer(&d, (void*)hptr, 0) == cudaSuccess, "cudaHostGetDevicePointer");
++  return (int64_t)d;
++}
++void host_register(int64_t hptr, int64_t bytes) {
++  TORCH_CHECK(cudaHostRegister((void*)hptr, bytes, cudaHostRegisterMapped | cudaHostRegisterPortable) == cudaSuccess,
++              "cudaHostRegister");
++}
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("host_register", &host_register);
++  m.def("plane_verify", &plane_verify); m.def("hprep", &hprep); m.def("screen", &screen); m.def("finalize", &finalize);
++  m.def("gather_rescore", &gather_rescore); m.def("fallback_decode", &fallback_decode); m.def("full_logits", &full_logits);
++  m.def("host_dev_ptr", &host_dev_ptr);
++}

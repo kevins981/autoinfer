@@ -1,0 +1,20 @@
+{
+  "id": 100,
+  "pid": 210278,
+  "team": "T9",
+  "agent": "leader-9.w1",
+  "label": null,
+  "timeout_min": 22.0,
+  "command": [
+    "./abba_job.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/t9-tbo",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/bank/T9-005/abba"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-9.w1",
+  "submitted": "2026-11-09T04:59:47+00:00",
+  "state": "done",
+  "started": "2026-11-09T04:59:47+00:00",
+  "ended": "2026-11-09T05:11:18+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 11.508
+}

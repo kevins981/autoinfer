@@ -1,0 +1,15 @@
+{
+  "id": 267,
+  "pid": 812500,
+  "team": "T31",
+  "agent": "leader-31.w2",
+  "label": "W2-2smoke",
+  "timeout_min": 2.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-31.w2/pf/chain_harness.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-31.w2/pf",
+  "submitted": "2026-11-10T01:46:17+00:00",
+  "state": "cancelled",
+  "ended": "2026-11-10T01:54:37+00:00"
+}

@@ -1,0 +1,15 @@
+{
+ "id": "T49-1",
+ "team": "T49",
+ "by": "leader-49",
+ "backend": "codex",
+ "model": "gpt-6.1-sol",
+ "effort": "high",
+ "work": "/scratch/kevinsong/learning/autoinfer/.cache/sparring_work/test-6-T49-1-1794367444",
+ "sid_new": "61f5205f-6b1b-4969-a20a-0b6def01f790",
+ "session": "01a1c8a2-57cd-7151-9110-05947431986d",
+ "state": "ended",
+ "turns": 8,
+ "started": "2026-11-11T03:24:04.675644+00:00",
+ "ended": "2026-11-11T03:33:51.740579+00:00"
+}

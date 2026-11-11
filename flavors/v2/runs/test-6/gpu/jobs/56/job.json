@@ -1,0 +1,18 @@
+{
+  "id": 56,
+  "pid": 135084,
+  "team": "T6",
+  "agent": "leader-6.w1",
+  "label": "t6-timers",
+  "timeout_min": 10.0,
+  "command": [
+    "./job13.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-6.w1",
+  "submitted": "2026-11-09T02:52:29+00:00",
+  "state": "done",
+  "started": "2026-11-09T03:01:42+00:00",
+  "ended": "2026-11-09T03:07:28+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 5.781
+}

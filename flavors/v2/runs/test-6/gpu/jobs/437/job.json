@@ -1,0 +1,19 @@
+{
+  "id": 437,
+  "pid": 549679,
+  "team": "T51",
+  "agent": "leader-51.w1",
+  "label": "m1-chain",
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-51.w1/m1/job2.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-51.w1/m1",
+  "submitted": "2026-11-11T14:38:22+00:00",
+  "state": "done",
+  "started": "2026-11-11T14:38:22+00:00",
+  "ended": "2026-11-11T14:39:54+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.526
+}

@@ -1,0 +1,18 @@
+{
+  "id": 126,
+  "pid": 315043,
+  "team": "T17",
+  "agent": "leader-17.w1",
+  "label": null,
+  "timeout_min": 4.0,
+  "command": [
+    "agents/leader-17.w1/job1.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-09T08:31:17+00:00",
+  "state": "done",
+  "started": "2026-11-09T08:31:17+00:00",
+  "ended": "2026-11-09T08:31:26+00:00",
+  "exit_code": 1,
+  "gpu_minutes": 0.15
+}

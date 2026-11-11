@@ -1,0 +1,18 @@
+{
+  "id": 213,
+  "pid": 626793,
+  "team": "T28",
+  "agent": "leader-28.w1",
+  "label": "t28-comb-smoke",
+  "timeout_min": 8.0,
+  "command": [
+    "./job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-28.w1/sm",
+  "submitted": "2026-11-09T22:35:27+00:00",
+  "state": "done",
+  "started": "2026-11-09T23:03:16+00:00",
+  "ended": "2026-11-09T23:04:11+00:00",
+  "exit_code": 1,
+  "gpu_minutes": 0.923
+}

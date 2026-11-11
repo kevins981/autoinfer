@@ -1,0 +1,19 @@
+{
+  "id": 386,
+  "pid": 163702,
+  "team": "T38",
+  "agent": "leader-38",
+  "label": "t38-bs16",
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "run16.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-38/mb",
+  "submitted": "2026-11-10T23:15:07+00:00",
+  "state": "done",
+  "started": "2026-11-10T23:15:07+00:00",
+  "ended": "2026-11-10T23:15:29+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.373
+}

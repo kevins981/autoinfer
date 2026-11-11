@@ -1,0 +1,20 @@
+{
+  "id": 107,
+  "pid": 248732,
+  "team": "T9",
+  "agent": "leader-9.w1",
+  "label": null,
+  "timeout_min": 3.0,
+  "command": [
+    "./job.sh",
+    "smoke",
+    "1"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/bank/T9-006",
+  "submitted": "2026-11-09T05:55:40+00:00",
+  "state": "done",
+  "started": "2026-11-09T05:55:40+00:00",
+  "ended": "2026-11-09T05:55:54+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.229
+}

@@ -1,0 +1,79 @@
+{
+  "ok": true,
+  "completed": 400.0,
+  "output_throughput": 699.209,
+  "total_token_throughput": 1502.287,
+  "median_ttft_ms": 209.803,
+  "p99_ttft_ms": 1309.365,
+  "median_tpot_ms": 20.904,
+  "p99_tpot_ms": 50.575,
+  "median_itl_ms": 36.775,
+  "median_e2el_ms": 4238.231,
+  "mtp_acceptance_length": 2.339,
+  "n_trials": 3,
+  "output_throughput_trials": [
+    700.7,
+    700.8,
+    696.2
+  ],
+  "output_throughput_cv_pct": 0.37,
+  "trials": [
+    {
+      "completed": 400,
+      "output_throughput": 700.6613356677482,
+      "total_token_throughput": 1504.5483963018262,
+      "median_ttft_ms": 207.97664020210505,
+      "p99_ttft_ms": 1436.2974853627384,
+      "median_tpot_ms": 20.872853953071694,
+      "p99_tpot_ms": 52.681324890415524,
+      "median_itl_ms": 36.7896044626832,
+      "median_e2el_ms": 4186.008396558464,
+      "mtp_acceptance_length": 2.337,
+      "mtp_acceptance_per_position": [
+        0.777,
+        0.56
+      ]
+    },
+    {
+      "completed": 400,
+      "output_throughput": 700.7681647774983,
+      "total_token_throughput": 1504.9808237462491,
+      "median_ttft_ms": 211.8594367057085,
+      "p99_ttft_ms": 1166.109303534031,
+      "median_tpot_ms": 20.942774835230612,
+      "p99_tpot_ms": 48.48150242678821,
+      "median_itl_ms": 36.77044529467821,
+      "median_e2el_ms": 4292.541320435703,
+      "mtp_acceptance_length": 2.342,
+      "mtp_acceptance_per_position": [
+        0.779,
+        0.563
+      ]
+    },
+    {
+      "completed": 400,
+      "output_throughput": 696.1987674504803,
+      "total_token_throughput": 1497.3312864853117,
+      "median_ttft_ms": 209.57263559103012,
+      "p99_ttft_ms": 1325.6885525025427,
+      "median_tpot_ms": 20.894945175157186,
+      "p99_tpot_ms": 50.561917517334145,
+      "median_itl_ms": 36.76523454487324,
+      "median_e2el_ms": 4236.1444514244795,
+      "mtp_acceptance_length": 2.337,
+      "mtp_acceptance_per_position": [
+        0.777,
+        0.559
+      ]
+    }
+  ],
+  "gsm8k_accuracy": 0.932,
+  "gsm8k_no_answer": 3,
+  "gate_gsm8k": "pass",
+  "vs_baseline_pct": 10.74,
+  "p99_vs_baseline": {
+    "p99_ttft_ms": 0.881,
+    "p99_tpot_ms": 1.045
+  },
+  "gate_latency": "pass"
+}

@@ -1,0 +1,20 @@
+{
+  "id": 1,
+  "pid": 4176673,
+  "team": "T2",
+  "agent": "leader-2",
+  "label": "t2-peak",
+  "timeout_min": 4.0,
+  "command": [
+    "bash",
+    "-c",
+    "source /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/task/env.sh; python peak.py"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-2/mb1",
+  "submitted": "2026-11-08T23:21:54+00:00",
+  "state": "done",
+  "started": "2026-11-08T23:21:54+00:00",
+  "ended": "2026-11-08T23:22:02+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.127
+}

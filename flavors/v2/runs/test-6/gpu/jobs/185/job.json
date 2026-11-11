@@ -1,0 +1,18 @@
+{
+  "id": 185,
+  "pid": 483422,
+  "team": "T27",
+  "agent": "leader-27.w1",
+  "label": null,
+  "timeout_min": 7.0,
+  "command": [
+    "agents/leader-27.w1/scr/split.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-09T15:10:47+00:00",
+  "state": "done",
+  "started": "2026-11-09T15:16:11+00:00",
+  "ended": "2026-11-09T15:19:57+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.758
+}

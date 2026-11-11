@@ -1,0 +1,19 @@
+{
+  "id": 362,
+  "pid": 64715,
+  "team": "T36",
+  "agent": "leader-36",
+  "label": "t36-k3mem",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "agents/leader-36/jobs/k3mem.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T20:51:02+00:00",
+  "state": "done",
+  "started": "2026-11-10T20:51:02+00:00",
+  "ended": "2026-11-10T20:53:59+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.951
+}

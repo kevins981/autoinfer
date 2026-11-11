@@ -1,0 +1,19 @@
+{
+  "id": 232,
+  "pid": 725018,
+  "team": "T28",
+  "agent": "leader-28.w2",
+  "label": "t28-smoke-fused",
+  "timeout_min": 4.0,
+  "command": [
+    "bash",
+    "agents/leader-28.w2/job1/smoke.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T00:03:23+00:00",
+  "state": "done",
+  "started": "2026-11-10T00:16:49+00:00",
+  "ended": "2026-11-10T00:18:42+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.88
+}

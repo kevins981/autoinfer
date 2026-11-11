@@ -1,0 +1,5 @@
+{
+  "task": "qwen38-27b-fp8-2x4090",
+  "autoinfer_commit": "a7db733f1770a61bd4d0e8b4b7634c939fc47e90",
+  "uncommitted": null
+}

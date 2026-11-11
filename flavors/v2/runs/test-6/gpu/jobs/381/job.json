@@ -1,0 +1,19 @@
+{
+  "id": 381,
+  "pid": 149296,
+  "team": "T37",
+  "agent": "leader-37",
+  "label": "t37-fp8ab",
+  "timeout_min": 9.0,
+  "command": [
+    "bash",
+    "agents/leader-37/jobs/fp8ab.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T22:46:47+00:00",
+  "state": "done",
+  "started": "2026-11-10T22:46:47+00:00",
+  "ended": "2026-11-10T22:51:26+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.646
+}

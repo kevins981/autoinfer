@@ -1,0 +1,19 @@
+{
+  "id": 230,
+  "pid": 723938,
+  "team": "T28",
+  "agent": "leader-28.w2",
+  "label": "t28-e4m3-k2",
+  "timeout_min": 12.0,
+  "command": [
+    "bash",
+    "agents/leader-28.w2/job1/job8.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T00:02:48+00:00",
+  "state": "cancelled",
+  "started": "2026-11-10T00:02:48+00:00",
+  "ended": "2026-11-10T00:03:07+00:00",
+  "exit_code": 130,
+  "gpu_minutes": 0.32
+}

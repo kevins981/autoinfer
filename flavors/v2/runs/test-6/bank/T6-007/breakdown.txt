@@ -1,0 +1,39 @@
+total kernel time 24.21 s (both GPUs), 118 kernels
+
+ share   time s     calls  category
+ 43.4%    10.52    182680  FP8 weight GEMM (Marlin)
+ 41.3%     9.99    427978  other
+  6.7%     1.63     68040  other GEMM (cutlass/cublas: lm_head, small bf16 GEMMs)
+  5.2%     1.27    169236  GDN / linear attention (delta rule, conv1d)
+  2.2%     0.54    119238  attention (full) + KV cache write
+  0.9%     0.21     83404  norms, activations, rope, gating
+  0.1%     0.03      2072  all-reduce / all-gather (NCCL)
+  0.1%     0.02      7604  sampling / spec-decode bookkeeping
+
+top 25 kernels:
+ share    avg us     calls  name
+ 38.6%      98.6     94798  hostar_kernel(Params)
+ 21.9%      81.0     65390  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  9.5%      45.7     50112  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  4.0%      39.2     24570  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  3.1%      35.9     21060  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  2.9%      21.1     33120  void <unnamed>::gdn_decode_replay_kernel<(int)3, (bool)0, (int)5>(const __nv_bfloat16 *, const __nv_bfloat16 *
+  2.6%      44.5     14008  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  2.3%      77.8      7280  void marlin::Marlin<(long)1125899906909960, (long)2814749767172868, (long)1125899906909960, (long)112589990690
+  1.8%     309.1      1382  void cutlass::Kernel2<enable_sm89_to_sm90<cutlass::gemm::kernel::DefaultGemmWithVisitor<cutlass::float_e4m3_t,
+  1.3%       3.4     91340  kernel_cutlass_kernel_flashinfernormkernelsfused_add_rmsnormFusedAddRMSNormKernel_object_at__tensorptrbf16gmem
+  1.2%    1011.2       278  void lmh_gemm_kernel<(int)1, (int)1, (int)8, (int)4>(const __nv_bfloat16 *, int, long, const unsigned char *, 
+  0.9%    1012.2       208  void lmh_gemm_kernel<(int)3, (int)1, (int)8, (int)4>(const __nv_bfloat16 *, int, long, const unsigned char *, 
+  0.9%    1007.3       206  void lmh_gemm_kernel<(int)2, (int)1, (int)8, (int)4>(const __nv_bfloat16 *, int, long, const unsigned char *, 
+  0.8%      16.0     12454  kernel_unified_attention
+  0.7%      16.9      9944  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x2_tn_align8>(T1::Params)
+  0.6%      18.7      7488  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x1_tn_align8>(T1::Params)
+  0.6%       2.1     64224  void at::native::elementwise_kernel<(int)128, (int)4, void at::native::gpu_kernel_impl_nocast<at::native::dire
+  0.5%       2.9     45670  void vllm::act_and_mul_kernel<c10::BFloat16, __nv_bfloat162, &vllm::silu_kernel<c10::BFloat16>, &vllm::packed_
+  0.4%       3.2     33120  _causal_conv1d_update_kernel
+  0.4%       9.5     10752  merge_16x16_to_64x64_inverse_kernel
+  0.4%       3.1     31368  void cublasLt::splitKreduce_kernel<(int)32, (int)16, int, __nv_bfloat16, __nv_bfloat16, float, __nv_bfloat16, 
+  0.4%       1.5     65418  void at::native::vectorized_gather_kernel<(int)16, long>(char *, char *, T2 *, int, long, long, long, long, bo
+  0.3%       7.3     10752  chunk_fwd_kernel_o
+  0.3%       3.8     16704  void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_64x1_tn_align8>(T1::Params)
+  0.3%       5.9     10752  chunk_gated_delta_rule_fwd_kernel_h_blockdim64

@@ -1,0 +1,9 @@
+team:         T19
+builds_on:    T14-004
+performance:  "unofficial: measurement only (954.0 tok/s, 400 prompts c=16, tracing on, 1 start; T14-004 official 956.6)"
+summary:
+  hypothesis: the new-request path (refill latency, small mixed steps) costs more than the existing KB says; nobody measured it in situ with step timestamps.
+  change:     env-gated tracing (T19_TRACE=<path>; module-level bool read once; off = no extra code executed): new vllm/v1/engine/t19_trace.py; hooks in EngineCore.add_request and step_with_batch_queue (per-step schedule/submit/output timestamps, prefill requests, queue depth, per-step first-token/finish lists), AsyncLLM._add_request + output_handler (send, first/final output), chat serving (arrival, first/last SSE chunk). Writes <path>.core.jsonl and <path>.fe.jsonl. Workspace t19-champ. Job 134 (job 132 lost to a hook bug).
+  results:    Observed: see agents/leader-19.w1/L1/REPORT.md. Decode step median 25.3 ms (86% of steps); mixed step = 38.5 + 0.229 ms/prefill-token (R^2 .98), <64-token mixed steps ~50 ms; replacement prefill scheduled 3.2 steps (3 in 78%, 4 in 22%) after the finishing step's output, ~45 ms; dead slot-time 1.1% of 16 x trial, drain 2.6%; 5.6% of admitting steps carry 2+ new requests; no chunked prefill; p99 TTFT (1.05 s server-side) is the 16-request ramp-up burst, steady-state p99 0.41 s. Throughput 954.0 vs 956.6 (-0.3%).
+  conclusion: Interpretation: slot refill is cheap (~1% of slot-time); the cost of a new request is the mixed step it creates (fixed ~25 ms above a decode step plus 0.23 ms/token), ~30% of wall time is spent above the decode period. Tracing overhead not resolved below ~1% (single run).
+validity:     measurement only; nothing runs when T19_TRACE is unset (guarded by a module-level bool); no change to math, scheduling or outputs. serve_args.txt = T14-004's.

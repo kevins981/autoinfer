@@ -1,0 +1,18 @@
+{
+  "id": 61,
+  "pid": 159164,
+  "team": "T8",
+  "agent": "leader-8",
+  "label": "t8-pagesize",
+  "timeout_min": 3.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-8/pg/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-8/pg",
+  "submitted": "2026-11-09T03:37:40+00:00",
+  "state": "done",
+  "started": "2026-11-09T03:37:40+00:00",
+  "ended": "2026-11-09T03:37:43+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.037
+}

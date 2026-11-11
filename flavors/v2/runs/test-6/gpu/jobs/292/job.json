@@ -1,0 +1,18 @@
+{
+  "id": 292,
+  "pid": 887542,
+  "team": "T30",
+  "agent": "leader-30.w2",
+  "label": "t30w2-trace",
+  "timeout_min": 5.0,
+  "command": [
+    "agents/leader-30.w2/trace.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T03:12:21+00:00",
+  "state": "done",
+  "started": "2026-11-10T03:12:21+00:00",
+  "ended": "2026-11-10T03:14:35+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.221
+}

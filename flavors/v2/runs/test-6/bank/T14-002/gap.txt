@@ -1,0 +1,9 @@
+A1 R 0-256 n=25 sumR=3196 m_sum/row 0.277 m_un/row 0.275 roof/row 0.183 (HBM floor/step 12.7) excess_un vs roof 295 ms -> trial 1.84 s; span/ar_un/busy mean 74.5/19.9/65.7
+A1 R 256-600 n=9 sumR=3790 m_sum/row 0.250 m_un/row 0.217 roof/row 0.183 (HBM floor/step 12.7) excess_un vs roof 128 ms -> trial 0.80 s; span/ar_un/busy mean 130.5/37.9/125.5
+A1 R 600-3000 n=16 sumR=14875 m_sum/row 0.219 m_un/row 0.197 roof/row 0.183 (HBM floor/step 12.7) excess_un vs roof 212 ms -> trial 1.32 s; span/ar_un/busy mean 250.3/76.7/244.2
+A2 R 0-256 n=24 sumR=2950 m_sum/row 0.278 m_un/row 0.278 roof/row 0.183 (HBM floor/step 12.7) excess_un vs roof 279 ms -> trial 1.75 s; span/ar_un/busy mean 71.2/15.8/60.9
+A2 R 256-600 n=9 sumR=3716 m_sum/row 0.251 m_un/row 0.218 roof/row 0.183 (HBM floor/step 12.7) excess_un vs roof 130 ms -> trial 0.81 s; span/ar_un/busy mean 128.3/37.2/123.2
+A2 R 600-3000 n=16 sumR=15156 m_sum/row 0.218 m_un/row 0.197 roof/row 0.183 (HBM floor/step 12.7) excess_un vs roof 207 ms -> trial 1.29 s; span/ar_un/busy mean 254.9/76.4/248.5
+B1 R 0-256 n=26 sumR=3293 m_sum/row 0.254 m_un/row 0.252 roof/row 0.183 (HBM floor/step 12.7) excess_un vs roof 225 ms -> trial 1.41 s; span/ar_un/busy mean 66.1/20.4/62.9
+B1 R 256-600 n=11 sumR=4528 m_sum/row 0.236 m_un/row 0.213 roof/row 0.183 (HBM floor/step 12.7) excess_un vs roof 136 ms -> trial 0.85 s; span/ar_un/busy mean 128.1/36.1/122.9
+B1 R 600-3000 n=15 sumR=14148 m_sum/row 0.217 m_un/row 0.196 roof/row 0.183 (HBM floor/step 12.7) excess_un vs roof 185 ms -> trial 1.15 s; span/ar_un/busy mean 254.2/77.1/248.5

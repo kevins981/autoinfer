@@ -1,0 +1,19 @@
+{
+  "id": 150,
+  "pid": 350232,
+  "team": "T22",
+  "agent": "leader-22.w1",
+  "label": "e1-all",
+  "timeout_min": 4.0,
+  "command": [
+    "./run.sh",
+    "all"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-22.w1/E1",
+  "submitted": "2026-11-09T09:56:16+00:00",
+  "state": "done",
+  "started": "2026-11-09T09:56:16+00:00",
+  "ended": "2026-11-09T09:56:31+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.255
+}

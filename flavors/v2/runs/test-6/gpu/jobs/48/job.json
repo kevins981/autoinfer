@@ -1,0 +1,18 @@
+{
+  "id": 48,
+  "pid": 113592,
+  "team": "T5",
+  "agent": "leader-5.w1",
+  "label": "ragged-forced",
+  "timeout_min": 6.0,
+  "command": [
+    "agents/leader-5.w1/ragged/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-09T02:25:59+00:00",
+  "state": "done",
+  "started": "2026-11-09T02:25:59+00:00",
+  "ended": "2026-11-09T02:29:04+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.08
+}

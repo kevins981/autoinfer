@@ -1,0 +1,21 @@
+{
+  "id": 103,
+  "pid": 228882,
+  "team": "T12",
+  "agent": "leader-12.w1",
+  "label": null,
+  "timeout_min": 9.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-12.w1/job.sh",
+    "B",
+    "48",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-12.w1/jobs/smoke"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-09T05:23:10+00:00",
+  "state": "done",
+  "started": "2026-11-09T05:23:10+00:00",
+  "ended": "2026-11-09T05:24:17+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.122
+}

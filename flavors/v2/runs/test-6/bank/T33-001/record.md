@@ -1,0 +1,15 @@
+team:         T33
+builds_on:    T31-003 (kernel t31b standalone from agents/leader-31.w1/k; chain harness from agents/leader-31.w2/pf, copied to agents/leader-33/seed/ch)
+performance:  "microbench only: payoff ceiling for in-GEMM lossless weight coding (card 13) ~+3% e2e at a realistic code (0.883), ~+4.3% at the entropy bound; below the 5% bar"
+summary:
+  hypothesis: Card 13 (ZipServ/DFloat11: decompress weights inside the matmul). Decode GEMMs are HBM-bound on weight bytes, so fewer bytes per weight should shorten the decode step. The question is how many bytes FP8 weights can lose losslessly, and how much chain time that buys.
+  change:     (1) CPU: exponent statistics of the real checkpoint (layers 0/3/31/33/62/63, all proj weights; agents/leader-33/seed/exp_hist.py, code_size.py). (2) GPU job 295: T31's AR+prefetch->GEMM chain (16 layers, M=48, CUDA graph, NUMA node 0), with the t31b e4m3 kernel on all four shapes reading only the first f*K rows of each Marlin qweight (contiguous leading bytes, so the 48 MB AR prefetch covers a larger share, as it would with compressed weights). f = 1.0 / 0.88 / 0.75. K-truncation also removes the same share of MMA work, and decoding is free, so this is an upper bound for any in-register code.
+  results:    Observed. CPU: e4m3 exponent field entropy 2.57-2.72 bits of 4 (byte entropy 6.50-6.67 bits). Exponent histograms are geometric below the mode (each lower binade ~half). Fixed-rate-friendly code (raw sign+mantissa nibble + 2- or 3-bit exponent code over a per-128x128-block window + escape side stream): 0.883 (2-bit) / 0.889 (3-bit) of the bytes, weighted over 22 tensors. Order-0 per-block entropy bound: 0.821.
+              Chain, us/layer (out+AR1+gu+down+AR2+qkvz), PF=48 hint (champion setting); r0 | r1:
+                champion-like (e4m3 out/down/qkvz + Marlin gu):  271.8 | 279.4
+                e4m3 all shapes, f=1.00:                          281.2 | 283.8   (gu e4m3 97.2/94.5 vs Marlin 87.8/90.0)
+                f=0.88 (all four e4m3):                           254.0 | 259.6   -> -17.8 | -19.8 us/layer vs champion-like
+                f=0.75:                                           230.6 | 236.1   -> -41.2 | -43.3
+              gu at f=0.88: 81.7/80.0 us (beats Marlin 87.8/90.0); PF=0 (cold) rows in ks1_r*.json.
+  conclusion: Interpretation. Per decode step (64 layers) a 0.88 code saves at most ~1.2 ms of a ~23.9 ms step (-4.8% decode, ~+3.0% e2e with decode ~60% of wall). The entropy bound (0.82, ~-26 us/layer interpolated) gives ~-1.7 ms, ~+4.3% e2e. That assumes zero decode cost and also gets the 12% MMA reduction that real coding would not. Mixed steps are compute-bound and don't gain. Card 13's ceiling on this stack is below the +5% bar. This is a hard limit of the data: FP8 e4m3 keeps only ~1.4 bits/weight of exponent redundancy, vs ~5 bits for the bf16 weights the source paper reports on. The freed memory (~1.6 GiB/rank) has no current use (KV is not binding).
+validity:     microbench only, no engine change; nothing to review.

@@ -1,0 +1,19 @@
+{
+  "id": 353,
+  "pid": 28536,
+  "team": "T35",
+  "agent": "leader-35",
+  "label": "t35-budget",
+  "timeout_min": 14.0,
+  "command": [
+    "bash",
+    "agents/leader-35/budget_sweep.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-10T20:08:36+00:00",
+  "state": "done",
+  "started": "2026-11-10T20:08:36+00:00",
+  "ended": "2026-11-10T20:14:15+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 5.645
+}

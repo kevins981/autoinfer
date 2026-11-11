@@ -1,0 +1,16 @@
+n=318 section median 795.5 us (p10 662.9 p90 831.5); busy median 779.9
+     647.8 us  x 318  screen_kernel
+      76.4 us  x 318  gather_kernel
+      13.5 us  x 318  rescore_kernel
+      10.5 us  x 318  ncclDevKernel_AllGather_RING_LL
+       6.9 us  x 318  elementwise_kernel
+       6.7 us  x 318  hprep_kernel
+       2.9 us  x 318  _gather_draft_sampled_kernel
+       2.8 us  x 318  unrolled_elementwise_kernel
+       2.1 us  x 318  finalize_kernel
+       2.0 us  x 318  rawgemm_kernel
+       1.8 us  x 318  fblist_kernel
+       1.7 us  x 318  CatArrayBatchedCopy_alignedK_contig
+       1.2 us  x 318  unmap_kernel
+       1.1 us  x 318  vectorized_elementwise_kernel
+       1.0 us  x 318  keys_decode_kernel

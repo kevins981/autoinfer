@@ -1,0 +1,19 @@
+{
+  "id": 118,
+  "pid": 279787,
+  "team": "T15",
+  "agent": "leader-15",
+  "label": "t15-duplex2",
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "job2.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-15/mb",
+  "submitted": "2026-11-09T07:28:36+00:00",
+  "state": "done",
+  "started": "2026-11-09T07:28:36+00:00",
+  "ended": "2026-11-09T07:28:37+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.019
+}

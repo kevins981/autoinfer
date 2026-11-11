@@ -1,0 +1,19 @@
+{
+  "id": 412,
+  "pid": 294060,
+  "team": "T42",
+  "agent": "leader-42.w1",
+  "label": "t42-s2-long",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-42.w1/s2_job3.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/t42-cs",
+  "submitted": "2026-11-11T03:15:55+00:00",
+  "state": "done",
+  "started": "2026-11-11T03:16:33+00:00",
+  "ended": "2026-11-11T03:18:41+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.131
+}

@@ -1,0 +1,19 @@
+{
+  "id": 439,
+  "pid": 556273,
+  "team": "T51",
+  "agent": "leader-51.w1",
+  "label": "m1c-ncu",
+  "timeout_min": 5.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-51.w1/m1/job4.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-51.w1/m1",
+  "submitted": "2026-11-11T14:53:05+00:00",
+  "state": "done",
+  "started": "2026-11-11T14:53:05+00:00",
+  "ended": "2026-11-11T14:54:14+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.148
+}

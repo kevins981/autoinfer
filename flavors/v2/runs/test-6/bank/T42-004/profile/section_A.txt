@@ -1,0 +1,10 @@
+n=326 section median 1065.3 us (p10 1042.5 p90 1085.9); busy median 1055.0
+    1025.4 us  x 326  lmh_gemm_kernel
+       5.7 us  x 326  ncclDevKernel_AllGather_RING_LL
+       5.6 us  x 326  _argmax_partial
+       5.6 us  x 326  elementwise_kernel
+       2.9 us  x 326  _gather_draft_sampled_kernel
+       2.9 us  x 326  unrolled_elementwise_kernel
+       1.7 us  x 326  CatArrayBatchedCopy_alignedK_contig
+       1.2 us  x 326  _argmax_finish_value
+       1.0 us  x 326  vectorized_elementwise_kernel

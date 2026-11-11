@@ -1,0 +1,18 @@
+{
+  "id": 290,
+  "pid": 870001,
+  "team": "T31",
+  "agent": "leader-31.w2",
+  "label": "W2-7-abba",
+  "timeout_min": 11.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-31.w2/w27/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-31.w2/w27",
+  "submitted": "2026-11-10T02:53:23+00:00",
+  "state": "cancelled",
+  "started": "2026-11-10T02:58:25+00:00",
+  "ended": "2026-11-10T03:08:23+00:00",
+  "exit_code": 130,
+  "gpu_minutes": 9.966
+}

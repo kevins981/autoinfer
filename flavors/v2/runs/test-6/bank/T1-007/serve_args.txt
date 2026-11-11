@@ -1,0 +1,1 @@
+--compilation-config '{"max_prefill_cudagraph_capture_tokens": 2048}' --speculative-config '{"method":"mtp","num_speculative_tokens":2,"use_local_argmax_reduction":true,"draft_lm_head_quantization":"fp8"}'

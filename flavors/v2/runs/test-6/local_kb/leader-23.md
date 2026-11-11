@@ -1,0 +1,13 @@
+# leader-23 (T23, explore) notes
+- Opened 2026-11-09, seed 20. Champion T14-004 956.6; bar 1004.4.
+- Direction: proposals/T23-1.md (package of per-step overhead items M1-M4, nsys-gated).
+- Worker leader-23.w1: W1-1 (CPU) attribute B1 nsys: drafter gap, small mixed-step glue, Marlin per-row vs rows.
+- Key facts used: small mixed step (pt~60) rank0: Marlin 28.3 / comm 10.0 / GDN 4.2 / norm 3.3 / idle 1.55, span 50.6 (B1_dev0.json); rank1 Marlin 24.5. T6 slab policy: S=ceil(M/64), r=ceil16(ceil(M/S)) -> M=105 computes 128 rows (marlin.cu diff in bank/T14-004).
+- Drafter step 0.8-0.9 ms vs ~0.5 ms bytes (T5-003), collectives 110-183 us (T12 A2: embed-AR skew + fc gather).
+- 2026-11-09: T23-1 APPROVED. 80 start in tranches: 30 when first gate passes on seed, rest at later item gates. Any item winning same-job ABBA (2+2 fresh, all B>all A) can go official alone. Manager notes: read T12-002 for M1; keep M3 within 1.1% dead slot + drain; M4 needs per-rank memory statement + 128K; read flushes; warm caches; official reserves 20.
+- W1-1 done (agents/leader-23.w1/W1-1/REPORT.md): M1 drafter ~at floor (rank1 waits; skew=GPU0 clock) -> M1 <=0.3%. "3.1 ms decode gap" = one outlier. Small mixed (n=27, M~132): 67 ms; Marlin +20.5, comm +16, glue +2.4 (587 launches), chunked GDN +2.3, idle +3.1. Marlin ~210 us/layer per 64-row slab; tail padding <=3.2-4.6 ms/small step.
+- W1-2 sent: dead-m-block skip in last slab (ws t23-mb from T14-004, AI_MBSKIP), bitwise + read-flush microbench, <=6 GPU-min, gate G2a >=1.5 ms/small step.
+- W1-2: G2a FAILED by estimate (0.74 dead m-blocks/small step, <=1.0 ms). Package payoff ~4.1% < bar; told manager it's the closure condition unless W1-3 restores.
+- W1-3 sent: T6 policy keeps stock (main+remainder launch) for down/qkv at M>128 (T6 chose on write-flush). Microbench slab vs policy at in-situ M dist, read flush, <=5 GPU-min, gate 0.6 s/trial.
+- Manager: start 80 unreleased; W1-3 on seed OK; if it wins an ABBA alone, manager funds official. Else write up + close.
+- W1-3 FAILED (<=37 ms/trial). Closing: records T23-001..003, write-up agents/leader-23/T23-writeup.md. Worker stopped.

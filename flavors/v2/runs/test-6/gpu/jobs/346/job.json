@@ -1,0 +1,17 @@
+{
+  "id": 346,
+  "pid": 1016989,
+  "team": "T34",
+  "agent": "leader-34.w1",
+  "label": null,
+  "timeout_min": 2.0,
+  "command": [
+    "./job.sh",
+    "s2"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-34.w1/h",
+  "submitted": "2026-11-10T17:17:08+00:00",
+  "state": "refused",
+  "reason": "pid 1015428 (this user, outside this run, 606 MiB); pid 1015460 (this user, outside this run, 606 MiB)",
+  "ended": "2026-11-10T17:17:29+00:00"
+}

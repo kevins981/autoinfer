@@ -10,3 +10,14 @@ of everything. Newest last.
   ABBA), the first win since T31; also found a bug in earlier teams' code.
 - Caveat: first try of this config, one team. It may not generalize, and credit can't be split
   between the modules, the model and chance.
+
+## 2026-11-11 · test-6 · T38: moonshot + Opus high + speed of light
+- Setup: as T37, but Opus 5.5 leader (high effort) and Opus 5.5 worker (medium).
+- Result: most ideas of any team, each argued from the floors and tested cheaply (five ideas, about
+  3 GPU-min of tests in all, much of it CPU analysis); no win. Its best idea was a pipeline with
+  dynamic draft trees in place of TP=2: prefill 0.51x TP per token, but decode short (~+3.7%
+  modeled before pipeline bubbles).
+- Didn't work: every idea already had a name (overlap, self-distilled drafter, pipeline parallel,
+  draft trees). Two of its ideas were closed on the history pointers, and the leader then asked
+  the manager whether other ideas were covered before proposing them.
+- Caveat: first try of this config, one team; effort and model are confounded with the page.

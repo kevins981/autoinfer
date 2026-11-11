@@ -95,7 +95,9 @@ open_teams():                                       # from CONFIG: number of tea
             # official numbers), its grant status (exploit: seed + start; exploit-long: seed only,
             # external: like exploit-long; send a proposal to get a start grant), and where things are (bank/, shared_kb.md,
             # announcements.md, task/), then the inspiration cards. NO direction: the team
-            # chooses its own, and the cards are not one.
+            # chooses its own, and the cards are not one. Exception: if CONFIG gives the team a
+            # direction (set by the human), put it in the first task word for word, as the
+            # human's.
             # Point to earlier teams' write-ups as what was tried and what is still open, not as
             # a list of dead ends; don't lead with "replaces <team>, which closed".
             # moonshot: the first task is history-free: team id and type, the champion (record

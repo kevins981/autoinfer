@@ -76,7 +76,7 @@ initialize():                                       # WITH the human (as in v1)
 ```python
 open_teams():                                       # from CONFIG: number of teams and the ratio
     for each team in CONFIG (ids T1, T2, ...; never reuse an id):
-        gpu team open <team> --type explore|exploit|external|moonshot   # grants the seed automatically
+        gpu team open <team> --type explore|exploit|external|moonshot|research   # grants the seed automatically
         if exploit: gpu grant <team> <start size> --kind start --note "exploit team start"
         if external: scout --team <team>                    # starts a scout in the background (10-30 min);
             # its deck lands in scout/<team>-<n>/ and the leader is messaged when it is ready.
@@ -87,7 +87,7 @@ open_teams():                                       # from CONFIG: number of tea
             # don't pick, drop, reorder or comment on cards. It carries its own instructions.
         if moonshot: gpu grant <team> <moonshot seed - seed> --kind extension --note "moonshot seed"
             # (FUNDING_POLICY: moonshot seed). Inspiration cards as for explore.
-        agent start leader-<k> --role leader_explore|leader_exploit|leader_external|leader_moonshot --team <team> --task-file <f>
+        agent start leader-<k> --role leader_explore|leader_exploit|leader_external|leader_moonshot|leader_research --team <team> --task-file <f>
             # if CONFIG has model slots: add --slot <S> (a new team takes a free slot; a
             # replacement team takes the slot of the team it replaces). The tool then picks the
             # team's leader and worker models; don't pass --model.
@@ -104,6 +104,9 @@ open_teams():                                       # from CONFIG: number of tea
             # nothing about how much work went into the champion (no "tuned by N teams").
             # speed of light: if CONFIG's `speed of light` line lists the team's type and
             # task/SPEED_OF_LIGHT.md exists, the first task points to it (one line, no comment).
+            # persona: if CONFIG gives the team a persona, add --persona <name>; say nothing
+            # about it in the first task.
+            # research: seed and first task as for explore (history included).
         teams/<team>.md = new track record          # see "Track records"
         if exploit: agent announce "team <team> (exploit) opened with <seed + start> GPU-min"
 ```
@@ -163,6 +166,22 @@ handle(proposal from a moonshot team):              # you invest like a venture 
     else:
         reply with which check failed and why; the team revises
     teams/<team>.md += proposal, upside, riskiest assumption, history-check reply, decision
+```
+
+```python
+handle(proposal from a research team):              # idea, why novel, what it could teach, first step, GPU
+    # A research team looks for novel insights, not immediate speedups. Judge:
+    #   - how novel and surprising the idea is, given the run's history and the field;
+    #   - how much it could help future teams or our understanding of the problem.
+    # Its potential to improve performance is a bonus. A known technique applied here, or a
+    # result nobody would be surprised by, is not research-team work: say so and let it revise.
+    if funded:
+        gpu grant <team> <stage size> --kind start --note "research: <idea, one line>"
+        agent announce "team <team> (research) received <N> GPU-min to work on <idea>; proposal: <path>"
+    else:
+        reply with why (not novel, or what it would teach is unclear); the team revises
+    teams/<team>.md += proposal, your judgement of novelty and value, decision
+    # At resyncs: fund the next stage while the work keeps producing novel insights.
 ```
 
 ```python

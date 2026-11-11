@@ -671,7 +671,7 @@ Returns immediately; talk to it with SendMessage (its name), check it with `agen
       --task-file $AUTOINFER_RUN/workspaces/leader-1.fused-ar/task.md
 """)
     s.add_argument("name", help="unique in the run, e.g. leader-1, leader-1.w2")
-    s.add_argument("--role", required=True, help="manager, leader_explore, leader_exploit, leader_external, leader_moonshot or worker (picks the prompt agents/<role>.md and the reminder agents/reminders/<role>.md)")
+    s.add_argument("--role", required=True, help="manager, leader_explore, leader_exploit, leader_external, leader_moonshot, leader_research or worker (picks the prompt agents/<role>.md and the reminder agents/reminders/<role>.md)")
     s.add_argument("--team", help="team id (e.g. T1): GPU jobs are charged to it. Workers: the leader's team")
     s.add_argument("--cwd", help="working directory (workers: their workspace; default: the run folder)")
     s.add_argument("--persona", help="optional: a persona file (or a name in the flavor's agents/personas/), "

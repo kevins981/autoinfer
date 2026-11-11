@@ -19,6 +19,8 @@ Roles:
     techniques;
   - **moonshot** (`leader_moonshot`): high-risk, high-reward directions that reject an
     assumption of the current design, worked on without the run's history.
+  - **research** (`leader_research`): novel insights that help future teams, rather than
+    immediate speedups.
 
   Leaders run experiments with their workers, file every experiment into the bank, review
   validity, request official evals, and report to the manager.

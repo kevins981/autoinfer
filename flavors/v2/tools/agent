@@ -381,13 +381,25 @@ def cmd_send(a):
     meta = read_meta(d)
     if not meta:
         die(f"no agent named {a.name} in this run (see `agent list --all`)")
-    if meta.get("registered"):
-        die(f"{a.name} is an interactive session without an inbox; use SendMessage")
-    if not alive(meta):
-        die(f"{a.name} is stopped; messages can't be delivered")
     text = Path(a.file).read_text() if a.file else " ".join(a.text)
     if not text.strip():
         die("empty message")
+    if meta.get("registered"):
+        if a.name == "manager":            # a `claude --bg` session: wake it if it has stopped
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import _manager
+            e = _manager.entry(run_dir())
+            if _manager.alive(e):
+                die(f"the manager is running (session name {e.get('name')!r}); use SendMessage, "
+                    f"or `claude attach {e.get('id')}`")
+            err = _manager.wake(run_dir(), f"[from {me()}]\n{text}")
+            if err:
+                die(err)
+            print("the manager's session had stopped; woken with your message")
+            return
+        die(f"{a.name} is an interactive session without an inbox; use SendMessage")
+    if not alive(meta):
+        die(f"{a.name} is stopped; messages can't be delivered")
     append_inbox(d, text, me())
     print(f"sent to {a.name}")
 

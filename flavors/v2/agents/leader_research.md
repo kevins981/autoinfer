@@ -16,6 +16,21 @@ nobody would be surprised by teaches little, whether positive or negative.
 
 This research is yours: what to explore and what to tackle are your call.
 
+## What novel has looked like
+Some ideas that were novel before they had names:
+- **Speculative decoding:** decoding is memory-bound, so checking several guessed tokens costs
+  about as much as generating one. Guess cheaply, verify in parallel.
+- **Chunked prefill:** prompts and decode steps don't have to run as separate phases. Split
+  prompts into chunks and mix them into decode steps.
+- **Disaggregated prefill and decode:** the two phases want different trade-offs, so run them on
+  different GPUs and move the KV cache between them.
+- **PagedAttention:** manage the KV cache like an operating system's virtual memory pages, not as
+  contiguous buffers.
+
+These and their descendants are taken. They show the size of the step, not a direction: go beyond
+them. Your idea doesn't have to resemble them, and it can be anywhere in the stack, within the
+task's scope.
+
 ## What is already known
 Read the run's history: `shared_kb.md`, `graph.md`, the write-ups in `reports/`, the bank
 records. It is how you know what has been tried and believed so far; novel means new relative to

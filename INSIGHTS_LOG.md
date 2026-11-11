@@ -21,3 +21,16 @@ of everything. Newest last.
   draft trees). Two of its ideas were closed on the history pointers, and the leader then asked
   the manager whether other ideas were covered before proposing them.
 - Caveat: first try of this config, one team; effort and model are confounded with the page.
+
+## 2026-11-11 · test-6 · T42-T49: research teams, four framings x 2
+- Setup: research team (goal: novel insights that help future teams; speedup a bonus; full history,
+  speed of light, cards, sparring); Opus 5.5 medium. Framings: base, ownership, reviewer bar,
+  radical; one team each, run twice (the second set read the first's results).
+- Result: no idea without an existing name. Cheap, honest insight instead: ~12 KB entries for
+  ~50 GPU-min, including a corrected long-held belief (PCIe duplex) and several firm negatives. The
+  only win (new champion, +2.7%) came from a radical team's routine kernel check while it killed
+  its own idea.
+- Framing made no visible difference to novelty. Every team read the history first and concluded
+  "components are at their floors" before forming ideas. Radical teams turned into auditors and
+  proposed least.
+- Caveat: first try, n=2 per framing, one task near its floors; history and framing are confounded.

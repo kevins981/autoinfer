@@ -45,3 +45,22 @@ of everything. Newest last.
 - Insight: measured-but-unmerged gains are the cheapest wins; they sit idle until a team's job is
   to merge them. Research findings pay off through exploit teams.
 - Caveat: one team each.
+
+## 2026-11-12 · test-6 · T52/T53: human-set direction (megakernels) + sparring
+- Setup: two exploit-long teams, Opus 5.5 leader and worker, same direction from the human
+  ("megakernels", no examples), speed of light, sparring, cards, full history.
+- Result: the teams split the work themselves (producer/consumer side of the all-reduce). Decode
+  megakernels: measured ceiling <1.5 ms/step, closed (KB132). T52 pivoted within the direction to
+  overlap comm in mixed steps, porting two unmerged earlier wins (T30 waves, T32 captured core):
+  new champion T52-005, +2.6% official. No web search by any agent.
+- Sparring worked, as a check on the leader's own claims:
+  - T52-1: caught an arithmetic slip in the payoff napkin (60 us x 48 = 2.9 ms, not 3.7) and set the
+    falsifier test before any build.
+  - T53-1: agreed the closure was defensible but named one untested alternative (half-batch
+    interleave); the leader tested it (1 job), then closed on measured evidence.
+  - T52-2: leader recommended closing; the partner showed the "nothing left" ceiling was
+    unmeasured (link not saturated, one schedule tried). The leader withdrew the closure, ran a
+    0.5 GPU-min screen with a stop rule, it came back negative, and closed.
+  - Pattern: sparring turns "I think it's done" into one cheap test with a kill rule. It didn't
+    find extra speed here; it made the closures trustworthy at ~1 GPU-min each.
+- Caveat: one direction, two teams.

@@ -9,6 +9,8 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
   - external: 0 (direction from a scout's deck of published techniques; design/external_teams.md)
   - moonshot: 0 (high-risk, high-reward, without the run's history; agents/leader_moonshot.md)
   - research: 0 (novel insights over immediate speedups; agents/leader_research.md)
+  - research-handoff: 0 (speedups built from a research memo written outside the run; the memo is
+    named by the `research handoff memo` line; agents/leader_research_handoff.md)
 - max workers per leader: 1 at a time (the leader may stop one and start a fresh one)
 - GPU pool: 1500 GPU-minutes for the whole run (one GPU job runs at a time; queue time is free)
 - seed grant: 20 GPU-minutes per new team (other grant sizes: funding_policy.md)
@@ -21,6 +23,7 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
   - leader_external: claude-opus-5-5 / medium
   - leader_moonshot: claude-opus-5-5 / medium
   - leader_research: claude-opus-5-5 / medium
+  - leader_research_handoff: claude-opus-5-5 / medium
   - worker: claude-opus-5-5 / medium
 - model slots: none (optional: per-team models for comparing models. One line per slot,
   "  - slot <S>: leader <model> / <effort>, worker <model> / <effort>"; the manager opens each
@@ -29,7 +32,8 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
   for Claude, `claude leader / medium` uses the calling leader's own model)
 - scout: codex gpt-6.1-sol / medium, cards 15 (the `scout` tool, for external teams: agent, model /
   effort, cards per deck; one fresh deck per external team)
-- speed of light: moonshot, research (team types whose first task points to task/SPEED_OF_LIGHT.md, if the
+- research handoff memo: none (path in the run folder of a memo for research-handoff teams)
+- speed of light: moonshot, research, research-handoff (team types whose first task points to task/SPEED_OF_LIGHT.md, if the
   task has one: physical lower bounds for the task; design/modules.md)
 - inspiration cards per draw: principles 5, hardware 5, software 5 (the `inspire` tool; 0 turns a
   kind off)

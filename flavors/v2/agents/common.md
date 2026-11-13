@@ -21,6 +21,8 @@ Roles:
     assumption of the current design, worked on without the run's history.
   - **research** (`leader_research`): novel insights that help future teams, rather than
     immediate speedups.
+  - **research-handoff** (`leader_research_handoff`): speedups built from a research memo
+    written outside the run (named in CONFIG), checked against this system.
 
   Leaders run experiments with their workers, file every experiment into the bank, review
   validity, request official evals, and report to the manager.

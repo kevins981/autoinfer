@@ -197,3 +197,11 @@
 {"t": "2026-11-11T14:49:02+00:00", "event": "grant", "team": "T51", "kind": "start", "minutes": 25.0, "by": "manager", "note": "bounded kernel-design step: TP-shape gate_up/down prototype at M=128-160, chain gate <=0.04 ms/row; upside +8% if it works"}
 {"t": "2026-11-11T14:54:24+00:00", "event": "close", "team": "T50", "by": "manager", "note": "exploit team: win T50-002; remaining items <=0.4% e2e; leader recommended closing"}
 {"t": "2026-11-11T14:58:12+00:00", "event": "close", "team": "T51", "by": "manager", "note": "measured kernel gate failed (band 0.06-0.075 vs 0.055); leader recommended; sparring T51-1 agreed"}
+{"t": "2026-11-11T21:33:37+00:00", "event": "pool_add", "minutes": 500.0, "by": "human", "note": "human: pool total 2000"}
+{"t": "2026-11-11T21:34:08+00:00", "event": "open", "team": "T52", "type": "exploit-long", "by": "manager"}
+{"t": "2026-11-11T21:34:08+00:00", "event": "grant", "team": "T52", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T21:34:09+00:00", "event": "open", "team": "T53", "type": "exploit-long", "by": "manager"}
+{"t": "2026-11-11T21:34:09+00:00", "event": "grant", "team": "T53", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-11T22:28:16+00:00", "event": "grant", "team": "T52", "kind": "start", "minutes": 50.0, "by": "manager", "note": "megakernel: chunk-pipelined mixed-step AR+GEMM; forecast +9.1% if works, central +3%"}
+{"t": "2026-11-11T22:39:24+00:00", "event": "close", "team": "T53", "by": "manager", "note": "no decode megakernel design clears +5% on measurement; leader recommended; sparring T53-1 held"}
+{"t": "2026-11-12T00:10:44+00:00", "event": "close", "team": "T52", "by": "manager", "note": "champion T52-005 delivered; remaining levers small per GPU-min on measurement; leader recommended; sparring T52-2 covered the reasons"}

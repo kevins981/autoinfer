@@ -1,0 +1,18 @@
+{
+  "id": 469,
+  "pid": 640666,
+  "team": "T52",
+  "agent": "leader-52.w1",
+  "label": null,
+  "timeout_min": 3.0,
+  "command": [
+    "./m2.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-52.w1/m2",
+  "submitted": "2026-11-11T22:53:09+00:00",
+  "state": "done",
+  "started": "2026-11-11T22:53:09+00:00",
+  "ended": "2026-11-11T22:53:37+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.472
+}

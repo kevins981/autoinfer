@@ -1,0 +1,21 @@
+{
+  "id": 478,
+  "pid": 669232,
+  "team": "T52",
+  "agent": "leader-52",
+  "label": "official:T52-005",
+  "timeout_min": 20.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/workspaces/eval-T52-005-1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/bank/T52-005/official/1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/bank/T52-005/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-11T23:37:07+00:00",
+  "state": "done",
+  "started": "2026-11-11T23:37:07+00:00",
+  "ended": "2026-11-11T23:44:45+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 7.633
+}

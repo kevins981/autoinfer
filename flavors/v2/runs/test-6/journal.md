@@ -346,3 +346,31 @@ Win T50-002; remaining items <=0.4% e2e each; leader asked to close; no extra sp
 
 ## 2026-11-11 T51 closed
 Kernel gate failed on measured evidence (ncu: tensor-issue limited at ~74% of roof); leader recommended closing, sparring T51-1 agreed so no offer. KB131. Not replaced: config has exploit-long 1 and no replacement instruction. ALL TEAMS CLOSED: RUN PAUSED (not finalized). Champion T50-002 1181.3 (bar 1240.4).
+
+## 2026-11-11 (human)
+Pool raised to 2000. Opened T52, T53 (exploit-long, slot F, Opus/Opus, direction megakernels word for word in first task, SoL, cards T52-1/T53-1). Pool free 926.5. Run resumed; pause when all teams close.
+
+## 2026-11-11 ruling for T53
+1/rms past W8A8 quant allowed with conditions (task_definition.md); human may override.
+
+## 2026-11-11 T52-1 funded 50 GPU-min (mixed-step chunk pipelining; payoff +9.1% clears bar; parts marked measured/assumed). T53 keeps decode. KB100 (mixed AR latency-bound) is relevant; team to decide.
+
+## 2026-11-11 T53 closed
+Decode megakernel ceiling <1.5 ms/step; leader recommended; had a sparring session (T53-1), no extra offer. KB132. T52 still open (50+ GPU-min).
+
+## 2026-11-11 PROMOTION T52-005
+1212.4 official (+2.6% vs T50-002), ABBA job 477 +2.82% all B>all A, gates pass, diff reviewed (Python-only scheduling, same math up to fp reordering). Bar now 1273.0. Previous champion saved agents/manager/champion.T50-002.md.
+
+## 2026-11-11 T52 resync
+T52-006 rank-coupling fix negative; T52-007 host cost of eager waves 117 ms/step. Leader recommended closing (remaining ~+1-1.5
+## 2026-11-11 T52 resync
+T52-006 rank-coupling fix negative; T52-007 host cost of eager waves 117 ms/step. Leader recommended closing (remaining ~+1-1.5%); manager chose to continue: fund the lean wave loop (threshold 768 -> 384, est ~+1%) on the existing balance 31.9, no new grant, because T52 delivered a win, the pool has 887 free and no team competes. Not a closing decision, so no sparring offer.
+
+## 2026-11-12 T52 closing request
+T52-008 (host cost of wave steps 117 -> 85-100 ms/step, bitwise, 128K pass) too small; leader recommends closing (41.5 of 70 used, write-up reports/T52-writeup.md). Sparring T52-1 predated these reasons, so one sparring session offered; close pending its answer.
+
+## 2026-11-12 T52 not closing yet
+After sparring T52-2 the leader withdrew its closing recommendation: waves leave 186-353 us/layer above their no-comm floor, the link is not saturated, only one alternative schedule tested; conditional headroom ~6% e2e. Approved a <=0.5 GPU-min chain screen (3 waves vs 2, copy pieces at producer wave releases, M=384/736) on its balance 28.5; follow-up proposal if it halves the residual, else close.
+
+## 2026-11-12 T52 closed; RUN PAUSED
+T52-009 screen: 3rd wave nets -9% at M=736, 0 at M=384; threshold work +0.2-0.5%; leader recommended closing, sparring T52-2 covered the reasons. KB133. All teams closed: RUN PAUSED (not finalized). Champion T52-005 1212.4 (bar 1273.0). reports/final.md predates T50-T53.

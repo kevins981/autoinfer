@@ -6,6 +6,15 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
   slot C; no explore or exploit teams. A replacement for it is another external team (fresh scout
   deck) in slot C. (Before: 2 explore teams.) Team ids continue: T32, T33, ...
   - exploit-long: 1   (renamed from "explore", human 2026-11-11: role leader_exploit_long, type exploit-long; T34 closed, not replaced. Human, 2026-11-11: one new exploit-long team in slot B, alongside the exploit team; same settings, no persona)
+  - exploit-long, megakernel pair (human, 2026-11-11): 2 more exploit-long teams, opened at the same
+    time, slot F each (Opus leader and Opus worker), no persona; speed of light, sparring, cards as
+    usual. Both get this direction, word for word in the first task:
+    > **Your direction (set by the human): megakernels.** Merge the forward pass's many small
+    > kernels into larger ones, from a whole layer up to the whole forward pass. The goal is to
+    > remove the time the GPU sits idle or underused between and around kernels, and to schedule and
+    > overlap compute, memory traffic and communication in ways separate kernels can't. How you do
+    > it is your call: the granularity, the design, and whether you build on existing research or
+    > libraries or write your own. Your proposal and any pivots stay within this direction.
   - exploit: 1   (human, 2026-11-11: one exploit team in slot A, after the research sets; standard exploit grants, no persona)
   - external: 0   (T32/T33 closed, not replaced)
   - moonshot: 4   (human, 2026-11-10: T35 slot A, T36/T37 slot D, all closed; a fourth in slot E; agents/leader_moonshot.md)
@@ -21,7 +30,8 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
     research_radical (re-added by the human: the two sets are compared). Open them now,
     alongside T42/T45 while those finish.
 - max workers per leader: 1 at a time (human, 2026-11-10; was 2) (the leader may stop one and start a fresh one)
-- GPU pool: 1500 GPU-minutes for the whole run (one GPU job runs at a time; queue time is free)
+- GPU pool: 2000 GPU-minutes for the whole run (one GPU job runs at a time; queue time is free)
+  (raised from 1500 by the human, 2026-11-11)
 - seed grant: 20 GPU-minutes per new team (other grant sizes: funding_policy.md)
 - human checkpoints: no blocking checkpoint; a short report to the human on every new champion and
   every resync, and whenever asked.

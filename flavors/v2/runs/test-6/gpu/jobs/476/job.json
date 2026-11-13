@@ -1,0 +1,18 @@
+{
+  "id": 476,
+  "pid": 656560,
+  "team": "T52",
+  "agent": "leader-52",
+  "label": null,
+  "timeout_min": 45.0,
+  "command": [
+    "agents/leader-52/abba1/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-11T23:19:28+00:00",
+  "state": "cancelled",
+  "started": "2026-11-11T23:19:28+00:00",
+  "ended": "2026-11-11T23:20:44+00:00",
+  "exit_code": 130,
+  "gpu_minutes": 1.274
+}

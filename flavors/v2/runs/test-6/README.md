@@ -5,14 +5,14 @@ output tok/s on ShareGPT at concurrency 16 (`tasks/qwen38-27b-fp8-2x4090/` in th
 agent funds teams with GPU time; each team has a leader agent and worker agents. Every experiment
 is a record in `bank/`.
 
-- **Result:** 631.4 tok/s (BASE, stock vLLM) -> **1181.3 tok/s (T50-002), +87%**.
+- **Result:** 631.4 tok/s (BASE, stock vLLM) -> **1212.4 tok/s (T52-005), +92%**.
 - **Seeded from test-5:** this run started from test-5's state (942.2 tok/s, champion T1-042). Records
-  `T1-*` are test-5's; this run's teams are T2-T51. See `history/README.md`.
-- **Dates:** 2026-11-08 to 2026-11-11. GPU pool 1500 GPU-min, 1033.5 spent.
+  `T1-*` are test-5's; this run's teams are T2-T53. See `history/README.md`.
+- **Dates:** 2026-11-08 to 2026-11-12. GPU pool 2000 GPU-min (raised from 1500 for T52/T53); see `gpu/ledger.jsonl`.
 
 ## Start here
 1. `champion.md`: the current best record, its official numbers, why it is valid, and the champion path.
-2. `reports/final.md`: the run's summary (written before T50/T51; `champion.md` is current).
+2. `reports/final.md`: the run's summary (written before T50-T53; `champion.md` and `journal.md` are current).
 3. `graph.md`: every direction and record as a tree (★ on the champion's path, ✗ failed, ○ null).
 4. `shared_kb.md`: what the run learned about the system, as numbered facts (KB1-KB131), each
    citing its records. Later entries may correct earlier ones.
@@ -21,7 +21,7 @@ is a record in `bank/`.
 ## Champion path
 BASE 631.4 -> (test-5) T1-042 942.2 -> T9-005 948.9 -> T14-004 956.6 -> T27-002 967.3 ->
 T29-004 1045.8 -> T29-006 1062.1 -> T31-003 1088.9 -> T37-002 1142.2 -> T45-005 1173.4 ->
-T50-002 1181.3
+T50-002 1181.3 -> T52-005 1212.4
 
 ## Teams
 One team = one leader (+ workers) with its own GPU account. Team types (prompts in
@@ -35,6 +35,7 @@ One team = one leader (+ workers) with its own GPU account. Team types (prompts 
 | T39-T49 | research | goal: novel insights for future teams, speedup a bonus (T39-T41 closed before working; T42-T45 and T46-T49 are two sets of four prompt framings) |
 | T50 | exploit | make the champion faster now, no proposal |
 | T51 | exploit-long | as explore |
+| T52-T53 | exploit-long | same, with a direction set by the human ("megakernels"), Opus leader and worker |
 
 ## Folders
 | Path | What |

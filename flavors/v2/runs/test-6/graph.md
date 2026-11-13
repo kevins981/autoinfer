@@ -270,3 +270,6 @@ Legend:
 - T46 (CLOSED): host as a memory tier: exact host embedding (frees 1.27 GB/GPU), link adds ~2.4% weight bandwidth, ceiling ~1% (KB125). T47 (CLOSED): asymmetric waves failed its gate (KB128); DRAM saturates from 16-32 SMs, KB59 zero-sum is a kernel property (KB129). T48 (CLOSED): compression-ratio rule (KB126), k=4 recompute (KB127). T49 (CLOSED): PP one microbatch (KB123), compressible memory (KB124).
 - T50 (exploit, opened 2026-11-11): (CLOSED) T50-001 gate_up cfg 103 + T42-003 lm_head -> T50-002 CHAMPION 1181.3 (builds_on T45-005 + T42-003). champion path: ... T37-002 -> T45-005 -> **T50-002**
 - T51 (exploit-long) CLOSED: T51-001..003 priced piggyback prefill in a mixed pass; existing kernels fail the GEMM-band gate (0.07 vs 0.05 ms/row); funded 25 GPU-min for a TP-shape kernel prototype.
+- T52 (exploit-long, megakernels CLOSED direction set by the human, opened 2026-11-11): running.
+- T53 (exploit-long, megakernels direction set by the human, opened 2026-11-11): CLOSED (decode megakernel ceiling too low, KB132).
+- T52 (exploit-long, megakernels CLOSED): T52-001/002 decode fusion at parity; T52-004 mixed-step AR exposure is a scheduling effect -> ★ **T52-005 CHAMPION 1212.4** (builds_on T50-002 + T30-004/005 waves + T32-003 captured core). champion path: ... T45-005 -> T50-002 -> **T52-005**

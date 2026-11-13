@@ -184,3 +184,18 @@ team T50 (exploit) closed after champion T50-002; write-up reports/T50-writeup.m
 ## 2026-11-11T14:58:13+00:00 (manager)
 team T51 (exploit-long) closed; write-up reports/T51-writeup.md
 
+## 2026-11-11T21:34:21+00:00 (manager)
+teams T52 and T53 (exploit-long, human-set direction: megakernels) opened with 20 GPU-min seed each; champion T50-002 1181.3
+
+## 2026-11-11T22:28:16+00:00 (manager)
+team T52 (exploit-long) received 50 GPU-min to work on chunk-pipelined mixed-step AR+GEMM layer kernels (megakernels); proposal: proposals/T52-1.md
+
+## 2026-11-11T22:39:24+00:00 (manager)
+team T53 (exploit-long) closed; write-up reports/T53-writeup.md
+
+## 2026-11-11T23:45:23+00:00 (manager)
+new champion T52-005 from team T52: 1212.4 tok/s (+2.6% over T50-002, +2.8% same-job); how: bank/T52-005/
+
+## 2026-11-12T00:10:45+00:00 (manager)
+team T52 (exploit-long) closed after champion T52-005; write-up reports/T52-writeup.md
+

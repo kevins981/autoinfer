@@ -1,0 +1,18 @@
+{
+  "id": 462,
+  "pid": 632226,
+  "team": "T53",
+  "agent": "leader-53.w1",
+  "label": null,
+  "timeout_min": 3.0,
+  "command": [
+    "./job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-53.w1/ceil",
+  "submitted": "2026-11-11T22:32:21+00:00",
+  "state": "done",
+  "started": "2026-11-11T22:32:21+00:00",
+  "ended": "2026-11-11T22:32:28+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.116
+}

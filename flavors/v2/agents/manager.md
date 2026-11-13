@@ -76,12 +76,14 @@ initialize():                                       # WITH the human (as in v1)
 ```python
 open_teams():                                       # from CONFIG: number of teams and the ratio
     for each team in CONFIG (ids T1, T2, ...; never reuse an id):
-        gpu team open <team> --type exploit-long|exploit|external|moonshot|research|research-handoff   # grants the seed automatically
-        if exploit: gpu grant <team> <start size> --kind start --note "exploit team start"
+        gpu team open <team> --type exploit-long|exploit|external|moonshot|research|research-handoff|sweep   # grants the seed automatically
+        if exploit or sweep: gpu grant <team> <start size> --kind start --note "<type> team start"
         if external: scout --team <team>                    # starts a scout in the background (10-30 min);
             # its deck lands in scout/<team>-<n>/ and the leader is messaged when it is ready.
             # No inspiration cards for an external team. The first task says the deck is coming
             # and where; don't describe or preview its contents.
+        if sweep: no inspiration cards; the first task names the framework folder (CONFIG's
+            # `sweep framework` line) in one line, without describing it.
         if research-handoff: no inspiration cards; the first task names the memo (CONFIG's
             # `research handoff memo` path) in one line, without describing or ranking its ideas.
         else: inspire --team <team>                         # prints a set of inspiration cards and
@@ -89,7 +91,7 @@ open_teams():                                       # from CONFIG: number of tea
             # don't pick, drop, reorder or comment on cards. It carries its own instructions.
         if moonshot or research-handoff: gpu grant <team> <moonshot seed - seed> --kind extension --note "moonshot seed"
             # (FUNDING_POLICY: moonshot seed). Inspiration cards as for exploit-long.
-        agent start leader-<k> --role leader_exploit_long|leader_exploit|leader_external|leader_moonshot|leader_research|leader_research_handoff --team <team> --task-file <f>
+        agent start leader-<k> --role leader_exploit_long|leader_exploit|leader_external|leader_moonshot|leader_research|leader_research_handoff|leader_sweep --team <team> --task-file <f>
             # if CONFIG has model slots: add --slot <S> (a new team takes a free slot; a
             # replacement team takes the slot of the team it replaces). The tool then picks the
             # team's leader and worker models; don't pass --model.
@@ -113,8 +115,10 @@ open_teams():                                       # from CONFIG: number of tea
             # research: seed and first task as for exploit-long (history included).
             # research-handoff: first task as for exploit-long (history included), with the memo
             # in place of the cards; name the other research-handoff teams open at the same time.
+            # sweep: first task as for exploit (history included; seed + start), with the framework
+            # folder in place of the cards; name the other sweep teams open at the same time.
         teams/<team>.md = new track record          # see "Track records"
-        if exploit: agent announce "team <team> (exploit) opened with <seed + start> GPU-min"
+        if exploit or sweep: agent announce "team <team> (<type>) opened with <seed + start> GPU-min"
 ```
 
 ```python
@@ -240,7 +244,7 @@ handle(resync request):                             # a team asks for more GPU t
         #   reason to stop. Close only when the core idea is shown wrong (its riskiest assumption
         #   is false, or a working prototype shows the upside can't reach the bar), or when
         #   nothing new was measured for two stages in a row. Replace with a new moonshot team.
-        # Exploit teams: progress = a win. Re-forecasting is not progress: a forecast that stays
+        # Exploit and sweep teams: progress = a win (a sweep team's analysis report is its first deliverable, not progress). Re-forecasting is not progress: a forecast that stays
         # as high with nothing new measured counts as none. A pivot doesn't reset the grant.
     extend / last chance: gpu grant <team> <N> --kind extension|last-chance --note "<why>"
                           # at a last chance you MAY also offer the team a new set of cards
@@ -251,7 +255,7 @@ handle(resync request):                             # a team asks for more GPU t
                           gpu team close <team> --note "<why>"; agent stop its leader and workers;
                           open a new team of the SAME type with a new id (open_teams() steps);
                           agent announce the closure (with the write-up's path) and the new team
-    if exploit-long, external, moonshot or research-handoff: agent remind <leader>   # after EVERY resync with these teams
+    if exploit-long, external, moonshot, research-handoff or sweep: agent remind <leader>   # after EVERY resync with these teams
     save the resync report to reports/<team>-<n>.md; teams/<team>.md += decision
     report_to_human()                               # see "Reporting to the human"
 ```

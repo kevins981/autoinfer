@@ -14,7 +14,8 @@ Several mechanisms change how a team finds ideas. They are designed (or being mo
 | History-free | the team doesn't read the run's history (KB, graph, reports, other teams); after a proposal it gets pointers to related records only | `leader_moonshot.md`, `agent announce` skips it | team type | moonshot |
 | Venture funding | judged on the upside if it fully works and on the riskiest assumption's cheapest test, not on odds; staged grants | `funding_policy.md` "Moonshot teams" | team type | moonshot, research-handoff |
 | Research memo | a memo of candidate optimizations written outside the run; replaces the cards; the team triages every idea first | `research handoff memo` config line | `research handoff memo` | research-handoff |
-| Speed of light | a task-specific page of physical lower bounds (bytes, FLOPs, link traffic per step; no implementation history) | `tasks/<task>/SPEED_OF_LIGHT.md` -> `task/` | `speed of light` | moonshot, research, research-handoff |
+| Framework | documents of a systematic analysis method (graph + knobs + napkin cost model), snapshot in the run; replaces the cards | `sweep framework` config line | `sweep framework` | sweep |
+| Speed of light | a task-specific page of physical lower bounds (bytes, FLOPs, link traffic per step; no implementation history) | `tasks/<task>/SPEED_OF_LIGHT.md` -> `task/` | `speed of light` | moonshot, research, research-handoff, sweep |
 
 Today "moonshot" bundles three modules (history-free, venture funding, speed of light) as a team
 type. As runs compare modules, they should become per-team switches (e.g. an explore team with

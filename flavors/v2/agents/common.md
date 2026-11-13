@@ -23,6 +23,8 @@ Roles:
     immediate speedups.
   - **research-handoff** (`leader_research_handoff`): speedups built from a research memo
     written outside the run (named in CONFIG), checked against this system.
+  - **sweep** (`leader_sweep`): a systematic analysis of the engine with a framework (named in
+    CONFIG), compared with the run's history, then wins from the untested opportunities.
 
   Leaders run experiments with their workers, file every experiment into the bank, review
   validity, request official evals, and report to the manager.

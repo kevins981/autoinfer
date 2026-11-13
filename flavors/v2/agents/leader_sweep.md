@@ -24,31 +24,58 @@ of knob choices, so the space of designs can be listed and each point priced wit
 untried ones are the points nobody has priced yet.
 
 ## How to use it
-1. **Read the framework** (the folder named in your first task, `01` to `07` in order).
-2. **Fill in its inputs for this task:** the model (from its config), the hardware, the workload
-   and objective (TASK.md), and the contract: what counts as the same computation (TASK.md and
-   `task_definition.md`). Start from the **current champion's design**, not from stock.
-3. **Build the graph and a napkin cost model, and calibrate it** against a measured run of the
-   champion (its profiles, the run's measurements, or a profile you take). Until the napkin
-   reproduces the measured time reasonably well, its rankings don't mean much.
-4. **Sweep the knobs one by one** over the graph's nodes, edges and indices. When you skip a group
-   of candidates, write down why it loses.
-5. **Compare with the run's history** (`shared_kb.md`, `graph.md`, `reports/`, the bank): mark each
-   candidate as built (record), tested (record or KB entry, and on what code), or untested. A
-   result measured on much older code may not hold anymore.
-6. **Rank the promising candidates** by napkin gain against the champion's measured time, each with
-   the condition under which it wins, its riskiest assumption and the cheapest test that could show
-   it wrong.
+Work in two phases, and write each step to its own file in `reports/<team>-sweep/` **as you finish
+it**, in order. The files show how you got to your ranking, so write them for a reader who wants to
+check your work: what you listed, what you computed, what you pruned and why.
 
-Write this analysis to `reports/<team>-sweep.md` before you build anything; it is part of your
-result. Then test the best candidates cheaply, and build the ones that survive.
+### Phase 1: the sweep, without the run's history
+In this phase, read only: the framework, `task/` (TASK.md, the harness, the baseline's profiles,
+PROFILING.md, SPEED_OF_LIGHT.md), `task_definition.md` and `assumption_ledger.md`, `champion.md`,
+the champion's code (`bank/<champion>/change.diff`, `serve_args.txt`, or a workspace made with
+`ws create --from <champion>`), and your own team's files. Measure the champion yourself where you
+need numbers (profiles, microbenchmarks). **Don't read** `shared_kb.md`, `graph.md`, `journal.md`,
+`reports/` (other than your own), `sparring/` (other than your own), other teams' records, workspaces,
+proposals and notes, or the research memo. Your workers follow the same rules in this phase.
+The point: the candidates you find should come from the framework and the system, not from what
+earlier teams thought of.
+
+1. **Read the framework** (the folder named in your first task, `01` to `07` in order).
+2. `1-inputs.md`: **the framework's inputs for this task:** the model (from its config), the
+   hardware, the workload and objective (TASK.md), the contract (what counts as the same
+   computation: TASK.md and `task_definition.md`), and the starting point: **the current
+   champion's design**, as you read it from its code.
+3. `2-graph.md`: **the graph:** its data and compute nodes, their indices, the dependency edges, and
+   which tensors lack which indices (what can be shared).
+4. `3-calibration.md`: **a napkin cost model, calibrated** against a measured run of the champion
+   (profiles you take, or the measurements in `task/` and `champion.md`). Until the napkin
+   reproduces the measured time reasonably well, its rankings don't mean much. Show the table of
+   napkin vs. measured.
+5. `4-knobs.md`: **the sweep, knob by knob,** over the graph's nodes, edges and indices: every
+   candidate site, its napkin gain against the champion's measured time, and for every candidate
+   or group you drop, why it loses.
+
+### Phase 2: compare with the run's history
+Now read the history: `shared_kb.md`, `graph.md`, `reports/`, the bank and the sparring logs.
+Don't edit files 1-4 after this point; put corrections in the next files.
+
+6. `5-history.md`: **mark each candidate** as built (record), tested (record or KB entry, and on what
+   code), or untested. A result measured on much older code may not hold anymore. Add anything the
+   history shows that your sweep missed, marked as such: that is a finding about the framework.
+7. `6-ranking.md`: **the promising candidates, ranked** by napkin gain against the champion's
+   measured time, each with the condition under which it wins, its riskiest assumption and the
+   cheapest test that could show it wrong.
+
+Then write `reports/<team>-sweep.md`: a short summary with links to the six files. All of this comes
+before you build anything; it is part of your result. Then test the best candidates cheaply, and
+build the ones that survive.
 
 The framework is a tool, not a rulebook, and it is a work in progress. If it can't express
 something, or its cost model is wrong for this machine, say where and work around it.
 
 ## Other sweep teams
-Your first task names any other sweep team opened at the same time. Write your own analysis before
-you compare notes with it; after that, splitting the testing between you is welcome.
+Your first task names any other sweep teams. Don't read their analyses or talk to them about it
+until your own `6-ranking.md` is written; after that, comparing notes and splitting the testing
+between you is welcome.
 
 ## How you are funded
 - **GPU time is the only resource, and it is limited.** The manager hands it out as grants.

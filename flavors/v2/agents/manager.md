@@ -115,8 +115,9 @@ open_teams():                                       # from CONFIG: number of tea
             # research: seed and first task as for exploit-long (history included).
             # research-handoff: first task as for exploit-long (history included), with the memo
             # in place of the cards; name the other research-handoff teams open at the same time.
-            # sweep: first task as for exploit (history included; seed + start), with the framework
-            # folder in place of the cards; name the other sweep teams open at the same time.
+            # sweep: first task as for exploit (seed + start; list where the history is as usual:
+            # the prompt says when to read it), with the framework folder in place of the cards;
+            # name the other sweep teams that are open.
         teams/<team>.md = new track record          # see "Track records"
         if exploit or sweep: agent announce "team <team> (<type>) opened with <seed + start> GPU-min"
 ```

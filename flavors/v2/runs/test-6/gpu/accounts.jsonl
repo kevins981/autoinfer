@@ -205,3 +205,11 @@
 {"t": "2026-11-11T22:28:16+00:00", "event": "grant", "team": "T52", "kind": "start", "minutes": 50.0, "by": "manager", "note": "megakernel: chunk-pipelined mixed-step AR+GEMM; forecast +9.1% if works, central +3%"}
 {"t": "2026-11-11T22:39:24+00:00", "event": "close", "team": "T53", "by": "manager", "note": "no decode megakernel design clears +5% on measurement; leader recommended; sparring T53-1 held"}
 {"t": "2026-11-12T00:10:44+00:00", "event": "close", "team": "T52", "by": "manager", "note": "champion T52-005 delivered; remaining levers small per GPU-min on measurement; leader recommended; sparring T52-2 covered the reasons"}
+{"t": "2026-11-13T20:10:19+00:00", "event": "open", "team": "T54", "type": "research-handoff", "by": "manager"}
+{"t": "2026-11-13T20:10:19+00:00", "event": "grant", "team": "T54", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-13T20:10:19+00:00", "event": "grant", "team": "T54", "kind": "extension", "minutes": 10.0, "by": "manager", "note": "moonshot seed"}
+{"t": "2026-11-13T20:10:19+00:00", "event": "open", "team": "T55", "type": "research-handoff", "by": "manager"}
+{"t": "2026-11-13T20:10:19+00:00", "event": "grant", "team": "T55", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-13T20:10:19+00:00", "event": "grant", "team": "T55", "kind": "extension", "minutes": 10.0, "by": "manager", "note": "moonshot seed"}
+{"t": "2026-11-13T20:17:20+00:00", "event": "close", "team": "T55", "by": "manager", "note": "triage: memo's GDN ideas already in champion or wrong workload; leader recommended; sparring T55-1 held"}
+{"t": "2026-11-13T20:18:12+00:00", "event": "close", "team": "T54", "by": "manager", "note": "triage: no memo idea clears +5%; leader recommended; sparring T54-1 held"}

@@ -29,6 +29,10 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
     first none, the second research_ownership, the third research_reviewer, the fourth
     research_radical (re-added by the human: the two sets are compared). Open them now,
     alongside T42/T45 while those finish.
+  - research-handoff: 2   (human, 2026-11-13: agents/leader_research_handoff.md; slot A each (Opus
+    leader, Sonnet worker), opened at the same time, no persona; memo from the `research handoff
+    memo` line in place of cards; full history; speed of light; sparring; funded like moonshots
+    (FUNDING_POLICY). Not replaced when they close.)
 - max workers per leader: 1 at a time (human, 2026-11-10; was 2) (the leader may stop one and start a fresh one)
 - GPU pool: 2000 GPU-minutes for the whole run (one GPU job runs at a time; queue time is free)
   (raised from 1500 by the human, 2026-11-11)
@@ -53,7 +57,9 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
   - slot F: leader claude-opus-5-5 / medium, worker claude-opus-5-5 / medium   (research teams; added by the human, 2026-11-11)
 - sparring: codex gpt-6.1-sol / high (the `spar` tool; added by the human 2026-11-10)
 - scout: codex gpt-6.1-sol / medium, cards 15 (the `scout` tool, for external teams; one fresh deck per external team)
-- speed of light: moonshot, research, exploit, exploit-long (task/SPEED_OF_LIGHT.md; human, 2026-11-10; research added 2026-11-11; exploit and exploit-long added 2026-11-11)
+- research handoff memo: research_handoff_1113.md (human, 2026-11-13: written outside the run by a separate
+  analysis system, without running this machine or reading this run's history)
+- speed of light: moonshot, research, exploit, exploit-long, research-handoff (task/SPEED_OF_LIGHT.md; human, 2026-11-10; research added 2026-11-11; exploit and exploit-long added 2026-11-11)
 - inspiration cards per draw: principles 5, hardware 5, software 5 (the `inspire` tool; 0 turns a
   kind off)
   - inspiration hardware cards: platform-supermicro-741ge-2x-rtx4090

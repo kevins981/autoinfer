@@ -7,7 +7,7 @@ is a record in `bank/`.
 
 - **Result:** 631.4 tok/s (BASE, stock vLLM) -> **1212.4 tok/s (T52-005), +92%**.
 - **Seeded from test-5:** this run started from test-5's state (942.2 tok/s, champion T1-042). Records
-  `T1-*` are test-5's; this run's teams are T2-T53. See `history/README.md`.
+  `T1-*` are test-5's; this run's teams are T2-T55. See `history/README.md`.
 - **Dates:** 2026-11-08 to 2026-11-12. GPU pool 2000 GPU-min (raised from 1500 for T52/T53); see `gpu/ledger.jsonl`.
 
 ## Start here
@@ -25,7 +25,7 @@ T50-002 1181.3 -> T52-005 1212.4
 
 ## Teams
 One team = one leader (+ workers) with its own GPU account. Team types (prompts in
-`flavors/v2/agents/leader_<type>.md`; versions below):
+`flavors/v2/agents/leader_<type>.md`; all types: `flavors/v2/design/team_types.md`; versions below):
 
 | Teams | Type | What it is |
 |---|---|---|
@@ -36,6 +36,7 @@ One team = one leader (+ workers) with its own GPU account. Team types (prompts 
 | T50 | exploit | make the champion faster now, no proposal |
 | T51 | exploit-long | as explore |
 | T52-T53 | exploit-long | same, with a direction set by the human ("megakernels"), Opus leader and worker |
+| T54-T55 | research-handoff | built from an outside research memo (`research_handoff_1113.md`); both closed after triage, no GPU time |
 
 ## Folders
 | Path | What |

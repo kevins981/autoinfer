@@ -374,3 +374,12 @@ After sparring T52-2 the leader withdrew its closing recommendation: waves leave
 
 ## 2026-11-12 T52 closed; RUN PAUSED
 T52-009 screen: 3rd wave nets -9% at M=736, 0 at M=384; threshold work +0.2-0.5%; leader recommended closing, sparring T52-2 covered the reasons. KB133. All teams closed: RUN PAUSED (not finalized). Champion T52-005 1212.4 (bar 1273.0). reports/final.md predates T50-T53.
+
+## 2026-11-13 (human) research-handoff teams
+Opened T54, T55 (research-handoff, slot A, seed 30 each = 20 + 10 moonshot top-up; memo research_handoff_1113.md in place of cards; SoL pointer; history included). Run resumed; pause when all teams close. Pool free 855.6 of 2000.
+
+## 2026-11-13 T55 closed
+Triage only (ideas 1 and 5 of the memo): already in champion or wrong workload; 0 GPU-min used, 30 returned. Sparring T55-1 had been held, no further offer. KB134. T54 still open (ideas 2, 6, 7).
+
+## 2026-11-13 T54 closed; RUN PAUSED
+Triage only (ideas 2/6/7): none clears +5% (premises wrong for this system); 0 GPU-min used. Sparring T54-1 held, no extra offer. KB135. All teams closed: RUN PAUSED (not finalized). Champion T52-005 1212.4 (bar 1273.0). reports/final.md predates T50-T55. Pool 2000, free 915.6.

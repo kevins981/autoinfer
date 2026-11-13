@@ -273,3 +273,5 @@ Legend:
 - T52 (exploit-long, megakernels CLOSED direction set by the human, opened 2026-11-11): running.
 - T53 (exploit-long, megakernels direction set by the human, opened 2026-11-11): CLOSED (decode megakernel ceiling too low, KB132).
 - T52 (exploit-long, megakernels CLOSED): T52-001/002 decode fusion at parity; T52-004 mixed-step AR exposure is a scheduling effect -> ★ **T52-005 CHAMPION 1212.4** (builds_on T50-002 + T30-004/005 waves + T32-003 captured core). champion path: ... T45-005 -> T50-002 -> **T52-005**
+- T54 (research-handoff, memo research_handoff_1113.md, opened 2026-11-13): CLOSED after triage (KB135).
+- T55 (research-handoff, memo research_handoff_1113.md, opened 2026-11-13): CLOSED after triage (KB134).

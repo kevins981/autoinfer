@@ -36,6 +36,11 @@ that it agrees with the idea. When in doubt, fund it and let the measurements de
 Then pick one team, by track record or at random. Similar but different proposals are the
 manager's call.
 
+## Research-handoff teams (human, 2026-11-13)
+Funded like moonshot teams below (seed 30, proposal checks, stages up to about 200 GPU-min), with
+two differences: no history check (they read the run's history themselves), and the idea must start
+from the memo's ideas (changed, combined or extended as the team likes).
+
 ## Moonshot teams
 Moonshot teams (`leader_moonshot.md`) chase high-risk, high-reward directions that reject an
 assumption of the current design, without the run's history. The manager funds them as a venture

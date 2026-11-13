@@ -199,3 +199,12 @@ new champion T52-005 from team T52: 1212.4 tok/s (+2.6% over T50-002, +2.8% same
 ## 2026-11-12T00:10:45+00:00 (manager)
 team T52 (exploit-long) closed after champion T52-005; write-up reports/T52-writeup.md
 
+## 2026-11-13T20:10:27+00:00 (manager)
+teams T54 and T55 (research-handoff, memo research_handoff_1113.md) opened with 30 GPU-min seed each; champion T52-005 1212.4
+
+## 2026-11-13T20:17:20+00:00 (manager)
+team T55 (research-handoff) closed after triage; write-up reports/T55-writeup.md
+
+## 2026-11-13T20:18:12+00:00 (manager)
+team T54 (research-handoff) closed after triage; write-up reports/T54-writeup.md
+

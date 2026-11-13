@@ -151,3 +151,10 @@ ALLOWED, provided the greedy decision is bitwise the baseline's: a screening pla
 
 ## Ruling (manager, 2026-11-11, asked by T53; the human may override): moving the per-row 1/rms past the W8A8 activation quantization
 ALLOWED as an fp-reordering variant of the checkpoint W8A8 path, on these conditions: group size stays 128, scales stay dynamic per token-group (amax/448 of the pre-scaled activations), accumulation stays fp32 per K-block with the same promotion, r multiplies the fp32 result, and nothing else in the quantization changes (no coarser groups, no static or calibrated scales). The change only moves where the bf16 rounding of x*r*(1+w) happens, which is the same kind of reordering as the 2026-11-09 ruling for bf16 inputs. The record must report max-abs/relative differences on real activations and pass the FP8 GSM8K-250 A/B (as for any FP8 change; Addendum 2's subset rule applies). The 128K gate applies as usual.
+
+## Ruling (human, 2026-11-13, asked by T56): replicated out_proj/o_proj with an all-gather of their FP8 inputs
+ALLOWED: out_proj/o_proj may be replicated on both ranks, with the link carrying an all-gather of their
+W8A8 inputs (the e4m3 bytes plus their per-128 fp32 scales) in place of the bf16 all-reduce of their
+outputs. Condition: the gathered bytes are bitwise what the GEMM consumes, so the result equals the
+non-replicated W8A8 path up to fp reordering. "Communication at baseline precision" is about lossy
+communication; this sends a GEMM's exact input, not a rounded version of anything.

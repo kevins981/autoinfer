@@ -253,7 +253,7 @@ def main():
             (run / d).mkdir()
         shutil.copy(flavor / "config_default.md", run / "config.md")
         shutil.copy(flavor / "design" / "funding_policy.md", run / "funding_policy.md")
-        for f in ("map.md", "journal.md", "shared_kb.md", "champion.md", "focus.md", "announcements.md"):
+        for f in ("journal.md", "shared_kb.md", "champion.md", "focus.md", "announcements.md"):
             (run / f).write_text("")
         seed_base(run, task)
         copy_framework(run, Path(a.framework).resolve())

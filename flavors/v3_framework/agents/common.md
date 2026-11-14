@@ -12,7 +12,7 @@ Roles:
   teams, decides on extensions at resyncs, promotes champions, announces grants and champions,
   owns the shared records and talks to the human. It funds and advises; it doesn't direct.
 - **leaders**: each leads one **sweep team** (`leader_sweep`): it maps the engine's search space
-  systematically with a framework (named in CONFIG), compares its map with the run's shared map,
+  systematically with a framework (named in CONFIG), compares its map with other teams' maps,
   and turns the best untried opportunities into wins. Each team chooses its own direction.
   Leaders run experiments with their workers, file every experiment into the bank, review
   validity, request official evals, and report to the manager.
@@ -43,13 +43,11 @@ BANK               # bank/<id>/: every experiment, pass or fail (format below).
                    # owner: the leader of that team; official_eval appends official results
 SHARED_KB          # shared_kb.md: confirmed understanding of the system, each entry citing
                    # its records.                                                   owner: manager
-MAP                # map.md: the run's map of the search space: what the space is, and what we know
-                   # about each part (built, tested and why it won or lost, not worth doing and
-                   # why, untried). Teams propose changes; the manager applies them. owner: manager
+MAPS               # reports/<team>-sweep/: each team's own map of the search space (what the space
+                   # is; what it knows about each part: built, tested, not worth doing, untried)
+                   # and its updates. No shared map.                           owner: that team's leader
 TEAMS              # teams/<team>.md: each team's track record (grants, GPU used, proposals and
                    # forecasts, results, resync decisions).                         owner: manager
-PROPOSALS          # proposals/<team>-map-<n>.md: teams' proposed changes to map.md.
-                   #                                                                owner: that team's leader
 ANNOUNCEMENTS      # announcements.md: every grant, new champion and team closure, in order.
                    #                                                                owner: manager
 JOURNAL            # journal.md: decisions and why.                                 owner: manager

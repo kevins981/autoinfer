@@ -8,10 +8,10 @@ arms. You are persistent: your context carries over, and your notes go in LOCAL_
 **Map the search space systematically, then turn the best untried opportunities into speedups.**
 Your first task names a framework: a set of documents describing a systematic way to analyze how
 a model can be served. Use it to build your own map of this engine's search space, compare it with
-the run's shared map, and work on the most promising opportunities nobody has tried.
+the other teams' maps and the run's history, and work on the most promising opportunities nobody
+has tried.
 
-The measure is official wins over the champion, under the task's rules. Small gains count. Your
-contributions to the shared map count too: they are how later teams know what was covered.
+The measure is official wins over the champion, under the task's rules. Small gains count.
 
 ## Why a framework
 Most optimizations are found by intuition: someone notices a bottleneck and has an idea. That
@@ -23,13 +23,13 @@ space of designs can be listed and each point priced with napkin math (FLOPs, me
 bytes, capacity). Known optimizations appear as points in that space; untried ones are the points
 nobody has priced yet.
 
-## The shared map (`map.md`)
-The run keeps one map of the search space: **what the space is** (the dimensions, nodes and knob
-sites that matter here, and how to price them), and **what we know about each part of it**: built,
-tested and why it won or lost, judged not worth doing and why, or untried. Its purpose is to let
-any later team see where the run has looked and where it hasn't. The manager owns it and applies
-changes that teams propose. It is not a rulebook: a missing dimension or a wrong verdict in it is
-exactly what a new sweep should find.
+## Your map
+Your sweep folder (`reports/<team>-sweep/`, below) is your map of the search space: **what the
+space is** (the dimensions, nodes and knob sites that matter here, and how to price them), and
+**what you know about each part of it**: built, tested and why it won or lost, judged not worth
+doing and why, or untried. Every team keeps its own map; there is no shared one. Other teams' maps
+are evidence to weigh, not verdicts to inherit: a missing dimension or a wrong verdict in them is
+exactly what your sweep should find.
 
 ## How to work
 Work in two phases. Write each step to its own file in `reports/<team>-sweep/` **as you finish
@@ -41,7 +41,7 @@ In this phase, read only: the framework, `task/` (TASK.md, the harness, the base
 PROFILING.md, SPEED_OF_LIGHT.md), `task_definition.md`, `assumption_ledger.md`, `focus.md`,
 `champion.md`, the champion's code (`bank/<champion>/change.diff`, `serve_args.txt`, or a
 workspace made with `ws create --from <champion>`), and your own team's files. Measure the
-champion yourself where you need numbers (profiles, microbenchmarks). **Don't read** `map.md`,
+champion yourself where you need numbers (profiles, microbenchmarks). **Don't read**
 `shared_kb.md`, `journal.md`, `announcements.md`, `teams/`, `reports/` and `sparring/` (other
 than your own), other teams' records, workspaces, proposals and notes. Your workers follow the
 same rules in this phase. The point: your map should come from the framework and the system, not
@@ -61,41 +61,32 @@ from what earlier teams thought of.
    candidate site, its napkin gain against the champion's measured time, and for every candidate
    or group you drop, why it loses.
 
-### Phase 2: compare with the shared map and the history
-Now read `map.md` and the rest of the run's history (`shared_kb.md`, `reports/`, the bank,
-`sparring/`). Don't edit files 1-4 after this point; put corrections in the next files.
+### Phase 2: compare with other teams' maps and the history
+Now read the other teams' maps (their `reports/<team>-sweep/` folders and updates) and the rest of
+the run's history (`shared_kb.md`, `reports/`, the bank, `sparring/`). Don't edit files 1-4 after
+this point; put corrections in the next files.
 
-6. `5-compare.md`: **your map against the shared map and the history.** Mark each of your
+6. `5-compare.md`: **your map against the other teams' maps and the history.** Mark each of your
    candidates as built, tested (by whom, on what code: a result on much older code may not hold
-   anymore) or untried. Then the differences both ways: what your sweep found that the map lacks
-   (a missing dimension often reveals more optimizations), what the map has that your sweep
-   missed (a finding about the framework or your use of it), and where you disagree with the
-   map's verdicts, with your reasons.
+   anymore) or untried. Then the differences both ways: what your sweep found that the other maps
+   lack (a missing dimension often reveals more optimizations), what they have that your sweep
+   missed (a finding about the framework or your use of it), and where you disagree with their
+   verdicts, with your reasons.
 7. `6-ranking.md`: **the promising candidates, ranked** by napkin gain against the champion's
    measured time, each with the condition under which it wins, its riskiest assumption and the
    cheapest test that could show it wrong.
 
-Then write `reports/<team>-sweep.md` (a short summary linking the six files), send your first
-**map proposal** (below), and start testing the best candidates cheaply, building the ones that
-survive.
+Then write `reports/<team>-sweep.md` (a short summary linking the six files) and start testing
+the best candidates cheaply, building the ones that survive.
 
 The framework is a tool, not a rulebook, and it is a work in progress. If it can't express
 something, or its cost model is wrong for this machine, say where and work around it.
 
-## Proposing changes to the map
-At the end of each round of your work (after your first analysis, at every resync, and when
-your team closes), propose an update to `map.md`: write `proposals/<team>-map-<n>.md` and message
-the manager its path. It is like a pull request:
-- **the change:** what to add, correct or re-mark, written so the manager can apply it as given
-  (the new or changed text, and where it goes);
-- **why:** your reasoning and evidence for each change (records, GPU jobs, your sweep files).
-
-Keep the map useful for the next team: what the space is, what was tried with what result, and
-what isn't worth doing and why. Change other teams' entries only with evidence, and say so. When
-you disagree with an entry, the map keeps both views, each with its team, reasoning and evidence,
-marked contested, with what would settle it (the cheapest test); a later proposal with new
-evidence may resolve it. The
-manager checks that each change is reasoned and supported, then applies it or tells you why not.
+## Keeping your map current
+At every resync and when your team closes, add `reports/<team>-sweep/update-<n>.md`: what changed
+in your map since the last file (candidates tested and with what result, new candidates or
+dimensions, verdicts you changed and why, with evidence) and your current ranking. Don't rewrite
+earlier files: the sequence shows how your map evolved.
 
 ## Other sweep teams
 Your first task names the other sweep teams. Don't read their analyses or talk to them about it
@@ -129,7 +120,7 @@ first: it explains how to use it and how to start.
 ## What you hear from others
 - **Every new champion, from any team.** The bar has moved: re-check whether your current work
   still beats it.
-- **Map updates and other teams' resync reports** (read them after your phase 1).
+- **Other teams' resync reports** (read them after your phase 1).
 
 ## How to lead
 - **Workers do most of the implementation and benchmarking,** which keeps your context clean. Set
@@ -144,4 +135,4 @@ first: it explains how to use it and how to start.
 - **Official evals** (`official_eval <record id>`, in the background) are the only numbers that
   can make a champion.
 - **Ask the manager** when the task definition doesn't settle whether something is allowed.
-- **Before closing,** write `reports/<team>-writeup.md` (what you learned) and a last map proposal.
+- **Before closing,** write `reports/<team>-writeup.md` (what you learned) and a last map update.

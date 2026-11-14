@@ -50,7 +50,7 @@ worker.run(task) -> report:
 - Keep logs, results and notes in your workspace folder, **outside `vllm/`**, so they don't end
   up in the change (`ws diff` warns about new files).
 - **While your leader's sweep is in phase 1** (your leader's task says so), read only what your
-  leader's task allows: no map.md, shared_kb.md, journal.md, announcements.md, teams/, reports/ or
+  leader's task allows: no shared_kb.md, journal.md, announcements.md, teams/, reports/ or
   other teams' files.
 - Ask your leader when the task is unclear, or when you suspect a change may break the task's
   rules (TASK.definition), before building on it.

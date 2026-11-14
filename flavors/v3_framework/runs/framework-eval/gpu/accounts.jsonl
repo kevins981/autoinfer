@@ -1,0 +1,7 @@
+{"t": "2026-11-14T16:10:40+00:00", "event": "open", "team": "MGR", "type": "manager", "by": "human"}
+{"t": "2026-11-14T16:11:01+00:00", "event": "open", "team": "T1", "type": "sweep", "by": "manager"}
+{"t": "2026-11-14T16:11:01+00:00", "event": "grant", "team": "T1", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-14T16:11:01+00:00", "event": "grant", "team": "T1", "kind": "start", "minutes": 80.0, "by": "manager", "note": "sweep team start"}
+{"t": "2026-11-14T16:11:01+00:00", "event": "open", "team": "T2", "type": "sweep", "by": "manager"}
+{"t": "2026-11-14T16:11:01+00:00", "event": "grant", "team": "T2", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-14T16:11:01+00:00", "event": "grant", "team": "T2", "kind": "start", "minutes": 80.0, "by": "manager", "note": "sweep team start"}

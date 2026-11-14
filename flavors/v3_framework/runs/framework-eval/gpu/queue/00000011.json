@@ -1,0 +1,13 @@
+{
+  "id": 11,
+  "pid": 1019110,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "t2-fp8gemm",
+  "timeout_min": 8.0,
+  "command": [
+    "./run3.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-2.w1",
+  "submitted": "2026-11-14T16:24:17+00:00"
+}

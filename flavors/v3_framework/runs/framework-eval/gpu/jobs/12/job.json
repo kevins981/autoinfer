@@ -1,0 +1,13 @@
+{
+  "id": 12,
+  "pid": 1019330,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": null,
+  "timeout_min": 40.0,
+  "command": [
+    "agents/leader-1.w1/hm/job3.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T16:24:28+00:00"
+}

@@ -21,8 +21,6 @@ replaced by a new one while the pool can fund it (seed + start).
 - **A result is a win:** an official record that beats the champion. Small gains count.
 - **The team's sweep report** (reports/<team>-sweep.md and its six files) is its first
   deliverable, not progress by itself.
-- **Map proposals** are reviewed on their own (manager.md): they don't earn GPU time, but a team
-  that keeps the map useful makes every later team cheaper.
 
 ## Resyncs
 A team can request a resync at any time.
@@ -31,7 +29,7 @@ A team can request a resync at any time.
 |---|---|
 | A win since the last grant | Extend, possibly with a bigger grant |
 | No win, but a measured lead it can name (what it will test next and why the evidence points there) | Last chance: a smaller grant. The team says what it will measure with it |
-| A second last chance in a row | Close the team and open a new one. The closing team writes up what it learned and sends a last map proposal first |
+| A second last chance in a row | Close the team and open a new one. The closing team writes up what it learned and adds a last map update first |
 | The team recommends closing itself, and its failure hit a hard limit or it already tried a variant aimed at the cause | Close it and open a new one, as above |
 | The team recommends closing itself after one failed attempt with a fixable cause | Encourage it to try a variant first. If it still wants to close, close it |
 

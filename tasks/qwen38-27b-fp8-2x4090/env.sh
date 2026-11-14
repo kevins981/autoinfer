@@ -23,6 +23,8 @@ if [ -n "${AUTOINFER_RUN:-}" ]; then
 else
   export TMPDIR=$CACHE_ROOT/tmp
 fi
+# vLLM's ZMQ IPC sockets (<dir>/<uuid4>): keep their directory short whatever the run's name
+export VLLM_RPC_BASE_PATH=$CACHE_ROOT/tmp
 
 # Model weights and datasets: read from qwen38_opt's HF cache, offline (no downloads, no writes)
 export HF_HOME=$CACHE_ROOT/huggingface

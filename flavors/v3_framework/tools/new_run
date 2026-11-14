@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""new_run: create a run folder and start its manager as a background Claude session.
+
+Usage: new_run <run name> --task <task> [--no-start]
+       new_run <run name> --start
+  e.g. flavors/v3_framework/tools/new_run ffn-latency-1 --task qwen38-27b-fp8-2x4090
+
+Creates runs/<run>/ in this flavor (a copy of the task, config.md, funding_policy.md, folders), prepares
+the task (`ws setup-task`), then starts the manager in the flavor folder with AUTOINFER_RUN set
+and the run's permission settings. Talk to it with `claude attach <id>` (printed at the end).
+The first time, run `claude` once in the flavor folder and accept the trust prompt.
+
+--start starts the manager on a run created with --no-start (e.g. after editing its config.md);
+--message-file F replaces its first message (e.g. a run seeded with another run's state).
+Pausing and resuming a run are messages to the manager (CLAUDE.md, "Pausing and resuming a run").
+"""
+import argparse, json, re, os, shutil, subprocess, sys, uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+TOOLS = Path(__file__).resolve().parent
+FLAVOR = TOOLS.parent
+ROOT = TOOLS.parents[2]                 # autoinfer/
+
+
+def die(msg):
+    print(f"new_run: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+QWEN38_OPT = ROOT.parent / "qwen38_opt"
+FRAMEWORK_DEFAULT = ROOT.parent / "framework"   # the framework's source project (outside autoinfer)
+
+
+def framework_source(run):
+    f = run / "framework_source.txt"
+    return Path(f.read_text().split("\n")[0].strip()) if f.exists() else FRAMEWORK_DEFAULT
+
+
+def copy_framework(run, src):
+    """The run's copy of the framework: documents 01-07 only (no AGENTS.md, CLAUDE.md, examples/:
+    the source project's worked examples may hold other analyses of this very task)."""
+    docs = sorted(src.glob("0[1-7]-*.md"))
+    if not docs:
+        die(f"no framework documents 01-07 in {src}")
+    (run / "framework").mkdir()
+    for d in docs:
+        shutil.copy(d, run / "framework" / d.name)
+    g = lambda *c: subprocess.run(["git", "-C", str(src), *c], capture_output=True, text=True).stdout.strip()
+    dirty = g("status", "--porcelain", "--", *[d.name for d in docs])
+    (run / "framework_source.txt").write_text(f"{src}\ncommit {g('rev-parse', '--short', 'HEAD')}\n"
+                                              + (f"uncommitted:\n{dirty}\n" if dirty else ""))
+    (run / "framework" / "README.md").write_text(
+        "# The framework\n\nCopies of the framework's documents (01-07), taken when this run was created. "
+        "Read them in order. Links inside them that point outside this folder (e.g. to worked examples) "
+        "are not part of the run: work from these files.\n")
+
+
+def copy_task(run, task):
+    """The run's own copy of the task, for agents to read (they stay in their run folder). Trusted
+    tools (ws, the official eval) read the original in tasks/, found by task_source.json."""
+    shutil.copytree(task, run / "task", symlinks=True)
+    g = lambda *c: subprocess.run(["git", "-C", str(ROOT), *c], capture_output=True, text=True).stdout.strip()
+    (run / "task_source.json").write_text(json.dumps(
+        {"task": task.name, "autoinfer_commit": g("rev-parse", "HEAD"),
+         "uncommitted": g("status", "--porcelain", "--", str(task.relative_to(ROOT))) or None}, indent=2) + "\n")
+
+
+def confine(s, run):
+    """Keep the run's agents (the manager or researcher included) away from what would leak
+    answers: answer keys, evaluations, design notes, other runs, and qwen38_opt's findings and
+    optimized code. Two layers: deny rules (hard for the Read/Edit tools and for shell commands
+    that name these paths) and an auto-mode classifier rule (catches python, git show, ...).
+    "$defaults" keeps the classifier's built-in rules (a soft_deny list replaces them otherwise)."""
+    own = run.resolve()
+    dirs = [ROOT / d for d in ("answer_keys", "evals", "design", ".claude", ".git")]
+    # flavor folders: everything but what agents use (design/, notes such as observations.md, ...)
+    keep = {"agents", "tools", "runs", "config_default.md", "program.md", ".claude"}
+    flav = sorted(e for f in (ROOT / "flavors").iterdir() if f.is_dir() for e in f.iterdir() if e.name not in keep)
+    dirs += [e for e in flav if e.is_dir()]
+    dirs += sorted(r for f in (ROOT / "flavors").iterdir() if (f / "runs").is_dir()
+                   for r in (f / "runs").iterdir() if r.is_dir() and r.resolve() != own)
+    dirs += [QWEN38_OPT / d for d in ("results", "logs", "ext", "vllm", "build")]
+    dirs += [framework_source(run)]   # the framework project: its examples analyze this task
+    # the shared cache: only the engine trees, build cache and downloads are for runs (runtime
+    # caches are per run since 2026-11-07; the shared ones hold older runs' generated kernels)
+    shared_ok = {"tasks", "ccache", "huggingface", "pip", "uv", "conda-pkgs"}
+    dirs += sorted(d for d in (ROOT / ".cache").iterdir() if d.is_dir() and d.name not in shared_ok)
+    files = [ROOT / "EVAL.md", ROOT / "CLAUDE.md"] + [e for e in flav if not e.is_dir()] + [QWEN38_OPT / f for f in ("FINDINGS.md", "TODO.md", "CLAUDE.md")]
+    # Claude Code's per-session folders (transcripts, memory, background-job output, scratchpads),
+    # named after each session's working directory: deny all that exist at launch except this run's
+    # own (its agents read their own job output there). Other runs, the designer and the judges.
+    enc = lambda p: re.sub(r"[^A-Za-z0-9]", "-", str(p))
+    mine = enc(own)
+    others = {enc(r) for f in (ROOT / "flavors").iterdir() if (f / "runs").is_dir()
+              for r in (f / "runs").iterdir() if r.is_dir() and r.resolve() != own}
+    def is_mine(n):   # this run's folders, not another run whose name starts with ours (test-5-b)
+        return (n == mine or n.startswith(mine + "-")) and not any(
+            n == o or n.startswith(o + "-") for o in others if o.startswith(mine + "-"))
+    sess_roots = [Path.home() / ".claude" / "projects", Path(f"/tmp/claude-{os.getuid()}")]
+    dirs += sorted(d for r in sess_roots if r.is_dir() for d in r.iterdir()
+                   if d.is_dir() and d.name.startswith("-") and not is_mine(d.name))
+    pats = [f"/{d}/**" for d in dirs] + [f"/{f}" for f in files]
+    ro = [f"/{ROOT / 'tasks'}/**", f"/{run / 'task'}/**"]   # the task is read-only to agents
+    deny = s["permissions"]["deny"]
+    deny += [f"{tool}({p})" for p in pats for tool in ("Read", "Edit")]   # Edit covers every file-writing tool
+    deny += [f"Edit({p})" for p in ro]
+    off = ", ".join(str(p) for p in dirs + files if p.parent.name != "runs" and QWEN38_OPT not in p.parents
+                    and not any(r in p.parents for r in sess_roots))
+    # Hard rule for messaging (the classifier rule alone let a probe message a session outside the run)
+    s.setdefault("hooks", {}).setdefault("PreToolUse", []).append({"matcher": "SendMessage", "hooks": [
+        {"type": "command", "command": f"python3 {TOOLS / '_msg_guard.py'} {run.name}"}]})
+    # Reminders after context compaction (v2: design/infra/announcements_and_reminders.md)
+    s["hooks"].setdefault("SessionStart", []).append({"matcher": "compact", "hooks": [
+        {"type": "command", "command": f"python3 {TOOLS / '_remind_hook.py'}"}]})
+    s["includeGitInstructions"] = False   # else the system prompt holds the autoinfer repo's recent commits
+    s["autoMode"] = {"soft_deny": ["$defaults", (
+        f"Leaving the run: this agent belongs to one AutoInfer optimization run, folder {run}. "
+        f"Never read, list, search, copy or print the following, by any method (Read, cat, grep, find, "
+        f"python, symlinks, git log/show/grep/diff on the {ROOT} repository or reading its .git): {off}; any other AutoInfer "
+        f"run's folder (other runs under {ROOT}/flavors/*/runs/, or anywhere else); and {QWEN38_OPT}'s "
+        f"notes, results, logs and code (FINDINGS.md, TODO.md, results/, logs/, ext/, vllm/, build/); "
+        f"other Claude sessions' transcripts, memory and scratch folders (under ~/.claude/projects/ and "
+        f"/tmp/claude-{os.getuid()}/, every folder except this run's own); and the autoinfer repository "
+        f"on GitHub (kevins981/autoinfer: no gh, git clone, curl or web fetches of it or its files; "
+        f"other GitHub use, e.g. vLLM issues and PRs, is fine). Never message or contact agents or Claude "
+        f"sessions outside this run (SendMessage, agent tool or anything else): only this run's agents, "
+        f"listed by `agent list` (the human may also message you; answer). They hold "
+        f"the evaluators' answers and grades, design notes, or other runs' results; using them invalidates "
+        f"the experiment. Allowed outside the run: running the run's tools; reading the flavor's agents/ "
+        f"and tools/; the engine code, build cache and downloads under {ROOT}/.cache (tasks/, ccache/, "
+        f"huggingface/, pip/, uv/); this run's own .cache/; {QWEN38_OPT}/env (the conda env) "
+        f"and {QWEN38_OPT}/.cache (model weights); git inside the agent's own workspaces; installed "
+        f"system software and documentation.")]}
+    return s
+
+
+def write_settings(run, flavor):
+    # Permission settings: the same mode and deny rules for every agent of the run. Every agent,
+    # the manager included, gets its instructions via --append-system-prompt and excludes the
+    # CLAUDE.md files (the flavor CLAUDE.md only points a hand-started manager to its prompts).
+    base = confine(json.loads((TOOLS / "agent_settings.json").read_text()), run)
+    (run / "agent_settings.json").write_text(json.dumps(base, indent=2) + "\n")
+    mgr = json.loads(json.dumps(base))
+    mgr["claudeMdExcludes"] = [str(ROOT / "CLAUDE.md"), str(flavor / "CLAUDE.md")]
+    # The manager's env must live in its settings: `claude --bg` hands the session to a spare
+    # process pre-started by the background daemon, which has the daemon's environment (e.g. an
+    # older run's AUTOINFER_RUN), not the one we pass to `claude --bg`.
+    mgr["env"] = {"AUTOINFER_RUN": str(run), "AUTOINFER_AGENT": "manager",
+                  "AUTOINFER_ROLE": "manager", "AUTOINFER_TEAM": "",
+                  "PATH": f"{TOOLS}:{os.environ.get('PATH', '')}"}
+    (run / "manager_settings.json").write_text(json.dumps(mgr, indent=2) + "\n")
+
+
+def seed_base(run, task):
+    """bank/BASE from the task's shipped official result (task/baseline/official/), so runs don't
+    re-measure the baseline. Without one, the manager runs `official_eval BASE` itself."""
+    src = task / "baseline" / "official"
+    base = run / "bank" / "BASE"
+    base.mkdir(parents=True)
+    (base / "change.diff").write_text("")
+    line = "(none shipped with the task: run `official_eval BASE`)"
+    if (src / "results.json").exists():
+        shutil.copytree(src, base / "official" / "1")
+        r = json.loads((src / "results.json").read_text())
+        line = (f"official #1 (shipped with the task, task/baseline/official/): "
+                f"{r['output_throughput']:.1f} tok/s at c=16, GSM8K {100 * r['gsm8k_accuracy']:.1f}%, "
+                f"MTP acceptance {r.get('mtp_acceptance_length')}, TTFT p50/p99 "
+                f"{r['median_ttft_ms']:.0f}/{r['p99_ttft_ms']:.0f} ms, TPOT p50/p99 "
+                f"{r['median_tpot_ms']:.1f}/{r['p99_tpot_ms']:.1f} ms (official/1/results.json)")
+        (run / "champion.md").write_text(f"# Champion\nBASE (the task baseline): {line}\n")
+    (base / "record.md").write_text(
+        "team:         -\n"
+        "builds_on:    -\n"
+        "performance:  official results below\n"
+        "summary:\n"
+        "  hypothesis: none: the task baseline\n"
+        "  change:     none (empty change.diff); serve args = task/harness/serve_args.sh\n"
+        "  results:    see official/\n"
+        "  conclusion: the reference for every comparison and for the latency gates\n"
+        "validity:     the task baseline by definition\n\n" + line + "\n")
+
+
+def config_minutes(run, label):
+    """A '- <label>: <number>' line of the run's config.md (e.g. GPU pool, seed grant)."""
+    m = re.search(rf"^\s*-\s*{re.escape(label)}\s*:\s*([0-9.]+)", (run / "config.md").read_text(),
+                  re.M | re.I)
+    if not m:
+        die(f"config.md has no '- {label}: <minutes>' line")
+    return float(m.group(1))
+
+
+def init_pool(run):
+    """Set up the run's GPU pool from config.md (once; the human may edit config.md before --start).
+    Runs `gpu pool init` as the human (no AUTOINFER_ROLE), which also opens the MGR account."""
+    if (run / "gpu" / "pool.json").exists():
+        print("GPU pool: already set up (gpu status)")
+        return
+    total, seed = config_minutes(run, "GPU pool"), config_minutes(run, "seed grant")
+    env = {k: v for k, v in os.environ.items() if k not in ("AUTOINFER_ROLE", "AUTOINFER_TEAM", "AUTOINFER_AGENT")}
+    env["AUTOINFER_RUN"] = str(run)
+    r = subprocess.run([str(TOOLS / "gpu"), "pool", "init", f"{total:g}", "--seed", f"{seed:g}"],
+                       env=env, capture_output=True, text=True)
+    if r.returncode != 0:
+        die(f"gpu pool init failed: {r.stderr.strip()}")
+    print(f"GPU pool: {r.stdout.strip()}")
+
+
+def record_flavor_commit(run, flavor):
+    """The autoinfer commit the run started from (+ uncommitted changes in the flavor), so every
+    result traces back to the exact flavor code even after the flavor is edited."""
+    g = lambda *c: subprocess.run(["git", "-C", str(ROOT), *c], capture_output=True, text=True).stdout.strip()
+    dirty = g("status", "--porcelain", "--", str(flavor.relative_to(ROOT)) + "/agents",
+              str(flavor.relative_to(ROOT)) + "/tools", str(flavor.relative_to(ROOT)) + "/design")
+    (run / "flavor_commit.txt").write_text(f"{g('rev-parse', 'HEAD')}\n" +
+                                           (f"uncommitted flavor changes:\n{dirty}\n" if dirty else ""))
+
+
+def main():
+    p = argparse.ArgumentParser(prog="new_run", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("run")
+    p.add_argument("--task", help="task name in tasks/ (required for a new run)")
+    p.add_argument("--no-start", action="store_true", help="only create the folder")
+    p.add_argument("--start", action="store_true", help="start the manager on a run created with --no-start")
+    p.add_argument("--framework", default=str(FRAMEWORK_DEFAULT),
+                   help="the framework's source folder (documents 01-07 are copied into the run)")
+    p.add_argument("--message-file", help="with --start: the manager's first message instead of the default "
+                   "(e.g. for a run resumed from another run's state)")
+    a = p.parse_args()
+
+    flavor = FLAVOR
+    run = flavor / "runs" / a.run
+    if a.start:
+        if not run.is_dir():
+            die(f"no run {run}")
+        if (run / "manager_session.json").exists():
+            die(f"{run.name} already has a manager; talk to it (CLAUDE.md, 'Pausing and resuming a run')")
+        t = run / "task"
+        task_name = t.resolve().name if t.is_symlink() else json.loads((run / "task_source.json").read_text())["task"]
+    else:
+        if not a.task:
+            die("--task is required for a new run")
+        task_name = a.task
+        task = ROOT / "tasks" / a.task
+        if not task.is_dir():
+            die(f"no task {task}")
+        if run.exists():
+            die(f"{run} already exists")
+        run.mkdir(parents=True)
+        copy_task(run, task)
+        for d in ("agents", "bank", "reports", "local_kb", "gpu", "workspaces", "teams", "proposals"):
+            (run / d).mkdir()
+        shutil.copy(flavor / "config_default.md", run / "config.md")
+        shutil.copy(flavor / "design" / "funding_policy.md", run / "funding_policy.md")
+        for f in ("map.md", "journal.md", "shared_kb.md", "champion.md", "focus.md", "announcements.md"):
+            (run / f).write_text("")
+        seed_base(run, task)
+        copy_framework(run, Path(a.framework).resolve())
+        env = dict(os.environ, AUTOINFER_RUN=str(run))
+        r = subprocess.run([str(TOOLS / "ws"), "setup-task"], env=env, capture_output=True,
+                           text=True)
+        print(r.stdout.strip())
+        if r.returncode != 0:
+            die(f"ws setup-task failed:\n{r.stderr}")
+        print(f"created run folder {run}")
+        if a.no_start:
+            print(f"edit {run / 'config.md'} if needed, then: {TOOLS / 'new_run'} {a.run} --start")
+            return
+    init_pool(run)
+    write_settings(run, flavor)
+    record_flavor_commit(run, flavor)
+    first = Path(a.message_file).read_text() if a.message_file else (f"You are the manager of a new run. Run folder: {run} (AUTOINFER_RUN is set). "
+             f"Task: {task_name}. The GPU pool is set up (`gpu status`). Start with `agent register manager "
+             f"--role manager`, then begin initialize(): greet the human and start defining the task "
+             f"with them.")
+
+    env = dict(os.environ, AUTOINFER_RUN=str(run), AUTOINFER_AGENT="manager",
+               AUTOINFER_ROLE="manager", PATH=f"{TOOLS}:{os.environ.get('PATH', '')}")
+    env.pop("AUTOINFER_TEAM", None)
+    import importlib.machinery
+    agent_mod = importlib.machinery.SourceFileLoader("agent_tool", str(TOOLS / "agent")).load_module()
+    mgr_model, mgr_effort = agent_mod.role_model("manager", run)
+    print(f"manager: {mgr_model} / {mgr_effort} (config.md)")
+    prompt = "\n\n".join((flavor / "agents" / f).read_text() for f in ("common.md", "manager.md"))
+    prompt += (f"\n\n# Who you are in this run\nYou are `manager` (role manager) of run `{a.run}`; "
+               f"run folder {run}; task {task_name}.\n")
+    sid = str(uuid.uuid4())                  # recorded: resources.py, and recovery of a dead session
+    (run / "manager_session.json").write_text(json.dumps(
+        {"session_id": sid, "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}) + "\n")
+    r = subprocess.run(["claude", "--bg", "--name", f"{run.name}-manager", "--session-id", sid, "--permission-mode", "auto",
+                        "--model", mgr_model, "--effort", mgr_effort,
+                        "--autocompact", os.environ.get("AUTOINFER_AUTOCOMPACT", "400000"),
+                        "--settings", str(run / "manager_settings.json"),
+                        "--append-system-prompt", prompt, first],
+                       cwd=run, env=env, capture_output=True, text=True)   # its own run folder:
+    # Claude's per-session folders are named after the cwd, and confine() denies all but the run's
+    print(r.stdout.strip() or r.stderr.strip())
+    # `claude --bg` assigns its own session id (it ignores --session-id): record the one it prints,
+    # a prefix of the transcript's file name (resources.py matches by prefix)
+    m = re.search(r"backgrounded\s*\S\s*([0-9a-f]{8})", r.stdout)
+    if m:
+        (run / "manager_session.json").write_text(json.dumps(
+            {"session_id": m.group(1), "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}) + "\n")
+    if r.returncode != 0:
+        die("could not start the manager (see above). Folder is ready; fix and start it by hand.")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,883 @@
+#!/usr/bin/env python3
+"""gpu: the run's GPU job queue (v2: a fixed pool and per-team grants). Every GPU job of an
+AutoInfer run goes through it.
+
+A job is one command that gets the GPUs exclusively until it exits or hits its timeout.
+Jobs run one at a time, first come first served, and are charged (actual wall minutes) to the
+submitting agent's account. Spec: flavors/v3_framework/design/infra/gpu_queue.md.
+
+Usage:
+  gpu run --timeout MIN [--label L] -- <command...>   # blocks until the job ends (run it in the
+                                                      # background and get notified on exit)
+  gpu status [--json]
+  gpu history <team> [--json]
+  gpu wait <job id>
+  gpu cancel <job id>
+Manager:  gpu team open <team> --type exploit-long|exploit|external|moonshot|research|research-handoff|sweep
+          gpu grant <team> <minutes> --kind start|extension|last-chance --note "..."
+          gpu team close <team> --note "..."
+Human:    gpu pool init <minutes> --seed <minutes>;  gpu pool add <minutes> --note "..."
+
+Account charged: AUTOINFER_TEAM; or MGR for the manager (AUTOINFER_ROLE=manager, no team); no team
+and no role (a human shell) = recorded, not charged. Any other agent without a team is refused.
+
+Exit codes of `gpu run`: the job's own exit code; 124 = killed at its timeout; 76 = not admitted
+(budget exhausted, team closed, or no account; job not run); 2 = bad arguments; 75 = GPUs in use by
+someone outside this run (job not run: report this to the manager); 130 = cancelled.
+`gpu <command> --help` explains each command, with examples.
+"""
+import argparse, fcntl, json, os, re, signal, subprocess, sys, time
+from datetime import datetime, timezone
+from pathlib import Path
+
+EXIT_BUDGET, EXIT_FOREIGN, EXIT_TIMEOUT = 76, 75, 124   # (2 = usage error, from argparse)
+FOREIGN_MEM_MIB = 1024        # GPU memory used with no process of ours = someone else is there
+POLL = 2.0
+
+
+def die(msg, code=1):
+    print(f"gpu: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def now_iso(t=None):
+    return datetime.fromtimestamp(t or time.time(), timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def gdir():
+    r = os.environ.get("AUTOINFER_RUN")
+    if not r:
+        die("AUTOINFER_RUN is not set (the run folder)")
+    d = Path(r).resolve() / "gpu"
+    for sub in ("queue", "jobs"):
+        (d / sub).mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().split(")")[-1].split()[0] != "Z"
+    except (ProcessLookupError, FileNotFoundError):
+        return False
+    except PermissionError:
+        return True
+
+
+def read_json(p, default=None):
+    try:
+        return json.loads(Path(p).read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def write_json(p, obj):
+    p = Path(p)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2) + "\n")
+    tmp.replace(p)
+
+
+# ---------------------------------------------------------------- pool, accounts and the ledger
+MGR = "MGR"
+LOW_BALANCE_FRACTION = 0.25
+
+
+def jsonl(p):
+    out = []
+    if p.exists():
+        for line in p.read_text().splitlines():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+    return out
+
+
+def ledger():
+    return jsonl(gdir() / "ledger.jsonl")
+
+
+def events():
+    return jsonl(gdir() / "accounts.jsonl")
+
+
+def pool():
+    p = gdir() / "pool.json"
+    if not p.exists():
+        return None
+    d = read_json(p)
+    if not isinstance(d, dict) or "total" not in d or "seed" not in d:
+        die(f"{p} exists but can't be read; fix it by hand (the pool is never re-created)")
+    return d
+
+
+def append_event(ev):
+    """Caller holds accounts.lock."""
+    ev = {"t": now_iso(), **ev}
+    with open(gdir() / "accounts.jsonl", "a") as f:
+        f.write(json.dumps(ev) + "\n")
+    return ev
+
+
+class AccountsLock:
+    def __enter__(self):
+        self.f = open(gdir() / "accounts.lock", "w")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        self.f.close()
+
+
+def accounts(evs=None, led=None):
+    """{team: {"type", "open", "granted", "used", "balance", "last_grant", "by_agent"}}"""
+    evs = events() if evs is None else evs
+    led = ledger() if led is None else led
+    acc = {}
+    for e in evs:
+        ev = e.get("event")
+        if ev == "open" and e.get("team") is not None and e.get("team") not in acc:
+            acc[e["team"]] = {"type": e["type"], "open": True, "granted": 0.0, "used": 0.0,
+                              "last_grant": None, "by_agent": {}}
+        elif ev == "grant" and e.get("team") in acc and isinstance(e.get("minutes"), (int, float)):
+            acc[e["team"]]["granted"] += e["minutes"]
+            acc[e["team"]]["last_grant"] = e["minutes"]
+        elif ev == "close" and e.get("team") in acc:
+            acc[e["team"]]["open"] = False
+        elif ev == "reopen" and e.get("team") in acc:
+            acc[e["team"]]["open"] = True
+    for e in led:
+        a = acc.get(e.get("team"))
+        if a is not None and e.get("charged") and isinstance(e.get("gpu_minutes"), (int, float)):
+            a["used"] += e["gpu_minutes"]
+            a["by_agent"][e["agent"]] = a["by_agent"].get(e["agent"], 0.0) + e["gpu_minutes"]
+    for a in acc.values():
+        a["balance"] = a["granted"] - a["used"]
+    return acc
+
+
+def pool_state(acc=None, evs=None):
+    """total, granted (to open accounts), spent (all charged jobs), free."""
+    p = pool()
+    if not p:
+        return None
+    evs = events() if evs is None else evs
+    acc = accounts(evs) if acc is None else acc
+    total = p["total"] + sum(e.get("minutes", 0) for e in evs if e.get("event") == "pool_add")
+    granted_open = sum(a["granted"] for a in acc.values() if a["open"])
+    used_closed = sum(a["used"] for a in acc.values() if not a["open"])
+    running = read_json(gdir() / "running.json")         # a closed team's job still finishing:
+    if running and pid_alive(running["pid"]) and running.get("team") in acc \
+            and not acc[running["team"]]["open"]:          # hold back its timeout until it is charged
+        used_closed += running["timeout_min"]
+    return {"total": total, "seed": p["seed"], "granted_open": granted_open,
+            "spent": sum(a["used"] for a in acc.values()),
+            "free": total - granted_open - used_closed}
+
+
+def job_account():
+    """The account this process's jobs are charged to; None = uncharged (human shell)."""
+    team = os.environ.get("AUTOINFER_TEAM") or None
+    role = os.environ.get("AUTOINFER_ROLE") or None
+    if team:
+        return team
+    if role == "manager":
+        return MGR
+    if role is None:
+        return None
+    die(f"no GPU account: agent with role '{role}' has no AUTOINFER_TEAM (ask the manager)", EXIT_BUDGET)
+
+
+def admission_error(team, timeout):
+    if team is None:
+        return None
+    a = accounts().get(team)
+    if a is None:
+        return f"no account: '{team}' has no GPU account (the manager opens accounts with `gpu team open`)"
+    if not a["open"]:
+        return f"team closed: team {team}'s account takes no new jobs"
+    if a["balance"] < timeout:
+        return (f"budget exhausted: {a['balance']:.1f} GPU-min left for team {team}, the job asks for "
+                f"up to {timeout:g} (lower --timeout, do GPU-free work, or request a resync from the "
+                f"manager)")
+    return None
+
+
+def check_admission(team, timeout):
+    err = admission_error(team, timeout)
+    if err:
+        die(err, EXIT_BUDGET)
+
+
+def balance_line(team):
+    a = accounts().get(team) if team else None
+    if a is None:
+        return None
+    if not a["open"]:
+        return f"team {team} ({a['type']}) is closed"
+    return f"team {team} ({a['type']}): {a['balance']:.1f} GPU-min left of {a['granted']:g} granted"
+
+
+def require_manager():
+    role = os.environ.get("AUTOINFER_ROLE") or None
+    if role not in (None, "manager"):
+        die(f"only the manager may do this (your role: {role})")
+
+
+def require_human():
+    role = os.environ.get("AUTOINFER_ROLE") or None
+    if role is not None:
+        die(f"only the human may do this (your role: {role})")
+
+
+def gpu_state():
+    """[(gpu index, memory used MiB)], [(pid, gpu uuid, used MiB)]"""
+    try:
+        mem = subprocess.run(["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=30).stdout
+        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,gpu_uuid,used_memory",
+                               "--format=csv,noheader,nounits"], capture_output=True, text=True,
+                              timeout=30).stdout
+    except (OSError, subprocess.TimeoutExpired) as e:
+        die(f"nvidia-smi failed: {e}")
+    gpus = [tuple(int(x) for x in l.split(",")) for l in mem.strip().splitlines() if l.strip()]
+    procs = []
+    for l in apps.strip().splitlines():
+        parts = [x.strip() for x in l.split(",")]
+        if len(parts) == 3 and parts[0].isdigit():
+            procs.append((int(parts[0]), parts[1], int(parts[2]) if parts[2].isdigit() else 0))
+    return gpus, procs
+
+
+def proc_owner(pid):
+    try:
+        return os.stat(f"/proc/{pid}").st_uid
+    except OSError:
+        return None
+
+
+def proc_session(pid):
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return int(f.read().split(")")[-1].split()[3])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def foreign_usage():
+    """Anything on the GPUs while no job of ours runs = someone else (other users, or other work
+    of the same user outside this run). Returns a description, or None if the GPUs are free."""
+    gpus, procs = gpu_state()
+    if procs:
+        desc = []
+        for pid, uuid, mib in procs:
+            uid = proc_owner(pid)
+            who = "unknown user" if uid is None else ("this user, outside this run" if uid == os.getuid()
+                                                     else f"uid {uid}")
+            desc.append(f"pid {pid} ({who}, {mib} MiB)")
+        return "; ".join(desc)
+    busy = [f"GPU {i}: {m} MiB used" for i, m in gpus if m > FOREIGN_MEM_MIB]
+    return "; ".join(busy) + " (no visible process)" if busy else None
+
+
+# ---------------------------------------------------------------- the queue
+def next_job_id(g):
+    with open(g / "seq.lock", "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        seq = g / "seq"
+        n = int(seq.read_text()) + 1 if seq.exists() else 1
+        seq.write_text(f"{n}\n")
+    return n
+
+
+def live_tickets(g):
+    out = []
+    for t in (g / "queue").glob("*.json"):
+        info = read_json(t)
+        if info and pid_alive(info["pid"]):
+            out.append((info["id"], t, info))
+        else:
+            t.unlink(missing_ok=True)       # its `gpu run` died: drop the stale ticket
+    return sorted(out)
+
+
+class Stop(Exception):
+    pass
+
+
+SIGS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def on_signal(signum, frame):
+    raise Stop(signal.Signals(signum).name)
+
+
+def block_signals():
+    """Delay SIGTERM/SIGINT/SIGHUP (delivered when unblocked) so bookkeeping can't be cut in half."""
+    signal.pthread_sigmask(signal.SIG_BLOCK, SIGS)
+
+
+def unblock_signals():
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGS)
+
+
+def group_members(pgid):
+    """Live (non-zombie) processes in process group pgid."""
+    out = []
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/stat") as f:
+                fields = f.read().split(")")[-1].split()
+            if int(fields[2]) == pgid and fields[0] != "Z":
+                out.append(int(d))
+        except (OSError, ValueError, IndexError):
+            pass
+    return out
+
+
+def kill_job(proc, grace=15):
+    """Kill the job's whole process group: SIGTERM, then SIGKILL after `grace` seconds."""
+    pgid = proc.pid
+    for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 10)):
+        proc.poll()                                     # reap the leader if it already exited
+        if not group_members(pgid):
+            return
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            return
+        t0 = time.time()
+        while time.time() - t0 < wait:
+            proc.poll()
+            if not group_members(pgid):
+                return
+            time.sleep(0.2)
+
+
+def cleanup_gpu(sid, log):
+    """Kill GPU processes left behind by the job (same session), then wait for memory to free."""
+    _, procs = gpu_state()
+    for pid, _, _ in procs:
+        if proc_session(pid) == sid:
+            log.write(f"[gpu] killing leftover GPU process {pid}\n")
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    t0 = time.time()
+    while time.time() - t0 < 60:
+        _, procs = gpu_state()
+        if not any(proc_session(p) == sid for p, _, _ in procs):
+            return
+        time.sleep(1)
+
+
+def cmd_run(a):
+    if not a.command:
+        die("no command given (usage: gpu run --timeout MIN -- <command...>)")
+    g = gdir()
+    team = job_account()
+    agent = os.environ.get("AUTOINFER_AGENT", "human")
+    check_admission(team, a.timeout)                    # fail fast
+
+    jid = next_job_id(g)
+    jdir = g / "jobs" / str(jid)
+    jdir.mkdir(parents=True)
+    info = {"id": jid, "pid": os.getpid(), "team": team, "agent": agent, "label": a.label,
+            "timeout_min": a.timeout, "command": a.command, "cwd": os.getcwd(),
+            "submitted": now_iso()}
+    for sg in SIGS:
+        signal.signal(sg, on_signal)
+    block_signals()
+    write_json(jdir / "job.json", info)
+    ticket = g / "queue" / f"{jid:08d}.json"
+    write_json(ticket, info)
+
+    lockf = open(g / "lock", "w")
+    log_path = jdir / "output.log"
+    proc = None
+    proc_started = False
+    try:
+        unblock_signals()                               # a signal that came meanwhile lands here
+        # Wait for our turn: the oldest live ticket, and the lock is free.
+        announced = False
+        while True:
+            tickets = live_tickets(g)
+            if tickets and tickets[0][0] == jid:
+                try:
+                    fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    pass
+            if not announced:
+                ahead = [t for t in tickets if t[0] < jid]
+                print(f"[gpu] job {jid} queued ({len(ahead)} ahead)", flush=True)
+                announced = True
+            time.sleep(POLL)
+
+        err = admission_error(team, a.timeout)          # exact now: only one job runs at a time
+        if err:
+            info.update({"state": "refused", "reason": err, "ended": now_iso()})
+            write_json(jdir / "job.json", info)
+            die(err, EXIT_BUDGET)
+        try:
+            foreign = foreign_usage()
+        except SystemExit:
+            info.update({"state": "refused", "reason": "nvidia-smi failed", "ended": now_iso()})
+            write_json(jdir / "job.json", info)
+            raise
+        if foreign:
+            msg = (f"GPUs in use by someone outside this run: {foreign}. The job was NOT run. "
+                   f"Report this to the manager (other people may be using these GPUs; we must "
+                   f"not compete).")
+            info.update({"state": "refused", "reason": foreign, "ended": now_iso()})
+            write_json(jdir / "job.json", info)
+            die(msg, EXIT_FOREIGN)
+
+        start = time.time()
+        info.update({"state": "running", "started": now_iso(start)})
+        write_json(jdir / "job.json", info)
+        write_json(g / "running.json", info)
+        print(f"[gpu] job {jid} started (timeout {a.timeout:g} min); output: {log_path}", flush=True)
+        bl = balance_line(team)
+        if bl:
+            print(f"[gpu] {bl}", flush=True)
+        print("[gpu] reminder: each inference server loads the workspace's code when it starts, not when "
+              "you submitted. Don't edit a workspace this job uses; to keep working meanwhile, copy it: "
+              "ws create <new name> --from-ws <workspace>", flush=True)
+        env = dict(os.environ, AUTOINFER_GPU_JOB=str(jid))
+        with open(log_path, "w") as log:
+            block_signals()
+            proc_started = True
+            proc = subprocess.Popen(a.command, stdout=log, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, env=env, start_new_session=True,
+                                    preexec_fn=unblock_signals)
+            unblock_signals()
+            timed_out = False
+            try:
+                rc = proc.wait(timeout=a.timeout * 60)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                log.write(f"\n[gpu] timeout after {a.timeout:g} min: killing the job\n")
+                log.flush()
+                kill_job(proc)
+                rc = EXIT_TIMEOUT
+            kill_job(proc, grace=5)                 # anything the job left running
+            cleanup_gpu(proc.pid, log)
+        end = time.time()
+        block_signals()
+        finish(g, info, jdir, start, end, rc, timed_out, team, agent, a.label, timeout=a.timeout)
+        proc = None
+        unblock_signals()
+        tail = log_path.read_text(errors="replace").splitlines()[-25:]
+        print("\n".join(tail))
+        print(f"[gpu] job {jid} {'TIMED OUT' if timed_out else 'exited'} with code {rc} after "
+              f"{(end - start) / 60:.1f} min\n[gpu] full output: {log_path}", flush=True)
+        low_balance_notice(team)
+        sys.exit(rc)
+    except Stop as e:
+        block_signals()                                 # a second signal must not cut this short
+        reason = ""
+        try:
+            reason = (jdir / "cancel_reason").read_text().strip()
+        except OSError:
+            pass
+        if proc is not None:                            # we were killed/cancelled mid-job: charge it
+            with open(log_path, "a") as log:
+                log.write(f"\n[gpu] cancelled ({reason or e}): killing the job\n")
+                kill_job(proc, grace=5)
+                cleanup_gpu(proc.pid, log)
+            finish(g, info, jdir, start, time.time(), 130, False, team, agent, a.label, cancelled=True,
+                   timeout=a.timeout)
+        else:
+            info.update({"state": "cancelled", "ended": now_iso()})
+            write_json(jdir / "job.json", info)
+        print(f"[gpu] job {jid} cancelled" + (f": {reason}" if reason else ""), file=sys.stderr)
+        if proc_started:
+            low_balance_notice(team)
+        sys.exit(130)
+    finally:
+        ticket.unlink(missing_ok=True)
+        r = read_json(g / "running.json")
+        if r and r.get("id") == jid:
+            (g / "running.json").unlink(missing_ok=True)
+        lockf.close()
+
+
+def finish(g, info, jdir, start, end, rc, timed_out, team, agent, label, cancelled=False, timeout=None):
+    wall = (end - start) / 60
+    charged_min = min(wall, timeout) if timeout else wall   # kill grace + cleanup are never charged
+    entry = {"job": info["id"], "team": team, "agent": agent,
+             "label": label, "start": now_iso(start), "end": now_iso(end),
+             "gpu_minutes": round(charged_min, 3), "wall_minutes": round(wall, 3), "exit_code": rc,
+             "timed_out": timed_out, "cancelled": cancelled, "charged": team is not None}
+    with open(g / "ledger.jsonl", "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.write(json.dumps(entry) + "\n")
+    info.update({"state": "cancelled" if cancelled else ("timed out" if timed_out else "done"),
+                 "ended": now_iso(end), "exit_code": rc, "gpu_minutes": entry["gpu_minutes"]})
+    write_json(jdir / "job.json", info)
+
+
+def low_balance_notice(team):
+    bl = balance_line(team)
+    if not bl:
+        return
+    print(f"[gpu] {bl}", flush=True)
+    a = accounts()[team]
+    if team != MGR and a["open"] and a["last_grant"] and a["balance"] < LOW_BALANCE_FRACTION * a["last_grant"]:
+        print("[gpu] low balance: consider requesting a resync from the manager", flush=True)
+
+
+def cmd_status(a):
+    g = gdir()
+    running = read_json(g / "running.json")
+    if running and not pid_alive(running["pid"]):
+        running = None
+    waiting = [t[2] for t in live_tickets(g) if not running or t[0] != running["id"]]
+    led = ledger()
+    evs = events()
+    acc = accounts(evs, led)
+    ps = pool_state(acc, evs)
+    uncharged = {}
+    for e in led:
+        if not e.get("charged"):
+            uncharged[e["agent"]] = uncharged.get(e["agent"], 0.0) + e["gpu_minutes"]
+    if a.json:
+        print(json.dumps({"running": running, "waiting": waiting, "pool": ps,
+                          "accounts": acc, "uncharged": uncharged}, indent=2))
+        return
+    if running:
+        el = (time.time() - datetime.fromisoformat(running["started"]).timestamp()) / 60
+        print(f"RUNNING  job {running['id']}  {running['agent']} ({running['team'] or 'uncharged'})"
+              f"  {running.get('label') or ''}  {el:.1f} / {running['timeout_min']:g} min")
+    else:
+        print("RUNNING  none")
+    print(f"WAITING  {len(waiting)}" + "".join(
+        f"\n  job {w['id']}  {w['agent']} ({w['team'] or 'uncharged'})  {w.get('label') or ''}"
+        f"  timeout {w['timeout_min']:g} min" for w in waiting))
+    if ps is None:
+        print("\nPOOL  - (not set up: gpu pool init)")
+    else:
+        print(f"\nPOOL  total {ps['total']:g}   granted to open accounts {ps['granted_open']:.1f}   "
+              f"spent {ps['spent']:.1f}   free {ps['free']:.1f}   (GPU-minutes)")
+    print("\nACCOUNTS  GPU-minutes")
+    for t, x in acc.items():
+        print(f"  {t:<8} {x['type']:<8} {'open' if x['open'] else 'closed':<7} granted {x['granted']:7.1f}"
+              f"  used {x['used']:7.1f}  balance {x['balance']:7.1f}" +
+              ("   " + ", ".join(f"{ag} {m:.1f}" for ag, m in sorted(x["by_agent"].items()))
+               if x["by_agent"] else ""))
+    if uncharged:
+        print("  (uncharged) " + ", ".join(f"{ag} {m:.1f}" for ag, m in sorted(uncharged.items())))
+
+
+def cmd_history(a):
+    evs = events()
+    if not any(e.get("team") == a.team and e.get("event") == "open" for e in evs):
+        die(f"no account '{a.team}' (accounts are in `gpu status`)")
+    rows = [dict(e, kind_="account") for e in evs if e.get("team") == a.team and e.get("t")
+            and e.get("event") in ("open", "grant", "close")]
+    rows += [dict(e, t=e["end"], kind_="job") for e in ledger()
+             if e.get("team") == a.team and e.get("charged")]
+    rows.sort(key=lambda r: datetime.fromisoformat(r["t"]).timestamp())
+    bal, out = 0.0, []
+    for r in rows:
+        if r["kind_"] == "job":
+            bal -= r["gpu_minutes"]
+            desc = (f"job {r['job']}  {r['agent']}  {r.get('label') or ''}  {r['gpu_minutes']:.1f} min"
+                    f"  exit {r['exit_code']}" + ("  (timed out)" if r.get("timed_out") else "") +
+                    ("  (cancelled)" if r.get("cancelled") else ""))
+        elif r["event"] == "grant":
+            bal += r["minutes"]
+            desc = f"grant {r['kind']} +{r['minutes']:g}  by {r['by']}" + (f": {r['note']}" if r.get("note") else "")
+        elif r["event"] == "open":
+            desc = f"open ({r['type']}) by {r['by']}"
+        else:
+            desc = f"close by {r['by']}" + (f": {r['note']}" if r.get("note") else "")
+        fields = {k: r[k] for k in ("event", "type", "kind", "minutes", "by", "note", "job", "agent",
+                                    "label", "gpu_minutes", "exit_code", "timed_out", "cancelled")
+                  if k in r}
+        if r["kind_"] == "job":
+            fields["event"] = "job"
+        out.append({"t": r["t"], **fields, "what": desc, "balance": round(bal, 3)})
+    if a.json:
+        print(json.dumps(out, indent=2))
+        return
+    for o in out:
+        print(f"{o['t']}  balance {o['balance']:7.1f}  {o['what']}")
+
+
+def cmd_pool(a):
+    require_human()
+    g = gdir()
+    with AccountsLock():
+        p = pool()
+        if a.action == "init":
+            if p:
+                die(f"a pool already exists (total {p['total']:g}); use `gpu pool add`")
+            if events():
+                die("accounts.jsonl already has events: the pool was set up before; fix pool.json by hand")
+            if a.minutes <= 0 or a.seed is None or a.seed < 0 or a.seed > a.minutes:
+                die("give a positive pool size and --seed <minutes> (0 <= seed <= pool)")
+            write_json(g / "pool.json", {"total": a.minutes, "seed": a.seed, "created": now_iso()})
+            append_event({"event": "open", "team": MGR, "type": "manager", "by": who()})
+            print(f"pool: {a.minutes:g} GPU-min, seed {a.seed:g} per new team; account {MGR} opened")
+        else:
+            if not p:
+                die("no pool yet: gpu pool init <minutes> --seed <minutes>")
+            if a.minutes <= 0:
+                die("minutes must be > 0")
+            append_event({"event": "pool_add", "minutes": a.minutes, "by": who(), "note": a.note})
+            print(f"pool: +{a.minutes:g} GPU-min; free now {pool_state()['free']:.1f}")
+
+
+def who():
+    return os.environ.get("AUTOINFER_AGENT") or "human"
+
+
+def cmd_team(a):
+    require_manager()
+    with AccountsLock():
+        evs = events()
+        if a.action == "open":
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", a.team) or a.team == MGR:
+                die(f"bad team id '{a.team}' (letters, digits, - and _; not {MGR})")
+            p = pool()
+            if not p:
+                die("no pool yet (the human sets it up with `gpu pool init`)")
+            if any(e.get("team") == a.team and e.get("event") == "open" for e in evs):
+                die(f"team id {a.team} was already used; a new team needs a new id")
+            ps = pool_state(evs=evs)
+            if ps["free"] < p["seed"]:
+                die(f"the pool can't cover the seed: {ps['free']:.1f} GPU-min free, seed {p['seed']:g}")
+            append_event({"event": "open", "team": a.team, "type": a.type, "by": who()})
+            if p["seed"] > 0:
+                append_event({"event": "grant", "team": a.team, "kind": "seed", "minutes": p["seed"],
+                              "by": who(), "note": "automatic seed"})
+            print(f"opened {a.team} ({a.type}) with a {p['seed']:g} GPU-min seed; "
+                  f"pool free {pool_state()['free']:.1f}")
+        elif a.action == "close":
+            acc = accounts(evs)
+            if a.team not in acc:
+                die(f"no account '{a.team}'")
+            if not acc[a.team]["open"]:
+                die(f"team {a.team} is already closed")
+            if a.team == MGR:
+                die(f"the {MGR} account can't be closed")
+            append_event({"event": "close", "team": a.team, "by": who(), "note": a.note})
+        elif a.action == "reopen":
+            acc = accounts(evs)
+            if a.team not in acc:
+                die(f"no account '{a.team}'")
+            if acc[a.team]["open"]:
+                die(f"team {a.team} is already open")
+            bal = max(acc[a.team]["balance"], 0.0)
+            if pool_state(evs=evs)["free"] < bal:
+                die(f"the pool can't cover {a.team}'s unspent {bal:.1f} GPU-min")
+            append_event({"event": "reopen", "team": a.team, "by": who(), "note": a.note})
+            print(f"reopened {a.team} ({acc[a.team]['type']}); its unspent {bal:.1f} GPU-min are its balance "
+                  f"again; pool free {pool_state()['free']:.1f}")
+    if a.action == "close":
+        pids = cancel_team_jobs(a.team)
+        t0 = time.time()
+        while any(pid_alive(p) for p in pids) and time.time() - t0 < 120:
+            time.sleep(0.5)                             # let cancelled jobs be charged
+        print(f"closed {a.team}; cancelled {len(pids)} job(s); its unspent minutes are back in the "
+              f"pool (pool free {pool_state()['free']:.1f})")
+
+
+def cancel_team_jobs(team):
+    g = gdir()
+    pids = []
+    for _, _, info in live_tickets(g):                  # waiting and running jobs keep a ticket
+        if info.get("team") == team:
+            try:
+                (g / "jobs" / str(info["id"]) / "cancel_reason").write_text(f"team {team} closed\n")
+                os.kill(info["pid"], signal.SIGTERM)
+                pids.append(info["pid"])
+            except (ProcessLookupError, OSError):
+                pass
+    return pids
+
+
+def cmd_grant(a):
+    require_manager()
+    if a.minutes <= 0:
+        die("minutes must be > 0")
+    with AccountsLock():
+        evs = events()
+        acc = accounts(evs)
+        if a.team not in acc:
+            die(f"no account '{a.team}' (open it first: gpu team open {a.team} --type ...)")
+        if not acc[a.team]["open"]:
+            die(f"team {a.team} is closed")
+        ps = pool_state(acc, evs)
+        if ps["free"] < a.minutes:
+            die(f"the pool can't cover {a.minutes:g} GPU-min: {ps['free']:.1f} free")
+        append_event({"event": "grant", "team": a.team, "kind": a.kind, "minutes": a.minutes,
+                      "by": who(), "note": a.note})
+    print(f"granted {a.minutes:g} GPU-min ({a.kind}) to {a.team}; {balance_line(a.team)}; "
+          f"pool free {pool_state()['free']:.1f}")
+
+
+def cmd_wait(a):
+    jdir = gdir() / "jobs" / str(a.job)
+    if not (jdir / "job.json").exists():
+        die(f"no job {a.job} (job ids are in `gpu status`)")
+    t0 = time.time()
+    while True:
+        info = read_json(jdir / "job.json") or {}
+        if info.get("state") in ("done", "timed out", "cancelled", "refused"):
+            break
+        if a.max and time.time() - t0 > a.max * 60:
+            print(f"[gpu] job {a.job} still {info.get('state', 'queued')} after {a.max:g} min of waiting")
+            sys.exit(3)
+        time.sleep(POLL)
+    log = jdir / "output.log"
+    if log.exists():
+        print("\n".join(log.read_text(errors="replace").splitlines()[-25:]))
+    rc = info.get("exit_code")
+    print(f"[gpu] job {a.job} {info['state']}" + (f" with code {rc}" if rc is not None else "") +
+          (f" after {info['gpu_minutes']:.1f} min" if info.get("gpu_minutes") is not None else "") +
+          f"\n[gpu] full output: {log}")
+    sys.exit(rc if isinstance(rc, int) else 1)
+
+
+def cmd_cancel(a):
+    g = gdir()
+    info = read_json(g / "jobs" / str(a.job) / "job.json")
+    if not info:
+        die(f"no job {a.job}")
+    if info.get("state") in ("done", "timed out", "cancelled", "refused"):
+        die(f"job {a.job} already finished ({info['state']})")
+    if not pid_alive(info["pid"]):
+        die(f"job {a.job} is not active")
+    os.kill(info["pid"], signal.SIGTERM)                # its `gpu run` kills the job and charges it
+    print(f"cancelling job {a.job}")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="gpu", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    R = argparse.RawDescriptionHelpFormatter
+    s = sub.add_parser("run", formatter_class=R, help="run one GPU job (blocks until it ends)",
+                       description="""Run one command with exclusive use of all GPUs of the machine.
+
+Waits in the queue (first come, first served), then runs the command and blocks until it exits
+or reaches --timeout. Run it as a BACKGROUND Bash command: you are notified when it ends, and
+waiting can take a while. Your team's account is charged the actual minutes (queue time is free).
+The job is admitted only if your team's balance covers --timeout, checked when you submit and
+again when it reaches the front of the queue. The balance is printed when the job starts and ends.
+
+One job = one script: start the server, wait until it is ready, run all your tests, stop it.
+Everything the job started is killed when it ends or times out (don't detach anything with
+setsid/nohup/daemons). The output is printed and also saved in $AUTOINFER_RUN/gpu/jobs/<id>/output.log.""",
+                       epilog="""exit codes:
+  <the command's own>   the job ran
+  124                   killed at --timeout
+  76                    not admitted: your team's balance can't cover --timeout, the team is
+                        closed, or there is no account. Not run (lower --timeout, do GPU-free
+                        work, or request a resync from the manager; `gpu status` shows balances)
+  75                    GPUs in use by someone outside this run: not run. Stop GPU work and tell
+                        the manager (other people use these GPUs; we don't compete)
+  130                   cancelled (gpu cancel)
+  2                     bad arguments: not run
+
+examples:
+  gpu run --timeout 15 --label smoke-T1-003 -- bash $AUTOINFER_RUN/workspaces/x/smoke.sh
+  gpu run --timeout 5 -- python microbench.py --m 16 --n 17408 --k 5120""")
+    s.add_argument("--timeout", type=float, required=True, metavar="MIN",
+                   help="minutes; the job is killed after this. Also what your balance must "
+                        "cover, so don't overestimate it wildly")
+    s.add_argument("--label", default=None, help="short name shown in `gpu status` and the ledger")
+    s.add_argument("command", nargs=argparse.REMAINDER,
+                   help="after `--`: the command to run (a script path is easiest)")
+    s.set_defaults(fn=cmd_run)
+    s = sub.add_parser("status", formatter_class=R, help="running job, queue, pool, accounts",
+                       description="Show the running job, the waiting jobs, the run's GPU pool, and every "
+                                   "account: type, open/closed, granted, used, balance (GPU-minutes).")
+    s.add_argument("--json", action="store_true", help="machine-readable output")
+    s.set_defaults(fn=cmd_status)
+    s = sub.add_parser("history", formatter_class=R, help="one account's grants and jobs over time",
+                       description="List an account's events in time order (open, grants with their notes, "
+                                   "jobs, close) with the running balance.",
+                       epilog="example: gpu history T2")
+    s.add_argument("team")
+    s.add_argument("--json", action="store_true", help="machine-readable output")
+    s.set_defaults(fn=cmd_history)
+    s = sub.add_parser("pool", formatter_class=R, help="(human) set up or raise the run's GPU pool",
+                       description="Set up the run's GPU pool (once) or raise its total. Human only.",
+                       epilog="""examples:
+  gpu pool init 1500 --seed 20      (also opens the manager's account, MGR)
+  gpu pool add 300 --note "extend the run\"""")
+    s.add_argument("action", choices=["init", "add"])
+    s.add_argument("minutes", type=float)
+    s.add_argument("--seed", type=float, default=None, help="init: GPU-min granted to every new team")
+    s.add_argument("--note", default=None, help="add: why (required)")
+    s.set_defaults(fn=cmd_pool)
+    s = sub.add_parser("team", formatter_class=R, help="(manager) open or close a team's account",
+                       description="""open: create a team's account and grant it the seed (team ids are never reused).
+close: close the account; the team's waiting and running jobs are cancelled (a running job is
+charged for its time) and its unspent minutes go back to the pool.""",
+                       epilog="""examples:
+  gpu team open T3 --type exploit-long
+  gpu team close T3 --note "second last-chance grant without progress\"""")
+    s.add_argument("action", choices=["open", "close", "reopen"])
+    s.add_argument("team")
+    s.add_argument("--type", choices=["exploit-long", "exploit", "external", "moonshot", "research", "research-handoff", "sweep"], default=None, help="open: the team type")
+    s.add_argument("--note", default=None, help="close: why (required)")
+    s.set_defaults(fn=cmd_team)
+    s = sub.add_parser("grant", formatter_class=R, help="(manager) grant GPU-minutes from the pool",
+                       description="Move GPU-minutes from the pool to an open account. Refused if the pool "
+                                   "can't cover it.",
+                       epilog="""examples:
+  gpu grant T3 80 --kind start --note "proposal: ..., forecast +18% (6% measured)"
+  gpu grant MGR 30 --kind extension --note "profile the new champion\"""")
+    s.add_argument("team")
+    s.add_argument("minutes", type=float)
+    s.add_argument("--kind", choices=["start", "extension", "last-chance"], required=True)
+    s.add_argument("--note", required=True, help="why (kept in the account's history)")
+    s.set_defaults(fn=cmd_grant)
+    s = sub.add_parser("wait", formatter_class=R, help="wait until a job ends; print its result",
+                       description="""Block until the job ends, then print the last lines of its output and exit with
+its exit code. For a job you can't wait on otherwise (a teammate's, or one whose `gpu run` you
+lost track of). For your own new jobs, just run `gpu run` itself as a background command: you are
+notified when it ends. Like `gpu run`, run `gpu wait` as a background command: foreground Bash
+commands are cut off after ~10 min.""",
+                       epilog="""exit codes: the job's own exit code; 3 = --max reached and the job is still going
+
+examples:
+  gpu wait 12
+  gpu wait 12 --max 5      (give up waiting after 5 minutes)""")
+    s.add_argument("job", type=int, help="job id, from `gpu status` or the [gpu] line `gpu run` printed")
+    s.add_argument("--max", type=float, default=None, metavar="MIN", help="stop waiting after this")
+    s.set_defaults(fn=cmd_wait)
+    s = sub.add_parser("cancel", formatter_class=R, help="cancel a waiting job or kill a running one",
+                       description="Cancel a waiting job, or kill a running one (it is charged for the "
+                                   "minutes it ran). The job's `gpu run` exits with 130.",
+                       epilog="example: gpu cancel 12      (job ids are in `gpu status`)")
+    s.add_argument("job", type=int, help="job id, from `gpu status`")
+    s.set_defaults(fn=cmd_cancel)
+    a = p.parse_args()
+    if a.cmd == "run" and a.command and a.command[0] == "--":
+        a.command = a.command[1:]
+    if a.cmd == "run" and not a.command:
+        p.error("gpu run: give the command after --, e.g. gpu run --timeout 10 -- bash job.sh")
+    if a.cmd == "run" and a.timeout <= 0:
+        die("--timeout must be > 0")
+    if a.cmd == "team" and a.action == "open" and not a.type:
+        p.error("gpu team open: give --type exploit-long|exploit|external|moonshot|research|research-handoff|sweep")
+    if a.cmd == "team" and a.action in ("close", "reopen") and not a.note:
+        p.error(f"gpu team {a.action}: give --note \"<why>\"")
+    if a.cmd == "pool" and a.action == "add" and not a.note:
+        p.error("gpu pool add: give --note \"<why>\"")
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

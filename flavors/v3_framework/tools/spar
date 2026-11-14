@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""spar: talk with a sparring partner, a principled researcher with no knowledge of this run whose
+goal is to help you think critically (agents/sparring.md). Synchronous: each `send` waits for the
+reply and prints it (usually under a few minutes; run it with a long Bash timeout).
+
+Usage:
+  spar guide                              # how to use the partner and how to start (read once)
+  spar start "<your opening message>"     # a fresh partner; prints its id and first reply
+  spar send <id> "<message>"              # prints the reply (also reopens an ended conversation)
+  spar send <id> -f <file>                # message from a file
+  spar end <id>                           # asks for its list of beliefs and their status, saves it
+  spar list                               # this run's conversations
+
+Every turn is saved as it happens to $AUTOINFER_RUN/sparring/<team>-<n>.md (the transcript).
+The partner can't read the run's files or the code (enforced for the claude backend; prompt-only
+for codex): explain your reasoning and give it the numbers yourself. Backend, model and effort from config.md:
+  - sparring: codex gpt-6.1-sol / high    (default; or: claude leader / medium, leader = the caller's model)
+Spec: flavors/v3_framework/design/sparring.md.
+"""
+import argparse, json, os, re, subprocess, sys, time, uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+TOOLS = Path(__file__).resolve().parent
+FLAVOR = TOOLS.parent
+ROOT = FLAVOR.parent.parent
+WORK = ROOT / ".cache" / "sparring_work"        # empty folders: nothing about the project nearby
+CODEX_HOME = ROOT / ".cache" / "codex"
+END_MSG = ("The leader is ending the conversation. Please give your final list: each belief we "
+           "discussed, and where it stands (supported by evidence / assumed / to be tested, with the "
+           "cheapest test). Be brief.")
+
+
+def die(msg):
+    print(f"spar: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def run_dir():
+    r = os.environ.get("AUTOINFER_RUN")
+    if not r:
+        die("AUTOINFER_RUN is not set")
+    return Path(r)
+
+
+def config(run):
+    backend, model, effort = "codex", None, "high"
+    cfg = run / "config.md"
+    text = cfg.read_text() if cfg.exists() else ""
+    m = re.search(r"^\s*-\s*sparring\s*:\s*(claude|codex)\s+([\w.\[\]-]+)\s*(?:/\s*(\w+))?", text, re.M)
+    if m:
+        backend, model, effort = m.group(1), m.group(2), m.group(3) or effort
+    if model == "leader":
+        model = None
+    if backend == "codex":
+        model = model or "gpt-6.1-sol"
+        if not (m and m.group(3)):
+            effort = "high"
+    if not model:   # default: the caller's own model (same model as the leader)
+        model = "claude-opus-5-5"
+        meta = run / "agents" / os.environ.get("AUTOINFER_AGENT", "-") / "meta.json"
+        if meta.exists():
+            model = json.loads(meta.read_text()).get("model") or model
+    return backend, model, effort
+
+
+def seen_file(run):
+    return run / "sparring" / ".guide_seen"
+
+
+def seen(run):
+    f = seen_file(run)
+    return f.exists() and os.environ.get("AUTOINFER_AGENT", "human") in f.read_text().split()
+
+
+def mark_seen(run):
+    conv_dir(run)
+    with open(seen_file(run), "a") as fh:
+        fh.write(os.environ.get("AUTOINFER_AGENT", "human") + "\n")
+
+
+def conv_dir(run):
+    d = run / "sparring"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def load(run, cid):
+    f = conv_dir(run) / f"{cid}.json"
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", cid) or not f.exists():
+        die(f"no conversation {cid} (see `spar list`)")
+    return json.loads(f.read_text())
+
+
+def save(run, c):
+    f = conv_dir(run) / f"{c['id']}.json"
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(c, indent=1))
+    tmp.replace(f)
+
+
+def log(run, c, who, text):
+    with open(conv_dir(run) / f"{c['id']}.md", "a") as fh:
+        fh.write(f"\n## {who} ({datetime.now(timezone.utc).strftime('%H:%M:%S')})\n\n{text.strip()}\n")
+
+
+def ask(c, text):
+    """One blocking turn with the backend; returns the reply text."""
+    work = Path(c["work"])
+    if c["backend"] == "claude":
+        cmd = ["claude", "-p", "--model", c["model"], "--effort", c["effort"], "--output-format", "json",
+               "--allowedTools", "WebSearch,WebFetch",
+               "--disallowedTools", "Bash,Read,Edit,Write,Glob,Grep,NotebookEdit,Agent,Task"]
+        if c.get("session"):
+            cmd += ["--resume", c["session"]]
+        else:
+            cmd += ["--session-id", c["sid_new"],
+                    "--append-system-prompt", (FLAVOR / "agents" / "sparring.md").read_text()]
+        env = {k: v for k, v in os.environ.items() if not k.startswith("AUTOINFER") and not k.startswith("CLAUDE_CODE_")}
+        r = subprocess.run(cmd + [text], cwd=work, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        try:
+            out = json.loads(r.stdout)
+        except ValueError:
+            die(f"backend error (rc {r.returncode}): {(r.stderr or r.stdout)[-800:]}")
+        c["session"] = out.get("session_id") or c.get("session") or c["sid_new"]
+        c["cost_usd"] = round(c.get("cost_usd", 0) + (out.get("total_cost_usd") or 0), 4)
+        if out.get("is_error"):
+            die(f"backend error: {str(out.get('result'))[:800]}")
+        return out.get("result", "")
+    # codex
+    env = dict({k: v for k, v in os.environ.items() if not k.startswith("AUTOINFER")}, CODEX_HOME=str(CODEX_HOME))
+    last = work / "last.md"
+    base = ["-m", c["model"], "-c", f'model_reasoning_effort="{c["effort"]}"', "--skip-git-repo-check",
+            "--json", "-o", str(last)]
+    if c.get("session"):
+        cmd = ["codex", "--search", "exec", "resume", c["session"]] + base + ["-"]
+    else:
+        text = ((FLAVOR / "agents" / "sparring.md").read_text() + "\n\nDon't run shell commands or read any "
+                "files: everything you know about the system comes from the leader's messages.\n\n---\n\n" + text)
+        cmd = ["codex", "--search", "exec", "-C", str(work), "-s", "read-only"] + base + ["-"]
+    r = subprocess.run(cmd, input=text, cwd=work, env=env, capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if e.get("type") == "thread.started":
+            c["session"] = e.get("thread_id")
+    if r.returncode != 0 or not last.exists():
+        die(f"backend error (rc {r.returncode}): {r.stderr[-800:]}")
+    return last.read_text()
+
+
+def main():
+    p = argparse.ArgumentParser(prog="spar", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("start"); s.add_argument("text", nargs="*"); s.add_argument("-f", "--file")
+    s = sub.add_parser("send"); s.add_argument("id"); s.add_argument("text", nargs="*"); s.add_argument("-f", "--file")
+    s = sub.add_parser("end"); s.add_argument("id")
+    sub.add_parser("list")
+    sub.add_parser("guide")
+    a = p.parse_args()
+    run = run_dir()
+    guide = (FLAVOR / "agents" / "sparring_guide.md").read_text()
+    if a.cmd == "guide":
+        mark_seen(run)
+        print(guide)
+        return
+    if a.cmd in ("start", "send") and not seen(run):
+        # first call by this agent: show how to use the partner before anything starts
+        mark_seen(run)
+        print(guide)
+        print("\n[spar: this is your first call, so nothing was sent. Re-run your command when ready; "
+              "consider shaping your opening message as described above.]")
+        return
+    if a.cmd == "list":
+        for f in sorted(conv_dir(run).glob("*.json")):
+            c = json.loads(f.read_text())
+            print(f"{c['id']:10} {c['state']:6} {c['turns']:3} turns  {c['backend']} {c['model']}  by {c['by']}  "
+                  f"-> sparring/{c['id']}.md")
+        return
+    text = Path(a.file).read_text() if getattr(a, "file", None) else " ".join(getattr(a, "text", []) or [])
+    if a.cmd == "start":
+        if not text.strip():
+            die("give your opening message")
+        team = os.environ.get("AUTOINFER_TEAM") or "human"
+        n = 1 + len(list(conv_dir(run).glob(f"{team}-*.json")))
+        backend, model, effort = config(run)
+        cid = f"{team}-{n}"
+        work = WORK / f"{run.name}-{cid}-{int(time.time())}"
+        work.mkdir(parents=True)
+        c = {"id": cid, "team": team, "by": os.environ.get("AUTOINFER_AGENT", "human"), "backend": backend,
+             "model": model, "effort": effort, "work": str(work), "sid_new": str(uuid.uuid4()), "session": None,
+             "state": "open", "turns": 0, "started": datetime.now(timezone.utc).isoformat()}
+        save(run, c)
+        (conv_dir(run) / f"{cid}.md").write_text(
+            f"# Sparring conversation {cid}\n\nby {c['by']} (team {team}); partner: {backend} {model} / {effort}; "
+            f"started {c['started']}\n")
+    else:
+        c = load(run, a.id)
+        if c["state"] != "open":
+            if a.cmd == "end":
+                die(f"conversation {c['id']} has already ended")
+            c["state"] = "open"                 # coming back to an ended conversation: same partner, same memory
+            c.setdefault("reopened", []).append(datetime.now(timezone.utc).isoformat())
+        if a.cmd == "end":
+            text = END_MSG
+        elif not text.strip():
+            die("empty message")
+    log(run, c, "leader" if a.cmd != "end" else "leader (end)", text)
+    reply = ask(c, text)
+    c["turns"] += 1
+    if a.cmd == "end":
+        c["state"] = "ended"
+        c["ended"] = datetime.now(timezone.utc).isoformat()
+    save(run, c)
+    log(run, c, "partner", reply)
+    print(f"[spar {c['id']}, turn {c['turns']}{', ended' if a.cmd == 'end' else ''}]\n")
+    print(reply)
+    if a.cmd == "start":
+        print(f"\n[reply with: spar send {c['id']} \"...\"; finish with: spar end {c['id']}]")
+
+
+if __name__ == "__main__":
+    main()

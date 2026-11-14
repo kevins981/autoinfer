@@ -1,0 +1,19 @@
+{
+  "id": 494,
+  "pid": 873088,
+  "team": "T58",
+  "agent": "leader-58.w1",
+  "label": "t58-steplog",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "agents/leader-58.w1/calib/steplog_job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-13T22:12:40+00:00",
+  "state": "done",
+  "started": "2026-11-13T22:17:24+00:00",
+  "ended": "2026-11-13T22:20:28+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.058
+}

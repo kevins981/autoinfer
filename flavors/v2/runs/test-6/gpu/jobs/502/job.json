@@ -1,0 +1,19 @@
+{
+  "id": 502,
+  "pid": 900064,
+  "team": "T57",
+  "agent": "leader-57.w1",
+  "label": null,
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-57.w1/task5/screen_mb.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-57.w1/task5",
+  "submitted": "2026-11-13T22:40:22+00:00",
+  "state": "done",
+  "started": "2026-11-13T22:53:26+00:00",
+  "ended": "2026-11-13T22:53:43+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.285
+}

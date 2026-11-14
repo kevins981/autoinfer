@@ -208,3 +208,24 @@ team T55 (research-handoff) closed after triage; write-up reports/T55-writeup.md
 ## 2026-11-13T20:18:12+00:00 (manager)
 team T54 (research-handoff) closed after triage; write-up reports/T54-writeup.md
 
+## 2026-11-13T21:32:47+00:00 (manager)
+teams T56 and T57 (sweep) opened with 100 GPU-min each (20 seed + 80 start); champion T52-005 1212.4
+
+## 2026-11-13T21:48:13+00:00 (manager)
+team T58 (sweep) opened with 100 GPU-min (20 seed + 80 start); champion T52-005 1212.4
+
+## 2026-11-13T22:45:19+00:00 (manager)
+team T56 (sweep) closed; write-up reports/T56-writeup.md, sweep reports/T56-sweep.md
+
+## 2026-11-13T22:48:05+00:00 (manager)
+new champion T57-004 from team T57: 1225.5 tok/s (+1.08% over T52-005, +1.68% same-job); how: bank/T57-004/
+
+## 2026-11-13T23:37:25+00:00 (manager)
+new champion T58-001 from team T58: 1229.6 tok/s (+0.33% over T57-004, +0.72% same-job); how: bank/T58-001/
+
+## 2026-11-13T23:58:41+00:00 (manager)
+team T57 (sweep) closed after champion T57-004; write-up reports/T57-writeup.md
+
+## 2026-11-13T23:59:43+00:00 (manager)
+team T58 (sweep) closed after champion T58-001; write-up reports/T58-writeup.md
+

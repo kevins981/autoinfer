@@ -1,9 +1,9 @@
 # CHAMPION (run test-6)
-record: T52-005 (team T52, leader-52) = T50-002 + mixed-step all-reduce scheduling, all Python (compiled files byte-identical to T50-002): (1) VLLM_T52_LINKPRI (link priority: chunk 1's DMA ARs wait for chunk 0's on the single D2H copy engine; joined split steps >=256 rows); (2) two-wave layer pipelining for steps >=768 rows (T30's wave code, ported; T52_WAVE=1, T30_WAVE_MIN=768); (3) T32's captured GDN prefill core (T32_GDN_CAP=1) so wave steps are not host-bound. Each flag "0" = off (flags off = T50-002 behaviour). Details: bank/T52-005/record.md.
-serve_args.txt: bank/T52-005/serve_args.txt (identical to T50-002's: k=3)
-official #1: 1212.4 tok/s at c=16 (trials 1210.1/1214.8, CV 0.3%); TTFT p50/p99 145/667 ms; TPOT p50/p99 11.8/26.6 ms; GSM8K 93.2%; MTP acceptance 2.66; 128K pass. bank/T52-005/official/1/results.json (the official eval runs the defaults, so it covers the flag-flip made after the ABBA)
-Evidence vs T50-002: both trials above both of T50-002's (1179.1/1183.5), +2.6% cross-job; same-job ABBA job 477 (400 prompts, A = flags off) all B > all A, +2.82% (B 1213.0/1220.0 vs A 1182.6/1183.8).
-Validity: same math up to fp reordering (row-independent GEMMs at a different M; GDN prefill split at 64-aligned positions with the fp32 state handed over; captured core bitwise vs eager; link priority is stream ordering only). FP8 scheme, precision, comm precision, sampling and spec-decode verification untouched; thresholds on step size only. Credit: T30 (waves), T32 (captured core).
-Promoted 2026-11-11 by the manager.
-History: BASE 631.4 -> ... -> T37-002 1142.2 -> T45-005 1173.4 -> T50-002 1181.3 -> T52-005 1212.4 (test-6).
-A performance reference, not a required starting point. Bar for a +5% payoff now 1273.0.
+record: T58-001 (team T58, leader-58) = T57-004 + a one-line default change: VLLM_HOSTAR_L2PF_MSG_MAX 1 MiB -> 2.7 MB, so mid-size host-staged ARs (mixed steps of 97-255 rows) prefetch the next GEMM's weights into L2 like decode ARs do (cache hints only; same mechanism as decode since T1-019; bitwise outputs; no memory change). gate_up 151 -> 117 us/call in <=128-row mixed steps (job 498). Details: bank/T58-001/record.md.
+serve_args.txt: bank/T58-001/serve_args.txt (identical to T57-004's: k=3)
+official #1: 1229.6 tok/s at c=16 (trials 1231.5/1227.7, CV 0.2%); TTFT p50/p99 136/582 ms; TPOT p50/p99 11.7/25.2 ms; GSM8K 93.6%; MTP acceptance 2.663; 128K pass. bank/T58-001/official/1/results.json
+Evidence vs T57-004: both trials above both of T57-004's (1228.3/1222.7), +0.33% cross-job; same-job ABBAAB job 505 (400 prompts, on T57-004) all B > all A, +0.72% (B 1232.1/1236.6/1230.7 vs A 1225.2/1225.8/1221.7). An earlier ABBA on T52-005 (job 503) was +0.26%, mixed. Small but consistent.
+Validity: cache prefetch hints only, bitwise outputs, no memory change, serve args unchanged, nothing keyed to the benchmark (a message-size gate).
+Promoted 2026-11-13 by the manager.
+History: BASE 631.4 -> ... -> T52-005 1212.4 -> T57-004 1225.5 -> T58-001 1229.6 (test-6).
+A performance reference, not a required starting point. Bar for a +5% payoff now 1291.1.

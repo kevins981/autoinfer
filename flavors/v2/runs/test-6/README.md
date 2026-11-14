@@ -5,10 +5,10 @@ output tok/s on ShareGPT at concurrency 16 (`tasks/qwen38-27b-fp8-2x4090/` in th
 agent funds teams with GPU time; each team has a leader agent and worker agents. Every experiment
 is a record in `bank/`.
 
-- **Result:** 631.4 tok/s (BASE, stock vLLM) -> **1212.4 tok/s (T52-005), +92%**.
+- **Result:** 631.4 tok/s (BASE, stock vLLM) -> **1229.6 tok/s (T58-001), +95%**.
 - **Seeded from test-5:** this run started from test-5's state (942.2 tok/s, champion T1-042). Records
-  `T1-*` are test-5's; this run's teams are T2-T55. See `history/README.md`.
-- **Dates:** 2026-11-08 to 2026-11-12. GPU pool 2000 GPU-min (raised from 1500 for T52/T53); see `gpu/ledger.jsonl`.
+  `T1-*` are test-5's; this run's teams are T2-T58. See `history/README.md`.
+- **Dates:** 2026-11-08 to 2026-11-13. GPU pool 2000 GPU-min (raised from 1500 for T52/T53); see `gpu/ledger.jsonl`.
 
 ## Start here
 1. `champion.md`: the current best record, its official numbers, why it is valid, and the champion path.
@@ -21,7 +21,7 @@ is a record in `bank/`.
 ## Champion path
 BASE 631.4 -> (test-5) T1-042 942.2 -> T9-005 948.9 -> T14-004 956.6 -> T27-002 967.3 ->
 T29-004 1045.8 -> T29-006 1062.1 -> T31-003 1088.9 -> T37-002 1142.2 -> T45-005 1173.4 ->
-T50-002 1181.3 -> T52-005 1212.4
+T50-002 1181.3 -> T52-005 1212.4 -> T57-004 1225.5 -> T58-001 1229.6
 
 ## Teams
 One team = one leader (+ workers) with its own GPU account. Team types (prompts in
@@ -37,6 +37,7 @@ One team = one leader (+ workers) with its own GPU account. Team types (prompts 
 | T51 | exploit-long | as explore |
 | T52-T53 | exploit-long | same, with a direction set by the human ("megakernels"), Opus leader and worker |
 | T54-T55 | research-handoff | built from an outside research memo (`research_handoff_1113.md`); both closed after triage, no GPU time |
+| T56-T58 | sweep | analyzed the engine with a framework (`framework/`); T58 swept blind before reading the history (`reports/T58-sweep/`). Champions T57-004 (drafter table, idea from T56) and T58-001 (L2 prefetch for mid-size all-reduces) |
 
 ## Folders
 | Path | What |

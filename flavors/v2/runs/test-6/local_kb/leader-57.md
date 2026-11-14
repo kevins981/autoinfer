@@ -1,0 +1,19 @@
+# leader-57 (T57 sweep) notes
+- Sweep written: reports/T57-sweep.md (2026-11-13). Calibration: T51 sim pig.py, event (15 ms + 0.12 ms/tok) reproduces 1212; decode-only 57.4 s, prefill events 17.8 s/trial.
+- Ranking: #1 spatial prefill lane on re-gridded decode kernels (+5..14% conditional); #2 mixed-step host overhead (attribution); #3 asym waves w/ link priority (T47 harness: PDh overlap 0.63 at P=512, J-P only 13.6 ms -> <=~1%, deprioritized); #4 k=4; #5 drafter fusion; #6 split threshold <256.
+- Sparring T57-1: supported: sim keeps decode work; assumed: M/D/1 slot occupancy; to test: lane >=80 TF and decode <=1.3x simultaneously (central), GEMMs hold DRAM floor at 80 SMs, 15 ms fixed = host?
+- Worker leader-57.w1, ws leader-57.champ (T52-005). Task1: host vs GPU attribution of mixed steps (6 GPU-min). Task2: lane co-run microbench (4 GPU-min).
+- T57-001 (job 484): mixed steps are GPU-bound; between-step idle 0; in-step host-wait <=1.5 s/41 s (loose). Candidate #2 demoted.
+- T57-002 (jobs 486/488): lane co-run fails the gate (f=48: lane 85 TF, decode 1.40x; ~+2% napkin before in-server losses). DRAM/L2 arbitration, not SM count. #1 closed for T57.
+- Next candidate: drafter overhead (T56 nsys job 483: drafter 2.06 ms/step vs ~0.65 byte floor -> ~1.4 ms headroom, ~4% e2e ceiling).
+- T56 metric (1-D)/r passes on GEMMs (0.07-0.08 ms/tok); in-server T56-001 decides lane. Drafter is T57's, incl. T56's precomputed embed->fc table idea (T[v]=W_fc_e·norm(E[v]), host gather; ~55-90 us/level).
+- T57-003: drafter 1.90 ms/step, ~0.76 above floor, realistic fusion ~0.13-0.3 ms/step (~0.5-1%). Task4: drafter package v1 (fc-emb host table + glue + pack/argmax), 30 GPU-min, ABBA pending.
+- Lane CLOSED: T56-001 (job 489) in-server lane GEMM-only cost 0.137-0.156 ms/tok vs joined 0.167; with ARs/GDN/slot-wait break-even or worse.
+- T57-004 drafter package v1: ABBA job 497 +1.68% all B>A, acceptance flat; official eval launched. Task5: host target embedding (frees 1.27 GB/rank) + screen kernels.
+- T57-004 OFFICIAL 1225.5 (+1.08%, both trials above champion's); reported to manager as candidate.
+- T57-004 promoted CHAMPION (1225.5). Future A arms = T57-004.
+- T57-005 HOSTEMB: bitwise, -0.05 ms, frees 1.17 GiB/GPU; screen tuning negative.
+- Task6 scoping: wave capture (A) ceiling +0.5-1%, realistic +0.2-0.5%, days of work, host-bound risk -> not taken. Class wall: decode 77%, mixed<256 7.5%, 256-767 9.5%, >=768 3.8%.
+- Task7 = drafter v2 (tail glue fold + fused top-64 select) + HOSTEMB; probe gate >=0.08 ms then 3-pair ABBA; 25 GPU-min.
+- T57-006 drafter v2 null (+0.01% job 510). 37.8 GPU-min left. Reporting to manager.
+- Spar T57-1 turns 6-8: 'nothing >0.5% remains' withdrawn -> 'nothing more resolvable within budget'. Open unbounded: GDN replay ~0.8 ms gap; AR sequencing/sync ~0.7 ms. Write-up reports/T57-writeup.md; told manager: close.

@@ -1,0 +1,19 @@
+{
+  "id": 483,
+  "pid": 841066,
+  "team": "T56",
+  "agent": "leader-56",
+  "label": "t56-prof",
+  "timeout_min": 15.0,
+  "command": [
+    "bash",
+    "prof_champ.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-56",
+  "submitted": "2026-11-13T21:43:12+00:00",
+  "state": "done",
+  "started": "2026-11-13T21:43:12+00:00",
+  "ended": "2026-11-13T21:47:34+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.361
+}

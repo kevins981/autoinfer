@@ -383,3 +383,39 @@ Triage only (ideas 1 and 5 of the memo): already in champion or wrong workload; 
 
 ## 2026-11-13 T54 closed; RUN PAUSED
 Triage only (ideas 2/6/7): none clears +5% (premises wrong for this system); 0 GPU-min used. Sparring T54-1 held, no extra offer. KB135. All teams closed: RUN PAUSED (not finalized). Champion T52-005 1212.4 (bar 1273.0). reports/final.md predates T50-T55. Pool 2000, free 915.6.
+
+## 2026-11-13 (human) sweep teams
+Opened T56, T57 (sweep, slot A, 20 seed + 80 start each; framework/ in place of cards; SoL pointer; history included). Run resumed; pause when all teams close. Not replaced when they close.
+
+## 2026-11-13 (human) third sweep team
+Opened T58 (sweep, slot A, 100 GPU-min, updated leader_sweep.md; T56/T57 keep theirs). Names T56, T57 as other sweep teams.
+
+## 2026-11-13 T56 ruling request (to the human)
+T56 asks whether replicating out_proj/o_proj and all-gathering their W8A8 FP8 inputs (e4m3 bytes + per-128 fp32 scales, bitwise what the GEMM consumes) instead of bf16 all-reduce is allowed under "communication stays at baseline precision". Human constraint: not ruled by the manager; leader told to hold that candidate. T56-001 lane test NO-GO (KB candidate; decode ITL x1.28-1.52; contention is DRAM/L2 arbitration, T57-002 agrees).
+
+## 2026-11-13 human ruling relayed
+Task_definition ruling (human): replicated out_proj/o_proj + FP8-input all-gather ALLOWED. Relayed to leader-56.
+
+## 2026-11-13 T56 closing request
+Candidate 5 (T56-003) net per layer -10/+10/+55/+109 us at M=64/128/256/512: not worth building (~+0.3-0.8%). T56 used ~11.8 of 100. Sparring T56-1 predates these reasons: one more session offered; close pending its answer.
+
+## 2026-11-13 T56 closed
+All three tested candidates negative (T56-001..003); sparring T56-2 held after my offer. KB136. T57 and T58 still open.
+
+## 2026-11-13 PROMOTION T57-004
+1225.5 official (+1.08% vs T52-005), ABBA job 497 +1.68% all B>all A, gates pass, drafter-only exact package (target untouched, verification exact). Bar now 1286.8. Previous champion saved agents/manager/champion.T52-005.md.
+
+## 2026-11-13 PROMOTION T58-001
+1229.6 official (+0.33% vs T57-004), ABBAAB job 505 +0.72% all B>all A, gates pass, cache hints only. Bar now 1291.1. Previous champion saved agents/manager/champion.T57-004.md. T58 also suggests an untested drafter idea for a research/exploit-long team (EAGLE-3-like intermediate target hidden states; reports/T58-sweep/6-ranking.md addendum; k=3 ceiling 4.0 vs 2.68 tokens): passed to the human, no team opened.
+
+## 2026-11-13 T58 closing request
+T58-002 (mid-M t31b microbench, job 512): only +0.2-0.3% e2e, needs a new FP8 A/B; ranks 3-4 <=0.5-0.8%. Leader recommends closing (~49 of 100 used). Sparring T58-1 predates these reasons: one more session offered; close pending its answer.
+
+## 2026-11-13 T57 closing suggestion
+T57-006 drafter v2 + HOSTEMB null (6-start ABBA job 510 +0.01%); T57-005 host embedding bitwise (frees 1.17 GiB/GPU, ~-0.05 ms/step); remaining items <0.5% each. Leader suggests closing (~62 of 100 used). Sparring T57-1 predates these: one more session offered; close pending answer.
+
+## 2026-11-13 T57 closed
+Win T57-004 (champion at the time). Open gaps: GDN replay ~0.8 ms/step, decode AR sequencing ~0.7 ms. KB137. T58 still open.
+
+## 2026-11-13 T58 closed; RUN PAUSED
+Win T58-001 (1229.6). Rank 3 (wave threshold) re-scoped to unresolved feasibility, not <=0.5%; drafter-hidden-states idea still with the human. All teams closed: RUN PAUSED (not finalized). Champion T58-001 1229.6 (bar 1291.1). reports/final.md predates T50-T58.

@@ -1,0 +1,21 @@
+[gpu] job 499 queued (1 ahead)
+[gpu] job 499 started (timeout 3 min); output: /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/gpu/jobs/499/output.log
+[gpu] team T56 (sweep): 88.4 GPU-min left of 100 granted
+[gpu] reminder: each inference server loads the workspace's code when it starts, not when you submitted. Don't edit a workspace this job uses; to keep working meanwhile, copy it: ws create <new name> --from-ws <workspace>
+W1113 22:39:42.022000 898810 site-packages/torch/distributed/run.py:982] 
+W1113 22:39:42.022000 898810 site-packages/torch/distributed/run.py:982] *****************************************
+W1113 22:39:42.022000 898810 site-packages/torch/distributed/run.py:982] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W1113 22:39:42.022000 898810 site-packages/torch/distributed/run.py:982] *****************************************
+[rank0]:W1113 22:39:44.955000 898886 site-packages/torch/_opaque_base.py:6] torch._opaque_base is deprecated, use torch._custom_class_base instead
+[rank0]:W1113 22:39:44.956000 898886 site-packages/torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+[rank0]:W1113 22:39:44.956000 898886 site-packages/torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+[rank1]:W1113 22:39:44.974000 898887 site-packages/torch/_opaque_base.py:6] torch._opaque_base is deprecated, use torch._custom_class_base instead
+[rank1]:W1113 22:39:44.975000 898887 site-packages/torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+[rank1]:W1113 22:39:44.976000 898887 site-packages/torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+64 {"ar_host": 51.3, "ar_dma": 83.95, "ag_packed": 29.15, "ag_xq_xs": 34.85, "bitwise_xq": true, "bitwise_xs": true, "bitwise_packed": true, "t31_half": 38.69, "t31_full": 70.66, "quant_half": 46.75}
+128 {"ar_host": 89.46, "ar_dma": 111.36, "ag_packed": 49.07, "ag_xq_xs": 49.29, "bitwise_xq": true, "bitwise_xs": true, "bitwise_packed": true, "gemm_half_incl_quant": 73.73, "quant_half": 45.06, "gemm_half": 35.78, "gemm_full": 66.46, "rel_diff_full_vs_AR": 1.0, "maxabs_full_vs_AR": 7.52}
+256 {"ar_host": 164.49, "ar_dma": 183.18, "ag_packed": 69.58, "ag_xq_xs": 78.71, "bitwise_xq": true, "bitwise_xs": true, "bitwise_packed": true, "gemm_half_incl_quant": 69.47, "quant_half": 28.93, "gemm_half": 47.94, "gemm_full": 88.0, "rel_diff_full_vs_AR": 1.0, "maxabs_full_vs_AR": 7.81}
+512 {"ar_host": 306.45, "ar_dma": 324.2, "ag_packed": 125.25, "ag_xq_xs": 134.83, "bitwise_xq": true, "bitwise_xs": true, "bitwise_packed": true, "gemm_half_incl_quant": 100.32, "quant_half": 29.54, "gemm_half": 72.7, "gemm_full": 145.31, "rel_diff_full_vs_AR": 1.0, "maxabs_full_vs_AR": 8.56}
+[gpu] job 499 exited with code 0 after 0.2 min
+[gpu] full output: /scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/gpu/jobs/499/output.log
+[gpu] team T56 (sweep): 88.2 GPU-min left of 100 granted

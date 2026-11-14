@@ -1,0 +1,30 @@
+{
+  "id": 503,
+  "pid": 900398,
+  "team": "T58",
+  "agent": "leader-58.w1",
+  "label": "t58-m1-abba",
+  "timeout_min": 24.0,
+  "command": [
+    "bash",
+    "task/scripts/abba.sh",
+    "agents/leader-58.w1/m1/abba",
+    "--a",
+    "workspaces/t58-champ",
+    "--b",
+    "workspaces/t58-champ",
+    "--args",
+    "--attention-backend TRITON_ATTN --compilation-config '{\"max_prefill_cudagraph_capture_tokens\": 1536, \"prefill_cudagraph_capture_token_sizes\": [1,2,4,8,16,24,32,40,48,56,64,80,96,112,128,160,192,224,256,288,320,352,384,416,448,480,512,544,576,608,640,672,704,736,768,800,832,864,896,928,960,992,1024,1056,1088,1120,1152,1184,1216,1248,1280,1312,1344,1376,1408,1440,1472,1504,1536]}' --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3,\"use_local_argmax_reduction\":true,\"draft_lm_head_quantization\":\"fp8\",\"draft_lm_head_vocab_size\":98304}'",
+    "--env-b",
+    "VLLM_HOSTAR_L2PF_MSG_MAX=2700000",
+    "--prompts",
+    "400"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-13T22:40:31+00:00",
+  "state": "done",
+  "started": "2026-11-13T22:53:45+00:00",
+  "ended": "2026-11-13T23:04:54+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 11.148
+}

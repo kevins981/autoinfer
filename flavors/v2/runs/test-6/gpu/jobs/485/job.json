@@ -1,0 +1,19 @@
+{
+  "id": 485,
+  "pid": 849671,
+  "team": "T58",
+  "agent": "leader-58.w1",
+  "label": "t58-prof",
+  "timeout_min": 40.0,
+  "command": [
+    "bash",
+    "agents/leader-58.w1/prof/run.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-13T21:49:51+00:00",
+  "state": "done",
+  "started": "2026-11-13T21:49:51+00:00",
+  "ended": "2026-11-13T21:55:36+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 5.75
+}

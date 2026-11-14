@@ -1,0 +1,18 @@
+{
+  "id": 499,
+  "pid": 894048,
+  "team": "T56",
+  "agent": "leader-56.w1",
+  "label": null,
+  "timeout_min": 3.0,
+  "command": [
+    "./job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6/agents/leader-56.w1/s1",
+  "submitted": "2026-11-13T22:36:44+00:00",
+  "state": "done",
+  "started": "2026-11-13T22:39:40+00:00",
+  "ended": "2026-11-13T22:39:51+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.183
+}

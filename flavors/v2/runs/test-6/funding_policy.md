@@ -36,6 +36,11 @@ that it agrees with the idea. When in doubt, fund it and let the measurements de
 Then pick one team, by track record or at random. Similar but different proposals are the
 manager's call.
 
+## Sweep teams (human, 2026-11-13)
+Funded like exploit teams: seed + start grant when they open, and a result is an official win
+(small gains count). Their analysis report (reports/<team>-sweep.md) comes first and is a
+deliverable, not progress.
+
 ## Research-handoff teams (human, 2026-11-13)
 Funded like moonshot teams below (seed 30, proposal checks, stages up to about 200 GPU-min), with
 two differences: no history check (they read the run's history themselves), and the idea must start

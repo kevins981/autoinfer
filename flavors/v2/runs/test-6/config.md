@@ -33,6 +33,14 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
     leader, Sonnet worker), opened at the same time, no persona; memo from the `research handoff
     memo` line in place of cards; full history; speed of light; sparring; funded like moonshots
     (FUNDING_POLICY). Not replaced when they close.)
+  - sweep: 2   (human, 2026-11-13: agents/leader_sweep.md; slot A each (Opus leader, Sonnet worker),
+    opened at the same time, no persona; framework from the `sweep framework` line in place of cards;
+    full history; speed of light; sparring; exploit-style grants (seed + start). Not replaced when
+    they close.)
+  - sweep, third team (human, 2026-11-13): 1 more sweep team, slot A, opened now, with the updated
+    agents/leader_sweep.md (each analysis step written to its own file; the sweep is done before
+    reading the run's history). T56/T57 keep the prompt they started with. Not replaced when it
+    closes.
 - max workers per leader: 1 at a time (human, 2026-11-10; was 2) (the leader may stop one and start a fresh one)
 - GPU pool: 2000 GPU-minutes for the whole run (one GPU job runs at a time; queue time is free)
   (raised from 1500 by the human, 2026-11-11)
@@ -59,7 +67,9 @@ Mostly free text: the manager reads it. The `models` and `slot` lines are also r
 - scout: codex gpt-6.1-sol / medium, cards 15 (the `scout` tool, for external teams; one fresh deck per external team)
 - research handoff memo: research_handoff_1113.md (human, 2026-11-13: written outside the run by a separate
   analysis system, without running this machine or reading this run's history)
-- speed of light: moonshot, research, exploit, exploit-long, research-handoff (task/SPEED_OF_LIGHT.md; human, 2026-11-10; research added 2026-11-11; exploit and exploit-long added 2026-11-11)
+- sweep framework: framework/ (human, 2026-11-13: snapshot of a separate project's documents 01-07; see
+  framework/README.md)
+- speed of light: moonshot, research, exploit, exploit-long, research-handoff, sweep (task/SPEED_OF_LIGHT.md; human, 2026-11-10; research added 2026-11-11; exploit and exploit-long added 2026-11-11)
 - inspiration cards per draw: principles 5, hardware 5, software 5 (the `inspire` tool; 0 turns a
   kind off)
   - inspiration hardware cards: platform-supermicro-741ge-2x-rtx4090

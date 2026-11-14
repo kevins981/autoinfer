@@ -64,3 +64,28 @@ of everything. Newest last.
   - Pattern: sparring turns "I think it's done" into one cheap test with a kill rule. It didn't
     find extra speed here; it made the closures trustworthy at ~1 GPU-min each.
 - Caveat: one direction, two teams.
+
+## 2026-11-13 · test-6 · T56-T58: sweep teams (a systematic framework, then wins)
+- Setup: three sweep teams, Opus 5.5 leader, Sonnet 5.5 worker. Each had a framework snapshot
+  (graph of data/compute nodes + 6 knobs + napkin cost), full history, speed of light, sparring.
+  T56/T57 read the history first; T58 had to sweep blind first (no history), writing one file per
+  step (inputs, graph, calibration, knobs), then compare with history and rank.
+- Result: two champions, +1.4% for 123 GPU-min (1212.4 -> 1229.6). Smaller and costlier than
+  the last non-sweep win (T52-005: +2.6% for ~51 GPU-min).
+  - T57-004 (+1.08%): mostly a drafter table that T56 derived from Rewrite + Keep knobs, the only
+    row in its sweep marked new. T57 had pruned the same rewrite (counted weight bytes only), then
+    built it after measuring the drafter.
+  - T58-001 (+0.33%): found in the blind phase. Calibrating each step type showed gate_up at
+    152 vs 80 us in small mixed steps; the cause was a 1 MiB size gate on the all-reduce's L2
+    prefetch. The history check found no one had raised it since T1-019.
+  - Both history-first teams ranked the same idea first (SM-split prefill lane); it was dead
+    within ~7 GPU-min (DRAM/L2 arbitration, not SM count).
+- Insights:
+  - Blind first, history second, with a file per step, makes the framework's work checkable. T58's
+    files show where every candidate came from; T57's single report couldn't.
+  - The win came from calibrating per node and per step type against measurement, not from the
+    knob enumeration itself. Most enumerated candidates were already in the history.
+  - Every team listed where the framework didn't fit (per-transfer latency, link/DRAM coupling,
+    SMs and CPU as resources, contract-dependent compute). These lists agreed across teams,
+    including the blind one: the most reliable output for the framework's next version.
+- Caveat: one task near saturation; n=1 for the blind variant.

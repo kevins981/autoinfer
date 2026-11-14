@@ -1,0 +1,18 @@
+{
+ "id": "T57-1",
+ "team": "T57",
+ "by": "leader-57",
+ "backend": "codex",
+ "model": "gpt-6.1-sol",
+ "effort": "high",
+ "work": "/scratch/kevinsong/learning/autoinfer/.cache/sparring_work/test-6-T57-1-1794606195",
+ "sid_new": "682be814-f9c0-40ad-a9ce-c5a843f473d6",
+ "session": "01a1d6dd-647e-77a3-8847-78bd5fa1b725",
+ "state": "ended",
+ "turns": 8,
+ "started": "2026-11-13T21:43:15.562365+00:00",
+ "ended": "2026-11-13T23:58:07.849700+00:00",
+ "reopened": [
+  "2026-11-13T23:56:44.549123+00:00"
+ ]
+}

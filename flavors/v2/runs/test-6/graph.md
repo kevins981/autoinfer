@@ -275,3 +275,8 @@ Legend:
 - T52 (exploit-long, megakernels CLOSED): T52-001/002 decode fusion at parity; T52-004 mixed-step AR exposure is a scheduling effect -> ★ **T52-005 CHAMPION 1212.4** (builds_on T50-002 + T30-004/005 waves + T32-003 captured core). champion path: ... T45-005 -> T50-002 -> **T52-005**
 - T54 (research-handoff, memo research_handoff_1113.md, opened 2026-11-13): CLOSED after triage (KB135).
 - T55 (research-handoff, memo research_handoff_1113.md, opened 2026-11-13): CLOSED after triage (KB134).
+- T56 (sweep, framework/, opened 2026-11-13): CLOSED, no win (KB136).
+- T57 (sweep, framework/, opened 2026-11-13): CLOSED (KB137).
+- T58 (sweep, updated leader_sweep prompt, opened 2026-11-13): CLOSED (KB137).
+- T57-004 ★ CHAMPION 1225.5 (builds_on T52-005 + T56 fc-table idea): drafter package (fc table, packed argmax, glue tiles). champion path: ... T50-002 -> T52-005 -> **T57-004**
+- T58-001 ★ CHAMPION 1229.6 (builds_on T57-004): L2-prefetch size gate 1 MiB -> 2.7 MB for mid-size hostar ARs. champion path: ... T52-005 -> T57-004 -> **T58-001**

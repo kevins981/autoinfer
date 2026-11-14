@@ -1,0 +1,19 @@
+{
+  "id": 491,
+  "pid": 867900,
+  "team": "T58",
+  "agent": "leader-58.w1",
+  "label": "t58-calib0",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "agents/leader-58.w1/calib/job0.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v2/runs/test-6",
+  "submitted": "2026-11-13T22:07:33+00:00",
+  "state": "done",
+  "started": "2026-11-13T22:07:33+00:00",
+  "ended": "2026-11-13T22:07:39+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.096
+}

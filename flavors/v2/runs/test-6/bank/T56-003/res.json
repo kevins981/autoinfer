@@ -1,0 +1,59 @@
+{
+ "64": {
+  "ar_host": 51.299734910329185,
+  "ar_dma": 83.953062693278,
+  "ag_packed": 29.148266712824505,
+  "ag_xq_xs": 34.85013246536255,
+  "bitwise_xq": true,
+  "bitwise_xs": true,
+  "bitwise_packed": true,
+  "t31_half": 38.68800029158592,
+  "t31_full": 70.65600156784058,
+  "quant_half": 46.751998364925385
+ },
+ "128": {
+  "ar_host": 89.46346441904704,
+  "ar_dma": 111.35733127593994,
+  "ag_packed": 49.06506538391113,
+  "ag_xq_xs": 49.28853511810303,
+  "bitwise_xq": true,
+  "bitwise_xs": true,
+  "bitwise_packed": true,
+  "gemm_half_incl_quant": 73.72800260782242,
+  "quant_half": 45.05600035190582,
+  "gemm_half": 35.77600046992302,
+  "gemm_full": 66.46399945020676,
+  "rel_diff_full_vs_AR": 0.999844491481781,
+  "maxabs_full_vs_AR": 7.515625
+ },
+ "256": {
+  "ar_host": 164.48906262715658,
+  "ar_dma": 183.1765333811442,
+  "ag_packed": 69.58080132802327,
+  "ag_xq_xs": 78.70986461639404,
+  "bitwise_xq": true,
+  "bitwise_xs": true,
+  "bitwise_packed": true,
+  "gemm_half_incl_quant": 69.47200000286102,
+  "quant_half": 28.9280004799366,
+  "gemm_half": 47.93599992990494,
+  "gemm_full": 87.99999952316284,
+  "rel_diff_full_vs_AR": 1.0003736019134521,
+  "maxabs_full_vs_AR": 7.8125
+ },
+ "512": {
+  "ar_host": 306.44906361897785,
+  "ar_dma": 324.2032051086426,
+  "ag_packed": 125.2522627512614,
+  "ag_xq_xs": 134.82666015625,
+  "bitwise_xq": true,
+  "bitwise_xs": true,
+  "bitwise_packed": true,
+  "gemm_half_incl_quant": 100.3199964761734,
+  "quant_half": 29.53599952161312,
+  "gemm_half": 72.7040022611618,
+  "gemm_full": 145.31199634075165,
+  "rel_diff_full_vs_AR": 1.0006955862045288,
+  "maxabs_full_vs_AR": 8.5625
+ }
+}

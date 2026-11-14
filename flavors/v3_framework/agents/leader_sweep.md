@@ -91,7 +91,10 @@ the manager its path. It is like a pull request:
 - **why:** your reasoning and evidence for each change (records, GPU jobs, your sweep files).
 
 Keep the map useful for the next team: what the space is, what was tried with what result, and
-what isn't worth doing and why. Change other teams' entries only with evidence, and say so. The
+what isn't worth doing and why. Change other teams' entries only with evidence, and say so. When
+you disagree with an entry, the map keeps both views, each with its team, reasoning and evidence,
+marked contested, with what would settle it (the cheapest test); a later proposal with new
+evidence may resolve it. The
 manager checks that each change is reasoned and supported, then applies it or tells you why not.
 
 ## Other sweep teams

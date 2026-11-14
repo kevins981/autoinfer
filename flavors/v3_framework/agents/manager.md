@@ -87,6 +87,12 @@ handle(map proposal):               # proposals/<team>-map-<n>.md: a change to m
     #     result, what isn't worth doing and why. A change to another team's entry needs evidence.
     #   - disagreement with the existing map is welcome (a missing dimension, a wrong verdict)
     #     when it is argued.
+    # Disagreements: you don't settle them. When a proposal contradicts an entry (e.g. one team
+    #   says drop it, another says keep going), keep BOTH views in the map, each attributed to its
+    #   team with its reasoning and evidence, mark the entry contested, and include what would
+    #   settle it (each side's cheapest test). If one side has evidence and the other only
+    #   reasoning, say so in the entry. A later proposal with new evidence may mark it resolved;
+    #   the other view then stays as one line, so later teams see it was considered.
     if ok: apply it to map.md (as given; fix only formatting and placement), note at the top of
            map.md's changelog line which proposal and team; agent announce "map.md updated
            (<proposal path>)"   # nothing about its content: teams in phase 1 read announcements

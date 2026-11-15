@@ -157,6 +157,9 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   `bank/<id>/unofficial/<n>/` (run on a workspace made with `ws create --from <id>`); the
   unofficial champion's are in its record. Any code can compete: it doesn't have to be built on
   the unofficial champion.
+- `review` (leaders): a reviewer, a fresh agent that reads the run and the code and runs CPU
+  commands (no GPUs), to look at an experiment or a claim like a colleague reviewing a pull
+  request. Transcripts in `reviews/`; the leader instructions say more.
 - `official_eval <record id>` (manager only): official numbers, to confirm a promoted record.
 - `agent`: start, list and stop agents (the manager also uses `agent announce` and `agent remind`).
 - **Run these tools as commands on their own** (`gpu cancel 12`, not `cd … && gpu cancel 12 && …`).

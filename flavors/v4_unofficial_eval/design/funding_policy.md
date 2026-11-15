@@ -30,7 +30,7 @@ A team can request a resync at any time.
 
 | What the team shows | Decision |
 |---|---|
-| A win since the last grant (net of reverts) | Extend, possibly with a bigger grant |
+| A win since the last grant (net of reverts) | Extend (30) |
 | No win, but a measured lead it can name (what it will test next and why the evidence points there) | Last chance: one extension. The team says what it will measure with it |
 | A second last chance in a row | Close the team and open a new one. The closing team writes up what it learned and adds a last map update first |
 | The team recommends closing itself, and its failure hit a hard limit or it already tried a variant aimed at the cause | Close it and open a new one, as above |

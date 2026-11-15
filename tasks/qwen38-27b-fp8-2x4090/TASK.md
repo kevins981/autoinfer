@@ -101,6 +101,9 @@ eval gives up after 15 min per server start).
   comparison is meaningful only for changes that are bitwise-exact, run one request at a time.
 - Nothing specific to the benchmark: no caching or precomputing outputs for its prompts, no
   tuning to seed 0 or to these 400 prompts, no detection of the benchmark.
+- Prefix caching stays on (the default); changes must work with it. Turning it off
+  (`--no-enable-prefix-caching`) is not allowed: it only pays because this benchmark has no shared
+  prefixes, and it makes general serving worse. (Ruling by the human, 2026-11-15.)
 - Every request is answered in full; the server stays a general OpenAI-compatible server (tool
   calls and reasoning parsing keep working).
 

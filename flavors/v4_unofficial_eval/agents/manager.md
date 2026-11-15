@@ -162,6 +162,10 @@ confirm():          # exactly when `champion show` says CONFIRMATION DUE (fixed 
 ```python
 handle(question):   # e.g. is something allowed? Answer from TASK.definition; ask the human if it
                     # doesn't settle it, and add the answer to task_definition.md.
+                    # Ask WITHOUT blocking: a plain message (your reply text), never a question
+                    # dialog (AskUserQuestion), which freezes the whole run until the human
+                    # answers. Tell the asking team "pending", and keep handling everything else
+                    # (promotions, confirmations, resyncs) meanwhile.
 ```
 
 ```python

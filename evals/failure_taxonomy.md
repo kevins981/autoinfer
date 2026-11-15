@@ -1,63 +1,106 @@
 # Failure taxonomy: why agents miss, kill or under-realize good changes
 
-Provisional. Built bottom-up from concrete cases (raw cases with full evidence:
-`evals/failure_cases.md`). Grading a run against the answer key (`evals/EVAL.md`) surfaces candidates:
-missed wins, wrong causes, partial gains. Add a type only when a case doesn't fit the existing ones;
-merge or split types as cases accumulate. A case can have several types.
+For judges. When grading a run against the answer key (`evals/EVAL.md`), every missed win, wrong
+cause or partial gain has a reason. Use these types to name it. A miss can have more than one type.
+If none fits, describe it plainly in the run's evaluation; add a type here once a pattern repeats.
 
-Started 2026-11-15 from v4_unofficial_eval/sweep-simple-eval (graded in
-`evals/runs/v4_unofficial_eval/sweep-simple-eval/eval.md`).
+The types are about **judgment and process**, not luck. A change that was never reached because the
+budget ran out is not a failure of judgment, but say so explicitly ("ran out of budget"), with the
+evidence (where the run was heading when it stopped).
 
-## 1. Measurement methodology
-The experiment itself is flawed, so the number can't support the conclusion: noise, wrong setup,
-too little data, a proxy that doesn't reflect the engine.
-- Signs: the same thing measured twice disagrees a lot; the record says "noisy", "undiagnosed",
-  "inconclusive" and still draws a conclusion; a microbenchmark decides a change the engine never ran.
-- Case: host-memory all-reduce (sweep-simple-eval T1-003). Timed on one rank without lining the ranks
-  up per sample: 52 vs 92 µs for the same kernel. The record noted "rank skew ... undiagnosed" and
-  dropped the change on that number. The in-server test (~5 GPU-min) was never run; other runs got +5%.
+## 1. Measurement methodology: the experiment couldn't answer the question
+The agent ran an experiment whose number can't support the conclusion drawn from it. The number may
+be noisy, measured on the wrong thing, or from a setup that doesn't behave like the real engine.
 
-## 2. Interpretation
-The numbers are fine but read wrongly.
-- **Wrong reference point:** compared against the wrong baseline or an assumed floor.
-  - Case (same T1-003): compared with NCCL forced to Simple standalone (57 µs), though the team had
-    just shown the engine runs NCCL's default at ~72 µs; called 57 µs "the floor" though its own
-    13 GB/s figure gives ~40 µs.
-- **Wrong cost:** priced the visible kernel time, not the cost the component actually causes.
-  - Case (T1 knob table): attention priced as "1% of a step"; its real cost is FlashInfer's per-step
-    host planning that idles the GPU ~1-1.4 ms/step (+3.8-6.8% elsewhere). The team later found the
-    drafter's half (+2.3%) but not the target's.
-- **Noise read as signal:** a gain inside the repeat spread treated as a win (or a loss as a loss).
-  - Case (T1-002): NCCL_PROTO=Simple promoted at +1.0% unofficial (spread ~1.6 points); reverted
-    later. The first revert reason (kernel names) was also wrong; the NCCL log settled it.
-- **Irrelevant comparison:** a loss counted that the design doesn't care about.
-  - Case (T1-003): "loses at ≥ 96 rows", though the design routes only small all-reduces to it.
+Common forms:
+- **Noisy or unstable measurement.** Repeating the same measurement gives very different numbers,
+  and the agent picks one or averages them without finding out why.
+  - Example: a custom all-reduce kernel is timed at 52 µs in one job and 92 µs in another, same
+    code, same size. The timing loop recorded each sample on one GPU only, without first lining the
+    two GPUs up, so it also measured one GPU waiting for the other. The agent noted "skew,
+    undiagnosed" and dropped the change based on these numbers.
+- **A proxy instead of the real thing.** A microbenchmark or a standalone test decides a change
+  whose real effect only shows inside the inference server. Standalone tests miss what the engine
+  does around the operation: other kernels, CUDA graphs, timing differences between the GPUs.
+  - Example: a change is dropped because a standalone benchmark shows "at best a tie", when one
+    in-server measurement (~5 GPU-min) would have shown +5%.
+- **Wrong setup.** The measurement didn't run the code it was meant to measure: an unbuilt
+  workspace, a flag that silently didn't apply, a code path not taken.
+  - Example: a prefetch that "gave no gain" never ran, because a later change moved the operation it
+    was attached to.
+- **Too little data for the size of the effect.** One start per arm for a 1% effect when starts
+  differ by ~1-2%.
 
-## 3. Path dependence (not revisiting earlier choices)
-The diagnosis is right, but the fix stays local: the agent works around a constraint created by an
-earlier choice instead of re-opening that choice.
-- Signs: "doesn't fit / OOM / not enough X" followed by shrinking the new change rather than asking
-  what already holds X.
-- Case (T2-002..T2-004): the FP8 draft head (+3% elsewhere) lost because only 15 of 16 requests fit.
-  T2's own earlier 2048-token prefill graphs held that memory (another run used 512 and kept the
-  head). T2 tried smaller heads instead and never revisited the graph size.
+What a judge checks: Would repeating the measurement give the same answer? Does it measure what runs
+in the engine? Is the sample big enough for the effect claimed?
 
-## 4. Never considered
-The direction never showed up in the run's maps, ideas or records.
-- Signs: absent from the sweep's knob tables and rankings (grep the run's reports for the key node).
-- Cases (sweep-simple-eval, stopped at 158 GPU-min, so partly budget): copy-engine all-reduce for
-  prefill steps, GDN lazy commit, W8A8 quant fusion, L2 prefetch during the all-reduce.
+## 2. Interpretation: good numbers, wrong conclusion
+The measurement is fine, but the agent compares it with the wrong thing, prices the wrong cost, or
+treats noise as signal.
 
-## Also seen (process costs, not failures of judgment)
-- Duplicate work across teams: T1-007 = T2-006 (cancelled after 0.6 min); both teams tested 3 draft
-  tokens (5 jobs).
+Common forms:
+- **Wrong reference point.** The number is compared with the wrong baseline, or with a "floor" or
+  "best possible" that was assumed rather than derived.
+  - Example: a new all-reduce takes 50 µs. The agent compares it with NCCL forced to a faster
+    protocol in a standalone test (57 µs) and calls it a tie. But the engine runs NCCL's default,
+    which takes ~72 µs there, so the real saving is ~20 µs per call (~7%). The agent also calls
+    57 µs "the floor", though its own bandwidth figure gives a floor of ~40 µs.
+- **Wrong cost.** The agent prices what is visible (a kernel's run time) instead of what the
+  component actually costs the step (e.g. the GPU sitting idle while the CPU prepares it).
+  - Example: attention is ranked "1% of a step, nothing to gain" from kernel times. Its real cost
+    is the attention backend's per-step CPU planning, during which the GPU idles ~1-1.4 ms per step.
+    Switching backends gives +4-7%.
+- **Noise read as signal.** A gain or loss smaller than the measurement's own spread is treated as
+  real.
+  - Example: a setting is promoted at +1.0% when repeated measurements of the same code vary by
+    ~1.6 points. It turns out to have no effect at all.
+- **Irrelevant comparison.** A loss is counted that doesn't matter for how the change would be used.
+  - Example: a small-message all-reduce is marked "loses for large messages", though the design
+    only sends small messages to it.
+- **Wrong mechanism.** The conclusion is right or wrong for a reason the evidence doesn't support.
+  - Example: "the setting didn't apply, because the kernel names didn't change". The names don't
+    reflect that setting; the library's debug log shows it did apply.
 
-## Counter-examples (good process, for contrast)
-- T2-003/T2-007 profiled before spending more starts and found the real cause (lost concurrency, not
-  step cost). T1 corrected two of its own explanations when new evidence came.
+What a judge checks: Compared with what, and is that what the engine actually runs? Is the "floor"
+derived or assumed? Is the effect bigger than the noise? Does the cost counted match where time
+actually goes (including GPU idle)?
 
-## Ideas this suggests (to discuss, not adopted)
-- A fresh-context verification worker a leader calls before a conclusion or claim: "what is this
-  compared against, and is it what the engine runs?", "is the measurement repeatable?", "is this the
-  real cost?". Targets types 1 and 2.
-- Type 3 needs a different question: "which earlier choice is now the constraint?".
+## 3. Path dependence: not revisiting an earlier choice
+The diagnosis is right, but the fix stays local. The agent works around a constraint that an
+earlier choice created, instead of asking whether that earlier choice should change.
+
+- Example: a cheaper draft head needs ~0.6 GB of extra GPU memory. With it, only 15 of 16 requests
+  fit, and throughput drops. The agent diagnoses this correctly, then tries smaller heads. It never
+  revisits its own earlier change, CUDA graphs captured for steps up to 2048 tokens, which is what
+  used up the memory. A smaller capture size (e.g. 512) would have kept most of that gain and made
+  room for the head.
+- Signs: "doesn't fit", "OOM", "not enough X" followed by shrinking or dropping the new change,
+  with no look at what else holds X.
+
+What a judge checks: When something didn't fit or conflicted, did the agent ask which earlier
+choice created the constraint, and whether trading it off would pay more?
+
+## 4. Never considered: the direction never came up
+The change never appears in the run's maps, rankings, ideas or records.
+
+- Example: the attention backend is never listed as a knob, so switching it (+4-7%) is never tried.
+- Not the same as type 2: if the agent looked at it and wrongly dismissed it, it's interpretation.
+- Distinguish from budget: if the run stopped early and the direction was plausibly next, say so.
+
+What a judge checks: search the run's reports, knob tables, ideas and records for the change by
+what it does (not by name), and say what was searched.
+
+## Process costs (record them, but they aren't judgment failures)
+- **Duplicate work:** two teams or agents test the same change.
+- **Repeated attempts at a known dead end** without a new reason to expect a different result.
+
+## Good process (note it, for contrast)
+- Profiling before spending more GPU time when a result is surprising.
+- Correcting one's own earlier explanation when new evidence arrives, and saying so in the record.
+- Running the cheap real test (one in-server measurement) before a proxy decides anything.
+
+## What could catch these (open, not adopted)
+- Types 1 and 2: a fresh-context reviewer, called before a conclusion or claim, who asks: "what is
+  this compared against, and is it what the engine runs?", "is the measurement repeatable?", "is
+  this the real cost?".
+- Type 3: a different question: "which earlier choice is now the constraint?".

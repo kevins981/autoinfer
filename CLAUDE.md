@@ -70,8 +70,7 @@ autoinfer/
   evals/               # everything about evaluating runs (agents are denied all of it)
     EVAL.md            # how runs and flavors are evaluated (all flavors)
     answer_keys/<task>/  # answer_key.md: the evolving map of each task's search space
-    failure_taxonomy.md  # why agents miss / kill / under-realize changes (types + cases)
-    failure_cases.md   # raw cited cases behind the taxonomy
+    failure_taxonomy.md  # why agents miss / kill / under-realize changes (types, examples)
     runs/<flavor>/<run>/  # per-run judge reports and evaluations (gitignored)
   .claude/skills/eval-run-qwen38/  # skill: evaluate a run (judge / reconcile), resources.py
   .claude/skills/audit-run/        # skill: cheat audit of a run (audit_scan.py + judging)

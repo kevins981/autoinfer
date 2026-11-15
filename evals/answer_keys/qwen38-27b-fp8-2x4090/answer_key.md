@@ -122,7 +122,7 @@ BASE
 - results:                      one line per base: `on <stack>: <result> <strength> (evidence)`
 - best:                         the best known realization (what to compare a run's version with)
 - cheapest path:                the least GPU time known to get a trustworthy end-to-end number
-- traps:                        known ways runs got it wrong (feeds evals/failure_cases.md)
+- traps:                        known ways runs got it wrong (see evals/failure_taxonomy.md)
 - cause / revisit / grading     for dead ends: why, and what would make it worth retrying
 ```
 
@@ -156,7 +156,7 @@ RAM → GPU. In-engine NCCL (LL protocol) ≈ 72 µs per decode AR on a 2026-11 
   had it in its first official champion at 56 GPU-min.
 - traps:
   - judging it by a standalone microbenchmark against forced NCCL Simple (57 µs) instead of the
-    engine's NCCL (~72 µs), and calling 57 µs "the floor" (`v4/sse:T1-003`, evals/failure_cases.md).
+    engine's NCCL (~72 µs), and calling 57 µs "the floor" (`v4/sse:T1-003`).
   - timing on one rank without per-sample sync: rank skew inflates and scatters the number
     (52 vs 92 µs for the same kernel, `v4/sse:T1-003`).
   - counting "loses at M ≥ 96" against it: the cutoff routes those to NCCL.

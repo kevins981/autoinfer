@@ -286,7 +286,8 @@ def main():
     ref = ref0 + A
     rm = st.mean(ref)
     gain = 100 * (st.mean(B) / rm - 1)
-    if (out / "b" / "stopped_early").exists() or len(B) < 2:
+    stopped = (out / "b" / "stopped_early").exists() or len(B) < 2   # the gates didn't run
+    if stopped:
         verdict = "negative (1 start)"
     elif min(B) > rm:
         verdict = "PASS"
@@ -307,12 +308,12 @@ def main():
                 gates.append(f"latency {k} {v:.0f} > {LAT_MAX:.0%} of BASE {bj[k]:.0f}")
     g = out / "b" / "gsm8k.json"
     gsm = None
-    if a.gsm8k:
+    if a.gsm8k and not stopped:
         gsm = json.loads(g.read_text())["accuracy"] if g.exists() else None
         if gsm is None or gsm < GSM8K_MIN:
             gates.append(f"GSM8K {gsm}")
     lr = None
-    if a.long:
+    if a.long and not stopped:
         f = out / "b" / "long_request.json"
         lr = bool(json.loads(f.read_text()).get("pass")) if f.exists() else False
         if not lr:
@@ -324,9 +325,11 @@ def main():
                p99=lat, mtp_acceptance=acc)
     fb = " / ".join(f"{x:.1f}" for x in B)
     extra = []
-    if a.gsm8k:
+    if stopped and (a.gsm8k or a.long):
+        extra.append("GSM8K/128K not run (stopped after 1 start)")
+    elif a.gsm8k:
         extra.append(f"GSM8K {100 * gsm:.1f}%" if gsm is not None else "GSM8K failed")
-    if a.long:
+    if a.long and not stopped:
         extra.append(f"128K {'pass' if lr else 'FAIL'}")
     if lat:
         extra.append(f"p99 TTFT {lat['p99_ttft_ms']:.0f} ms / TPOT {lat['p99_tpot_ms']:.1f} ms")

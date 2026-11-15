@@ -95,7 +95,7 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
                   several, e.g. "T1-001 + T2-003" when it combines them)
     performance:  "unofficial: ~+4% vs the unofficial champion" / "unofficial: within noise" / "build failed" /
                   "unofficial: stopped after 1 start, -2.3%"
-                  (unofficial numbers: the harness, 2 starts x 200 prompts, see Tools; official_eval adds
+                  (unofficial numbers: the harness, 2 starts x 300 prompts, see Tools; official_eval adds
                   official results below; only those count)
     summary:
       hypothesis:
@@ -141,8 +141,8 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   leader may request a resync from the manager.
 - **The benchmark harness** (`task/harness/eval.sh`, anyone may run it; never modify it): measures
   a workspace's speed, each trial on a freshly started inference server. Unofficial numbers, the
-  ones teams compare, use `TRIALS=2 PROMPTS=200` (the official eval uses 2 x 400 + checks):
-  `gpu run --timeout 12 --label unofficial:<name> -- env TRIALS=2 PROMPTS=200 GATES=none
+  ones teams compare, use `TRIALS=2 PROMPTS=300` (the official eval uses 2 x 400 + checks):
+  `gpu run --timeout 14 --label unofficial:<name> -- env TRIALS=2 PROMPTS=300 GATES=none
   STOP_BELOW=0 $AUTOINFER_RUN/task/harness/eval.sh <workspace dir> <output dir> [serve args file]`
   (absolute paths).
   `GATES=gsm8k,long` adds the GSM8K / 128K checks; `STOP_BELOW=<tok/s>` skips the second start
@@ -189,7 +189,7 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   floating-point reordering, the precision and serving constraints, no benchmark-specific
   tricks). When unsure whether something is allowed, ask your parent before building on it.
 - **Honest numbers.** Report failures, noise and doubts plainly. Quick numbers (short benches,
-  microbenchmarks) are for deciding what to do next; only harness results (2 starts x 200 prompts) and
+  microbenchmarks) are for deciding what to do next; only harness results (2 starts x 300 prompts) and
   official numbers count. Know the task's noise (TASK): a small difference is neither a result nor noise
   until fresh starts settle it. "Below noise" means measure more carefully, not give up: small
   gains count, and they stack. The reverse also holds: **don't spend GPU minutes on a comparison

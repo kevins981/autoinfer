@@ -32,9 +32,9 @@ NOISE = """- **Noise**: repeat runs on the same inference server vary ~0.5% (CV)
   the less repetition it needs to be convincing. A single start that looks worse can be the
   outlier: record it as a screen negative, not a measured fact (weak negatives recorded as facts
   deter later work wrongly). How codes are measured and compared in this run: the run's
-  instructions (the harness, 2 starts x 200 prompts)."""
+  instructions (the harness, 2 starts x 300 prompts)."""
 LIB_NOTE = """# compare against another code measured the same way. To measure a record or a workspace (with
-# extra serve args or env) at the unofficial settings, run harness/eval.sh with TRIALS=2 PROMPTS=200.
+# extra serve args or env) at the unofficial settings, run harness/eval.sh with TRIALS=2 PROMPTS=300.
 """
 
 

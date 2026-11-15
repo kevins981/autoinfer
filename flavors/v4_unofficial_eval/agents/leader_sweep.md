@@ -143,8 +143,8 @@ where you disagree, with your reason. You make the final judgment. `review --hel
   what code it contains (a revert also removes the records that build on the reverted one). When
   the unofficial champion moves, your measured numbers stay valid; to beat the new unofficial champion, a change that stacks on it
   must include its code (a new record).
-- **Unofficial evals** (the harness with `TRIALS=2 PROMPTS=200` on a workspace made from the record,
-  in the background, ~5 GPU-min; see Tools) are how a record competes: two fresh starts of your
+- **Unofficial evals** (the harness with `TRIALS=2 PROMPTS=300` on a workspace made from the record,
+  in the background, ~6 GPU-min; see Tools) are how a record competes: two fresh starts of your
   record, output in its `unofficial/<n>/`; compare with the unofficial champion's numbers (in its
   record's unofficial/ folder); `STOP_BELOW=<tok/s>` skips the second start on a clear loss. Add the
   GSM8K check if the change touches numerics, the 128K check if it touches memory (CUDA graphs,

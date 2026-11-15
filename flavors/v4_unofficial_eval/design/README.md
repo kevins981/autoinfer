@@ -91,3 +91,7 @@ difference 0.74%). So a cached reference is about as good as re-running it.
 - 2026-11-15, human: the sparring partner is replaced by a reviewer (design/review.md): a fresh
   codex agent that reads the run and code and runs CPU commands; leaders decide when to use it
   (suggested: every record, positive or negative) and are responsible for their team's reviews.
+- 2026-11-15, human: unofficial numbers use 300 prompts (was 200), still 2 fresh starts, no same-job
+  reference (ABBA isn't coming back). Why: in sweep-simple-eval unofficial gains understated official
+  ones (~2x early). Likely causes besides prompt count: drift between jobs and the champion's
+  reference starts skewing high (winner's curse), which 300 prompts doesn't remove.

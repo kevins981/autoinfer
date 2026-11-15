@@ -54,9 +54,9 @@ initialize():
     # These are the human's constraints: no agent may override them.
     # Baseline: new_run put its official result in bank/BASE/; champion.md starts with BASE as
     # both the unofficial and the official champion.
-    harness on BASE &       # `ws create base`, then the harness (TRIALS=2 PROMPTS=200, output in
+    harness on BASE &       # `ws create base`, then the harness (TRIALS=2 PROMPTS=300, output in
                             # bank/BASE/unofficial/1/) in the background; open the teams without
-                            # waiting: BASE's numbers at the unofficial settings (MGR, ~5 GPU-min), so teams
+                            # waiting: BASE's numbers at the unofficial settings (MGR, ~6 GPU-min), so teams
                             # have a reference without measuring it themselves
     # Tell the human the plan: teams, the pool, the funding policy in two lines.
 ```

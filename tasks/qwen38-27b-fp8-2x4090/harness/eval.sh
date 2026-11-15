@@ -7,7 +7,7 @@
 # Run inside a GPU job (`gpu run`; official_eval and agents both use it). Frozen: agents must not modify.
 # Optional settings (env), defaults = the official eval: PROMPTS=400 per trial; GATES=gsm8k,long
 # (or a subset, or none); STOP_BELOW=0 (>0: stop after trial 1 if it is below this tok/s; writes
-# <out>/stopped_early). Comparable unofficial numbers: TRIALS=2 PROMPTS=200.
+# <out>/stopped_early). Comparable unofficial numbers: TRIALS=2 PROMPTS=300.
 # usage: eval.sh <workspace dir> <output dir> [extra serve args file]
 # output: <out>/trial<t>/{server.log,startup.txt,bench_c16.json,bench.log,metrics_*.txt,gpu_clocks.csv},
 #         <out>/server_cmd.txt, <out>/gsm8k.{json,log}, <out>/long_request.{json,log}

@@ -1,0 +1,849 @@
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 20de13f59d..af5227a133 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -1616,7 +1616,15 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     # The activation dtype config for humming kernel. Explicit schemas disable
+     # fallback unless the config includes "allow_fallback": true.
+     "VLLM_HUMMING_INPUT_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
+-        os.environ.get("VLLM_HUMMING_INPUT_QUANT_CONFIG", None)
++        # Default (when unset): the W8A8 scheme of FP8 block-quantized checkpoints, i.e.
++        # fp8 e4m3 activations quantized dynamically per token per 128-channel group
++        # (same granularity as vLLM's per_token_group_quant_fp8 / the checkpoint's
++        # 128x128 block weights); fp32 accumulation. Only read when
++        # `--quantization humming` is used. Setting the env var still wins.
++        os.environ.get(
++            "VLLM_HUMMING_INPUT_QUANT_CONFIG",
++            '{"dtype": "float8e4m3", "group_size": 128, "quant_mode": "dynamic_group"}',
++        )
+     ),
+     # Whether to use fp16 accumulator mma
+     "VLLM_HUMMING_USE_F16_ACCUM": lambda: maybe_convert_bool(
+diff --git a/vllm/model_executor/kernels/linear/scaled_mm/humming.py b/vllm/model_executor/kernels/linear/scaled_mm/humming.py
+index 4a68c3dbe4..b719d0054f 100644
+--- a/vllm/model_executor/kernels/linear/scaled_mm/humming.py
++++ b/vllm/model_executor/kernels/linear/scaled_mm/humming.py
+@@ -7,6 +7,7 @@ from vllm.logger import init_logger
+ from vllm.model_executor.layers.quantization.utils.humming import (
+     apply_humming_linear,
+     convert_linear_layer_to_humming_standard,
++    get_humming_decode_tuning_config,
+     get_humming_linear_compute_config,
+     prepare_humming_linear_layer_config,
+ )
+@@ -83,6 +84,15 @@ class HummingFP8ScaledMMLinearKernel(FP8ScaledMMLinearKernel):
+         self.layer_config = prepare_humming_linear_layer_config(layer, quant_config)
+         self.compute_config = get_humming_linear_compute_config()
+         self.locks = create_humming_locks(layer.weight.device)
++        self.tuning_config = get_humming_decode_tuning_config(
++            self.layer_config, self.compute_config
++        )
++        logger.info_once(
++            "humming fp8 decode tuning for (N=%s, K=%s): %s",
++            self.layer_config.shape_n,
++            self.layer_config.shape_k,
++            "on" if self.tuning_config else "off",
++        )
+ 
+     def apply_weights(
+         self,
+@@ -97,6 +107,7 @@ class HummingFP8ScaledMMLinearKernel(FP8ScaledMMLinearKernel):
+             layer_config=self.layer_config,
+             compute_config=self.compute_config,
+             locks=self.locks,
++            tuning_config=self.tuning_config,
+         )
+ 
+     def apply_scaled_mm(
+diff --git a/vllm/model_executor/layers/logits_processor.py b/vllm/model_executor/layers/logits_processor.py
+index 1ca1d71381..06c1bc5ec7 100644
+--- a/vllm/model_executor/layers/logits_processor.py
++++ b/vllm/model_executor/layers/logits_processor.py
+@@ -55,6 +55,22 @@ def _topk(scores: torch.Tensor, k: int) -> tuple[torch.Tensor, torch.Tensor]:
+ 
+ # --8<-- [start:logits_processor]
+ @PluggableLayer.register("logits_processor")
++def combine_local_argmax(
++    gathered: torch.Tensor, batch: int, tp_size: int
++) -> torch.Tensor:
++    """Combine all-gathered per-rank (max value, global index) pairs.
++
++    ``gathered`` is [batch, 2 * tp_size] (rank-major pairs). The largest value
++    wins; ties go to the lowest rank, whose vocab shard holds the lowest global
++    indices, so the result equals ``torch.argmax`` over the full logits (first
++    max).
++    """
++    gathered = gathered.view(batch, tp_size, 2)
++    max_rank_idx = gathered[:, :, 0].argmax(dim=-1, keepdim=True)
++    top_tokens = gathered[:, :, 1].gather(dim=-1, index=max_rank_idx)
++    return top_tokens.squeeze(-1).to(torch.int64)
++
++
+ class LogitsProcessor(PluggableLayer):
+     """Process logits and apply logits processors from sampling metadata.
+ 
+@@ -257,10 +273,7 @@ class LogitsProcessor(PluggableLayer):
+         # [batch, 2] -> [batch, 2 * tp_size]
+         gathered = tensor_model_parallel_all_gather(local_pair, dim=-1)
+         # [batch, tp_size, 2] where [:, :, 0]=values, [:, :, 1]=indices
+-        gathered = gathered.view(hidden_states.shape[0], tp_size, 2)
+-        max_rank_idx = gathered[:, :, 0].argmax(dim=-1, keepdim=True)
+-        top_tokens = gathered[:, :, 1].gather(dim=-1, index=max_rank_idx)
+-        return top_tokens.squeeze(-1).to(torch.int64)
++        return combine_local_argmax(gathered, hidden_states.shape[0], tp_size)
+ 
+     def get_top_k_tokens(
+         self,
+diff --git a/vllm/model_executor/layers/quantization/humming.py b/vllm/model_executor/layers/quantization/humming.py
+index ea4c9f6c47..9f70560497 100644
+--- a/vllm/model_executor/layers/quantization/humming.py
++++ b/vllm/model_executor/layers/quantization/humming.py
+@@ -213,7 +213,10 @@ class HummingConfig(QuantizationConfig):
+             if module_name.startswith("re:"):
+                 if re.match(module_name[3:], prefix):
+                     return True
+-            elif module_name in prefix:
++            elif f".{module_name}." in f".{prefix}.":
++                # Match whole dotted components only: a plain substring test made the
++                # (dense-model) ignore entry "...layers.0.mlp.gate" also skip
++                # "...layers.0.mlp.gate_up_proj", leaving the MLP unquantized.
+                 return True
+         if "lm_head" in prefix:
+             return True
+diff --git a/vllm/model_executor/layers/quantization/utils/humming/linear.py b/vllm/model_executor/layers/quantization/utils/humming/linear.py
+index f8557ccbe4..5ee79b0229 100644
+--- a/vllm/model_executor/layers/quantization/utils/humming/linear.py
++++ b/vllm/model_executor/layers/quantization/utils/humming/linear.py
+@@ -239,6 +239,7 @@ def apply_humming_linear(
+     layer_config: "LayerConfig",
+     compute_config: str,
+     locks: torch.Tensor,
++    tuning_config: str | None = None,
+ ) -> torch.Tensor:
+     from vllm.utils.humming import humming_forward
+ 
+@@ -261,5 +262,73 @@ def apply_humming_linear(
+         hadamard_block_size=layer.weight_schema.hadamard_block_size,
+         locks=locks,
+         compute_config=compute_config,
++        tuning_config=tuning_config,
+     )
+     return output.view(*x.shape[:-1], output.size(-1))
++
++
++# Decode-shape (M <= 64) overrides of humming's default heuristic config for dense
++# FP8 W8A8 layers on SM89. Keyed by (shape_n, shape_k); each entry is
++# (m_lo, m_hi, delta): for M in (m_lo, m_hi] the default config of that M gets
++# `delta` applied. Found by a one-parameter-at-a-time sweep (agents/leader-1.w1/hm):
++# only entries that won at that M bucket. M > 64 is never touched.
++# delta keys: "stream_k" (bool), "bm" (block/warp M), "bn" (block N), "bk" (block K).
++_DECODE_TUNE = {
++    (17408, 5120): [(0, 64, {"stream_k": False})],
++    (8192, 5120): [(0, 48, {"stream_k": False}), (48, 64, {"bn": 64})],
++    (5120, 3072): [(0, 32, {"stream_k": False}), (32, 64, {"bm": 32})],
++    (5120, 8704): [(32, 64, {"bk": 128})],
++}
++
++
++def _apply_delta(cfg: dict, delta: dict) -> dict:
++    cfg = json.loads(json.dumps(cfg))
++    bm, bn, bk = cfg["block_shape"]
++    wm, wn, wk = cfg["warp_shape"]
++    if "stream_k" in delta:
++        cfg["use_stream_k"] = delta["stream_k"]
++    if "bm" in delta:
++        bm = delta["bm"]
++        wm = min(wm, bm)
++    if "bn" in delta:
++        bn = delta["bn"]
++        wn = min(wn, bn)
++    if "bk" in delta:
++        bk = delta["bk"]
++        wk = min(wk, bk)
++    cfg["block_shape"] = [bm, bn, bk]
++    cfg["warp_shape"] = [wm, wn, wk]
++    return cfg
++
++
++def get_humming_decode_tuning_config(layer_config, compute_config: str) -> str | None:
++    """Default humming heuristic config list with the decode-shape overrides spliced
++    in, as a JSON string for `tuning_config`; None when no override applies."""
++    import os
++
++    if os.environ.get("VLLM_HUMMING_DECODE_TUNE", "1") == "0":
++        return None
++    key = (layer_config.shape_n, layer_config.shape_k)
++    rules = _DECODE_TUNE.get(key)
++    if not rules:
++        return None
++    from vllm.utils.humming import get_heuristics_config
++
++    compute = json.loads(compute_config)
++    if compute.get("use_f16_accum") or compute.get("use_batch_invariant"):
++        return None
++    default = get_heuristics_config(
++        layer_config, **compute, device=torch.cuda.current_device()
++    )
++    cuts = sorted({b for lo, hi, _ in rules for b in (lo, hi)})
++    out = []
++    for lo, hi, cfg in default:
++        pts = [lo] + [c for c in cuts if lo < c < hi] + [hi]
++        for a, b in zip(pts, pts[1:]):
++            c = cfg
++            for rlo, rhi, delta in rules:
++                if a >= rlo and b <= rhi:
++                    c = _apply_delta(cfg, delta)
++                    break
++            out.append([a, b, c])
++    return json.dumps(out)
+diff --git a/vllm/models/qwen3_5/nvidia/mtp.py b/vllm/models/qwen3_5/nvidia/mtp.py
+index dfdee2d90b..197de1e5fd 100644
+--- a/vllm/models/qwen3_5/nvidia/mtp.py
++++ b/vllm/models/qwen3_5/nvidia/mtp.py
+@@ -279,8 +279,77 @@ class Qwen3_5MTP(LocalArgmaxMixin, nn.Module, SupportsMultiModal, SupportsPP):
+         hidden_states: torch.Tensor,
+         spec_step_idx: int = 0,
+     ) -> torch.Tensor:
+-        # One lm_head is shared by all MTP modules, as in compute_logits.
+-        return super().get_top_tokens(hidden_states)
++        # T2 (leader-2): reduced-vocabulary draft head. The drafter only proposes; the
++        # target verifies with its full lm_head, so outputs are unchanged. The draft
++        # head covers token ids [0, N) (the tokenizer's id order, roughly BPE merge
++        # order: a data-free, generic choice), split evenly across TP ranks so each
++        # rank reads N/tp rows instead of vocab/tp.
++        w = getattr(self, "_t2_draft_head", None)
++        if w is None:
++            # One lm_head is shared by all MTP modules, as in compute_logits.
++            return super().get_top_tokens(hidden_states)
++        logits = torch.nn.functional.linear(hidden_states, w)
++        vals, idx = logits.max(dim=-1)
++        gidx = idx + self._t2_draft_offset
++        tp = self.lm_head.tp_size
++        if tp == 1:
++            return gidx
++        pair = torch.stack([vals.float(), gidx.float()], dim=-1)
++        gathered = tensor_model_parallel_all_gather(pair, dim=-1)
++        gathered = gathered.view(hidden_states.shape[0], tp, 2)
++        best = gathered[:, :, 0].argmax(dim=-1, keepdim=True)
++        return gathered[:, :, 1].gather(dim=-1, index=best).squeeze(-1).to(torch.int64)
++
++    def _t2_build_draft_head(self) -> None:
++        import os
++
++        from vllm.distributed.parallel_state import get_tp_group
++
++        n = int(os.environ.get("VLLM_T2_DRAFT_VOCAB", "65536"))
++        head = self.lm_head
++        if n <= 0 or isinstance(head, PPMissingLayer):
++            return
++        tp = head.tp_size
++        weight = head.weight
++        si = head.shard_indices
++        vocab = si.org_vocab_end_index - si.org_vocab_start_index
++        per_rank = n // tp
++        if weight.dtype not in (torch.bfloat16, torch.float16) or per_rank * tp != n:
++            return
++        # Every rank's slice [r*per_rank, (r+1)*per_rank) must live in some rank's shard.
++        local_vocab = weight.shape[0]
++        group = get_tp_group()
++        rank = group.rank_in_group
++        mine = None
++        for r in range(tp):
++            lo, hi = r * per_rank, (r + 1) * per_rank
++            src = lo // local_vocab
++            if (hi - 1) // local_vocab != src:
++                return  # slice spans two shards: keep the full head
++            if src == rank:
++                part = weight[lo - src * local_vocab : hi - src * local_vocab].clone()
++            else:
++                part = torch.empty(
++                    (per_rank, weight.shape[1]), dtype=weight.dtype, device=weight.device
++                )
++            if tp > 1 and src != r:
++                # move the slice from its owner (src) to rank r
++                if rank in (src, r):
++                    part = part.contiguous()
++                    group.broadcast(part, src=src)
++                else:
++                    group.broadcast(part, src=src)
++            if r == rank:
++                mine = part
++            del part
++        del vocab
++        self._t2_draft_head = mine
++        self._t2_draft_offset = rank * per_rank
++        logger.info(
++            "T2 reduced-vocab draft head: token ids [0, %d), %d rows on this rank",
++            n,
++            per_rank,
++        )
+ 
+     def is_unused_checkpoint_weight(self, name: str) -> bool:
+         return not name.startswith("mtp.") and not any(
+@@ -299,7 +368,9 @@ class Qwen3_5MTP(LocalArgmaxMixin, nn.Module, SupportsMultiModal, SupportsPP):
+                 yield name, weight
+ 
+         loader = AutoWeightsLoader(self)
+-        return loader.load_weights(remap_weight_names(weights))
++        loaded = loader.load_weights(remap_weight_names(weights))
++        self._t2_build_draft_head()
++        return loaded
+ 
+ 
+ class Qwen3_5MoeMTP(Qwen3_5MTP, QwenNextMixtureOfExperts):
+diff --git a/vllm/utils/humming.py b/vllm/utils/humming.py
+index 8004812ea4..b7d475e4bf 100644
+--- a/vllm/utils/humming.py
++++ b/vllm/utils/humming.py
+@@ -8,7 +8,10 @@ symbols to both the ``TYPE_CHECKING`` imports and ``_EXPORTS``, using
+ ``"module.path:attr"`` or ``"module.path"`` for a whole-module re-export.
+ """
+ 
++import glob
+ import importlib
++import importlib.util
++import os
+ from typing import TYPE_CHECKING, Any
+ 
+ import torch
+@@ -60,6 +63,32 @@ if TYPE_CHECKING:
+     from humming.tune import get_heuristics_config as get_heuristics_config
+     from humming.utils.weight import quantize_weight as quantize_weight
+ 
++def _expose_nvrtc_builtins() -> None:
++    """Make humming's NVRTC compile subprocess find libnvrtc-builtins.
++
++    humming JIT-compiles through a separate `nvrtc_compile` binary that dlopens the pip
++    package's libnvrtc.so (nvidia/cu13/lib). libnvrtc then dlopens libnvrtc-builtins.so.13.0
++    by bare name, which fails unless that directory is on LD_LIBRARY_PATH of the child
++    process. Children inherit os.environ at spawn time, so extending it here (before the
++    first compile) is enough; no manual LD_LIBRARY_PATH is needed. No-op when the library is
++    not in a pip `nvidia` package.
++    """
++    spec = importlib.util.find_spec("nvidia")
++    for base in (spec.submodule_search_locations or []) if spec else []:
++        for lib_dir in glob.glob(os.path.join(base, "cu*", "lib")):
++            if not glob.glob(os.path.join(lib_dir, "libnvrtc-builtins.so*")):
++                continue
++            cur = os.environ.get("LD_LIBRARY_PATH", "")
++            if lib_dir not in cur.split(os.pathsep):
++                os.environ["LD_LIBRARY_PATH"] = (
++                    lib_dir + (os.pathsep + cur if cur else "")
++                )
++            return
++
++
++_expose_nvrtc_builtins()
++
++
+ _EXPORTS: dict[str, str] = {
+     "dtypes": "humming.dtypes",
+     "DataType": "humming.dtypes:DataType",
+diff --git a/vllm/v1/attention/backends/flashinfer.py b/vllm/v1/attention/backends/flashinfer.py
+index d9436384ac..d0ef9ba231 100755
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -7,6 +7,10 @@ from enum import Enum
+ from functools import partial
+ from typing import ClassVar
+ 
++import contextlib
++import os
++import threading
++
+ import numpy as np
+ import torch
+ from flashinfer import (
+@@ -861,6 +865,46 @@ class FlashInferMetadata:
+     """
+ 
+ 
++
++# --- Draft-metadata fast path (T1, leader-1.w1) -------------------------------
++# While the drafter builds its uniform decode metadata, the exact seq_lens only
++# exist on the GPU (rejections of the previous verify step). Reading them with
++# `.cpu()` blocks the host until the whole step has finished on the GPU and
++# leaves the GPU idle while the host prepares the next step. FlashInfer's
++# plan() only needs the lengths for scheduling (split-KV chunking); the kernel
++# reads the real indptr / last_page_len / indices from GPU buffers. So: plan
++# with the CPU upper bound and overwrite those GPU buffers with exact values
++# computed on the GPU. Checked bitwise-identical to an exact plan in
++# bench/test_plan_ub.py (workspace leader-1.draftmeta). Only the drafter path,
++# only the cuda-graph decode wrapper; everything else keeps the exact path.
++_draft_ub_state = threading.local()
++
++
++@contextlib.contextmanager
++def draft_upper_bound_planning():
++    prev = getattr(_draft_ub_state, "on", False)
++    _draft_ub_state.on = _DRAFT_UB_ENABLED
++    try:
++        yield
++    finally:
++        _draft_ub_state.on = prev
++
++
++def _draft_ub_active() -> bool:
++    if not getattr(_draft_ub_state, "on", False):
++        return False
++    mode = _DRAFT_UB_MODE
++    if mode.startswith("file:"):  # debug: old path while the file exists
++        return not os.path.exists(mode[5:])
++    return mode != "0"
++
++
++_DRAFT_UB_MODE = os.environ.get("VLLM_DRAFT_UB_PLAN", "1")
++_DRAFT_UB_ENABLED = _DRAFT_UB_MODE != "0"
++_DRAFT_UB_CHECK_FILE = os.environ.get("VLLM_DRAFT_UB_CHECK")  # debug: checks run while this path exists
++_draft_ub_check_stats = [0, 0, 0]  # steps checked, mismatching steps, rows
++
++
+ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+     kv_cache_spec: AttentionSpec
+     reorder_batch_threshold: int = 1
+@@ -1686,6 +1730,7 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+         # When all attention (both prefill and decode) uses TRTLLM,
+         # seq_lens_cpu is not needed since TRTLLM paths use GPU tensors
+         # (block_tables, seq_lens) directly.
++        draft_ub_plan = False
+         needs_seq_lens_cpu = self.use_dcp or not all_uses_trtllm
+         if needs_seq_lens_cpu:
+             if (
+@@ -1694,6 +1739,18 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+             ):
+                 # No speculative token accounting, so the upper bound is exact.
+                 seq_lens_cpu = common_attn_metadata.seq_lens_cpu_upper_bound
++            elif (
++                _draft_ub_active()
++                and not self.use_dcp
++                and common_attn_metadata.seq_lens_cpu_upper_bound is not None
++                and num_prefills == 0
++                and self.enable_cuda_graph
++                and num_decode_tokens <= self._decode_cudagraph_max_bs
++            ):
++                # Drafter decode: plan with the upper bound, exact values are
++                # written on the GPU after planning (see _draft_ub_state).
++                seq_lens_cpu = common_attn_metadata.seq_lens_cpu_upper_bound
++                draft_ub_plan = True
+             else:
+                 with gpu_sync_allowed():
+                     seq_lens_cpu = common_attn_metadata.seq_lens.cpu()
+@@ -2019,9 +2076,88 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+                     disable_split_kv=self.disable_split_kv,
+                     q_len_per_req=q_len_per_req,
+                 )
++                if draft_ub_plan and use_cudagraph:
++                    self._write_exact_decode_kv_metadata(
++                        common_attn_metadata.seq_lens,
++                        block_table_tensor,
++                        num_reqs,
++                        page_size,
++                        seq_lens_cpu_check=(
++                            common_attn_metadata.seq_lens_cpu_upper_bound
++                        ),
++                    )
+                 attn_metadata.decode = FIDecode(wrapper=decode_wrapper)
+         return attn_metadata
+ 
++    def _write_exact_decode_kv_metadata(
++        self,
++        seq_lens: torch.Tensor,
++        block_table_tensor: torch.Tensor,
++        num_reqs: int,
++        page_size: int,
++        seq_lens_cpu_check: torch.Tensor | None,
++    ) -> None:
++        """Overwrite paged_kv_indptr / indices / last_page_len (GPU) with the
++        exact values from the device seq_lens; same formulas as the host path in
++        _compute_flashinfer_kv_metadata. Stream-ordered after plan()'s H2D copies."""
++        sl = seq_lens[:num_reqs]
++        nb = (sl + (page_size - 1)) // page_size
++        indptr = self.paged_kv_indptr.gpu[: num_reqs + 1]
++        indptr[:1].zero_()
++        torch.cumsum(nb, dim=0, dtype=torch.int32, out=indptr[1 : num_reqs + 1])
++        lp = sl % page_size
++        lp = torch.where((lp == 0) & (sl != 0), page_size, lp)
++        self.paged_kv_last_page_len.gpu[:num_reqs].copy_(lp)
++        # Pages past the exact count are never read; the grid is the (host)
++        # upper-bound page count, the kernel copies only exact pages.
++        _copy_page_indices_kernel[(num_reqs,)](
++            self.paged_kv_indices,
++            block_table_tensor,
++            block_table_tensor.stride(0),
++            indptr,
++            BLOCK_SIZE=1024,
++        )
++        if _DRAFT_UB_CHECK_FILE and os.path.exists(_DRAFT_UB_CHECK_FILE):
++            # Debug only (syncs): compare with the exact host computation.
++            with gpu_sync_allowed():
++                sl_cpu = seq_lens[:num_reqs].cpu().numpy()
++                nb_np = (sl_cpu + (page_size - 1)) // page_size
++                ip_np = np.concatenate([[0], np.cumsum(nb_np)]).astype(np.int32)
++                lp_np = sl_cpu % page_size
++                lp_np = np.where((lp_np == 0) & (sl_cpu != 0), page_size, lp_np)
++                ok = bool(
++                    np.array_equal(indptr.cpu().numpy(), ip_np)
++                    and np.array_equal(
++                        self.paged_kv_last_page_len.gpu[:num_reqs].cpu().numpy(),
++                        lp_np.astype(np.int32),
++                    )
++                )
++                # indices: compare against block_table rows
++                tot = int(ip_np[-1])
++                ref = np.concatenate(
++                    [
++                        block_table_tensor[r, : int(nb_np[r])].cpu().numpy()
++                        for r in range(num_reqs)
++                    ]
++                    or [np.zeros(0, np.int32)]
++                )
++                ok &= bool(
++                    np.array_equal(self.paged_kv_indices[:tot].cpu().numpy(), ref)
++                )
++                ub = seq_lens_cpu_check
++                ub_ok = ub is None or bool(
++                    (ub[:num_reqs].cpu().numpy() >= sl_cpu).all()
++                )
++            st = _draft_ub_check_stats
++            st[0] += 1
++            st[1] += 0 if (ok and ub_ok) else 1
++            st[2] += num_reqs
++            if st[0] % 50 == 0 or not (ok and ub_ok):
++                logger.info(
++                    "DRAFT_UB_CHECK steps=%d bad=%d rows=%d (this: bufs_ok=%s ub>=exact=%s)",
++                    st[0], st[1], st[2], ok, ub_ok,
++                )
++
+     def update_draft_decode_metadata(self, _metadata: FlashInferMetadata) -> None:
+         pass
+ 
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+index 5286d9008d..228b4f51bd 100644
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -16,6 +16,7 @@ hidden. Prefer utility functions defined elsewhere and call them from here,
+ instead of embedding feature-specific logic directly.
+ """
+ 
++import os
+ import functools
+ import gc
+ import time
+@@ -1698,6 +1699,106 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         )
+         return block_tables, slot_mappings
+ 
++    def _local_argmax_head(self):
++        """(logits_processor, lm_head) of the target if it exposes both."""
++        cached = getattr(self, "_local_argmax_head_cache", 0)
++        if cached != 0:
++            return cached
++        found = None
++        for m in (self.model, getattr(self.model, "language_model", None)):
++            if (
++                m is not None
++                and hasattr(m, "logits_processor")
++                and hasattr(m, "lm_head")
++                and not getattr(m.logits_processor, "logits_as_input", False)
++            ):
++                found = (m.logits_processor, m.lm_head)
++                break
++        self._local_argmax_head_cache = found
++        return found
++
++    def _use_target_local_argmax(
++        self, input_batch: InputBatch, grammar_output: GrammarOutput | None
++    ) -> bool:
++        # VLLM_TARGET_LOCAL_ARGMAX=0 disables. Pure host-side checks: the same
++        # outcome on every TP rank (state is replicated), so no rank can skip
++        # a collective the others run.
++        ok, reason = self._local_argmax_decision(input_batch, grammar_output)
++        if os.environ.get("VLLM_TARGET_LOCAL_ARGMAX_LOG") == "1":
++            idx = input_batch.idx_mapping_np
++            s = self.sampler
++            assert s is not None
++            logger.info(
++                "LA_GATE tp_rank=%d use=%s reason=%s reqs=%d drafts=%d "
++                "temp=%s needs_proc=%s",
++                self.tp_rank_for_log(),
++                ok,
++                reason,
++                input_batch.num_reqs,
++                input_batch.num_draft_tokens,
++                s.sampling_states.temperature.np[idx].tolist(),
++                s.needs_logits_processing[idx].tolist(),
++            )
++        return ok
++
++    def tp_rank_for_log(self) -> int:
++        from vllm.distributed.parallel_state import get_tp_group
++
++        return get_tp_group().rank_in_group
++
++    def _local_argmax_decision(
++        self, input_batch: InputBatch, grammar_output: GrammarOutput | None
++    ) -> tuple[bool, str]:
++        if os.environ.get("VLLM_TARGET_LOCAL_ARGMAX", "1") == "0":
++            return False, "env_off"
++        rs = self.rejection_sampler
++        if rs is None:
++            return False, "no_rejection_sampler"
++        if grammar_output is not None:
++            return False, "grammar"
++        if self.batch_sharder is not None:
++            return False, "batch_sharder"
++        if input_batch.num_reqs == 0:
++            return False, "no_reqs"
++        if input_batch.num_draft_tokens == 0:
++            return False, "no_drafts"
++        if self.speculator is None:
++            return False, "no_speculator"
++        if self._local_argmax_head() is None:
++            return False, "no_head"
++        if not rs.supports_greedy_target_tokens():
++            return False, "sampler_unsupported"
++        if not rs.can_verify_greedy_tokens(input_batch):
++            return False, "not_greedy_or_processed"
++        return True, "ok"
++
++    def _check_local_argmax(self, use_local: bool, hidden: torch.Tensor) -> None:
++        """Debug only (syncs): compare local-argmax tokens with the argmax of
++        the gathered full logits, and count used/fallback steps."""
++        st = self.__dict__.setdefault("_la_stats", [0, 0, 0, 0])  # used, fb, rows, bad
++        if not use_local:
++            st[1] += 1
++        else:
++            top = self._target_top_tokens(hidden)
++            ref = self.model_state.compute_sample_logits(hidden).argmax(dim=-1)
++            st[0] += 1
++            st[2] += int(top.numel())
++            st[3] += int((top != ref).sum().item())
++        if (st[0] + st[1]) % 25 == 0 or st[3]:
++            logger.info(
++                "LOCAL_ARGMAX_CHECK used=%d fallback=%d rows=%d mismatches=%d",
++                *st,
++            )
++
++    def _target_top_tokens(self, sample_hidden_states: torch.Tensor) -> torch.Tensor:
++        lp, head = self._local_argmax_head()
++        return lp.get_top_tokens(head, sample_hidden_states)
++
++    def _sample_greedy_tokens(self, top, input_batch):
++        assert self.rejection_sampler is not None
++        out = self.rejection_sampler.verify_greedy_tokens(top, input_batch)
++        return out, out.num_sampled, out.num_rejected
++
+     def sample(
+         self,
+         hidden_states: torch.Tensor,
+@@ -1725,6 +1826,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+             logits = logits[:, : self.vocab_size]
+         else:
+             sample_hidden_states = hidden_states[input_batch.logits_indices]
++            use_local = self._use_target_local_argmax(input_batch, grammar_output)
++            if os.environ.get("VLLM_TARGET_LOCAL_ARGMAX_CHECK") == "1":
++                self._check_local_argmax(use_local, sample_hidden_states)
++            if use_local:
++                # All-greedy, unprocessed, no logprobs: skip the full-vocab
++                # logits all-gather; exchange only (max, index) pairs.
++                top = self._target_top_tokens(sample_hidden_states)
++                return self._sample_greedy_tokens(top, input_batch)
+             logits = self.model_state.compute_sample_logits(sample_hidden_states)
+ 
+         # A diffusion prefill has no logit rows even when a bitmask row
+diff --git a/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py b/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
+index f5f40ea271..3c3f522491 100644
+--- a/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
++++ b/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
+@@ -112,6 +112,41 @@ def _gather_draft_sampled_kernel(
+     tl.store(pos_ptr + block, pos, mask=mask)
+ 
+ 
++@triton.jit
++def _greedy_verify_kernel(
++    # [num_reqs, num_speculative_steps + 1]
++    sampled_ptr,
++    sampled_stride,
++    # [num_reqs]
++    num_sampled_ptr,
++    # [num_logits] target argmax of each logits row
++    target_tokens_ptr,
++    # [num_logits] (row j holds the draft token that row j-1 verifies)
++    draft_sampled_ptr,
++    # [num_reqs + 1]
++    cu_num_logits_ptr,
++):
++    req_idx = tl.program_id(0)
++    start_idx = tl.load(cu_num_logits_ptr + req_idx).to(tl.int64)
++    end_idx = tl.load(cu_num_logits_ptr + req_idx + 1).to(tl.int64)
++    num_draft_tokens = end_idx - start_idx - 1
++    running = tl.full((), 1, tl.int32)
++    accepted = tl.full((), 0, tl.int32)
++    for i in range(num_draft_tokens):
++        target = tl.load(target_tokens_ptr + start_idx + i).to(tl.int64)
++        draft = tl.load(draft_sampled_ptr + start_idx + i + 1).to(tl.int64)
++        # -1 placeholders are never accepted (draft >= 0 fails).
++        ok = ((target == draft) & (draft >= 0)).to(tl.int32)
++        running = running * ok
++        accepted += running
++        # Accepted slots equal the target argmax; the first rejected slot is
++        # the target argmax too, so every slot up to the bonus holds it.
++        tl.store(sampled_ptr + req_idx * sampled_stride + i, target)
++    bonus = tl.load(target_tokens_ptr + start_idx + num_draft_tokens).to(tl.int64)
++    tl.store(sampled_ptr + req_idx * sampled_stride + num_draft_tokens, bonus)
++    tl.store(num_sampled_ptr + req_idx, accepted + 1)
++
++
+ def gather_draft_sampled(
+     input_ids: torch.Tensor,
+     positions: torch.Tensor,
+@@ -421,6 +456,81 @@ class RejectionSampler:
+         )
+         return sampled, num_sampled, logprobs_tensors, sampling_mask_tensors
+ 
++    def supports_greedy_target_tokens(self) -> bool:
++        """Whether verification may consume precomputed target argmax tokens
++        (static part; the per-batch part is `can_verify_greedy_tokens`)."""
++        s = self.sampler
++        return (
++            self.watermark_key is None
++            and not self.use_block_verification
++            and self.fly_window_size == 0
++            and self.synthetic_conditional_rates is None
++            and not self.enable_adaptive_verification
++            and not s.compute_nans
++            and not s.return_sampling_mask
++            and s.trace_replay_state is None
++            and len(s.logits_processors) == 3  # no custom logits processors
++        )
++
++    def can_verify_greedy_tokens(self, input_batch: InputBatch) -> bool:
++        """Per-batch check (host-side, no GPU sync): every request is greedy,
++        needs no logits processing of any kind (penalties, logit bias, allowed
++        ids, min_tokens, bad words, thinking budget, ...) and no logprobs."""
++        idx = input_batch.idx_mapping_np
++        s = self.sampler
++        return (
++            bool(np.all(s.sampling_states.temperature.np[idx] == 0.0))
++            and not np.any(s.needs_logits_processing[idx])
++            and s.get_logprobs_dims(idx) is None
++        )
++
++    def verify_greedy_tokens(
++        self, target_tokens: torch.Tensor, input_batch: InputBatch
++    ) -> SamplerOutput:
++        """Greedy verification from per-row target argmax tokens [num_logits].
++
++        Equivalent to `__call__` on the full logits when all requests are
++        greedy and unprocessed: accept draft j while it equals the target
++        argmax of row j; the first mismatch (or the bonus row) emits the
++        target argmax."""
++        draft_sampled, _ = gather_draft_sampled(
++            input_batch.input_ids,
++            input_batch.positions,
++            input_batch.logits_indices,
++            input_batch.expanded_idx_mapping,
++            input_batch.expanded_local_pos,
++            self.sampler.req_states.prefill_len.gpu,
++        )
++        num_reqs = input_batch.num_reqs
++        sampled = draft_sampled.new_empty(
++            num_reqs, self.num_speculative_steps + 1, dtype=torch.int64
++        )
++        num_sampled = sampled.new_empty(num_reqs, dtype=torch.int32)
++        _greedy_verify_kernel[(num_reqs,)](
++            sampled,
++            sampled.stride(0),
++            num_sampled,
++            target_tokens,
++            draft_sampled,
++            input_batch.cu_num_logits,
++            num_warps=1,
++        )
++        num_sampled, num_rejected = get_num_sampled_and_rejected(
++            num_sampled,
++            input_batch.seq_lens,
++            input_batch.cu_num_logits,
++            input_batch.idx_mapping,
++            self.sampler.req_states.prefill_len.gpu,
++        )
++        return SamplerOutput(
++            sampled_token_ids=sampled,
++            logprobs_tensors=None,
++            num_nans=None,
++            num_sampled=num_sampled,
++            num_rejected=num_rejected,
++            sampling_mask_tensors=None,
++        )
++
+     def __call__(
+         self,
+         logits: torch.Tensor,
+diff --git a/vllm/v1/worker/gpu/spec_decode/speculator.py b/vllm/v1/worker/gpu/spec_decode/speculator.py
+index 3040e3306d..abe35a89b3 100644
+--- a/vllm/v1/worker/gpu/spec_decode/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/speculator.py
+@@ -10,6 +10,7 @@ import numpy as np
+ import torch
+ import torch.nn as nn
+ 
++from vllm.v1.attention.backends.flashinfer import draft_upper_bound_planning
+ from vllm.config import VllmConfig, get_layers_from_vllm_config
+ from vllm.config.compilation import CUDAGraphMode
+ from vllm.config.speculative import _DRAFT_VLLM_CONFIG_OVERRIDES
+@@ -494,30 +495,31 @@ class DraftModelSpeculator(BaseSpeculator):
+                 self.block_tables.cp_rank,
+                 self.block_tables.cp_interleave,
+             )
+-        attn_metadata = build_attn_metadata(
+-            attn_groups=self.attn_groups,
+-            num_reqs=num_reqs_padded,
+-            num_tokens=num_tokens,
+-            query_start_loc_gpu=self.input_buffers.query_start_loc[
+-                : num_reqs_padded + 1
+-            ],
+-            query_start_loc_cpu=query_start_loc_cpu,
+-            max_query_len=max_query_len,
+-            seq_lens=self.input_buffers.seq_lens[:num_reqs_padded],
+-            dcp_local_seq_lens=(
+-                None
+-                if dcp_local_seq_lens is None
+-                else dcp_local_seq_lens[:num_reqs_padded]
+-            ),
+-            max_seq_len=min(self.draft_max_seq_len, self.max_model_len),
+-            block_tables=block_tables,
+-            slot_mappings=slot_mappings,
+-            kv_cache_config=self.kv_cache_config,
+-            causal=causal,
+-            seq_lens_cpu_upper_bound=draft_seq_lens_cpu_upper_bound,
+-            positions=self.input_buffers.positions[:num_tokens],
+-            is_prefilling=self.draft_is_prefilling[:num_reqs_padded],
+-        )
++        with draft_upper_bound_planning():
++            attn_metadata = build_attn_metadata(
++                attn_groups=self.attn_groups,
++                num_reqs=num_reqs_padded,
++                num_tokens=num_tokens,
++                query_start_loc_gpu=self.input_buffers.query_start_loc[
++                    : num_reqs_padded + 1
++                ],
++                query_start_loc_cpu=query_start_loc_cpu,
++                max_query_len=max_query_len,
++                seq_lens=self.input_buffers.seq_lens[:num_reqs_padded],
++                dcp_local_seq_lens=(
++                    None
++                    if dcp_local_seq_lens is None
++                    else dcp_local_seq_lens[:num_reqs_padded]
++                ),
++                max_seq_len=min(self.draft_max_seq_len, self.max_model_len),
++                block_tables=block_tables,
++                slot_mappings=slot_mappings,
++                kv_cache_config=self.kv_cache_config,
++                causal=causal,
++                seq_lens_cpu_upper_bound=draft_seq_lens_cpu_upper_bound,
++                positions=self.input_buffers.positions[:num_tokens],
++                is_prefilling=self.draft_is_prefilling[:num_reqs_padded],
++            )
+         return attn_metadata
+ 
+     def draft_logits_spec(self, vllm_config: VllmConfig) -> tuple[torch.dtype, float]:

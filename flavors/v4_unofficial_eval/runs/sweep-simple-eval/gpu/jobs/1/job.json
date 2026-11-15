@@ -1,0 +1,20 @@
+{
+  "id": 1,
+  "pid": 2201016,
+  "team": "MGR",
+  "agent": "manager",
+  "label": "unofficial:BASE",
+  "timeout_min": 10.0,
+  "command": [
+    "bash",
+    "-c",
+    "env  TRIALS=2 PROMPTS=200 GATES=none STOP_BELOW=0 /scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness/eval.sh /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/uo-BASE-1 /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/bank/BASE/unofficial/1/b"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval",
+  "submitted": "2026-11-15T15:19:46+00:00",
+  "state": "done",
+  "started": "2026-11-15T15:19:46+00:00",
+  "ended": "2026-11-15T15:27:44+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 7.969
+}

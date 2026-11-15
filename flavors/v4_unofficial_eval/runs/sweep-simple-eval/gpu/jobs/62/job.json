@@ -1,0 +1,19 @@
+{
+  "id": 62,
+  "pid": 2339765,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": null,
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/agents/leader-2.w1/gdnreplay",
+  "submitted": "2026-11-15T17:37:41+00:00",
+  "state": "done",
+  "started": "2026-11-15T17:37:41+00:00",
+  "ended": "2026-11-15T17:37:53+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.204
+}

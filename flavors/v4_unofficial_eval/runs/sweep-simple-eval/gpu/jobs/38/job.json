@@ -1,0 +1,26 @@
+{
+  "id": 38,
+  "pid": 2282377,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "t1-prof-T1-006",
+  "timeout_min": 7.0,
+  "command": [
+    "bash",
+    "task/scripts/profile_nsys.sh",
+    "workspaces/leader-1.argmax2",
+    "agents/leader-1/prof_t1006",
+    "32",
+    "--compilation-config",
+    "{\"max_prefill_cudagraph_capture_tokens\":",
+    "1024}",
+    "--max-num-batched-tokens",
+    "1024",
+    "--speculative-config",
+    "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"use_local_argmax_reduction\":true}"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval",
+  "submitted": "2026-11-15T16:36:04+00:00",
+  "state": "cancelled",
+  "ended": "2026-11-15T16:36:10+00:00"
+}

@@ -1,0 +1,18 @@
+{
+  "id": 32,
+  "pid": 2264665,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "hm-dbg",
+  "timeout_min": 5.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/job_hm.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/t2-hm",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/agents/leader-2.w1/hm_out"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval",
+  "submitted": "2026-11-15T16:17:43+00:00",
+  "state": "cancelled",
+  "ended": "2026-11-15T16:22:51+00:00"
+}

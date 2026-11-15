@@ -1,0 +1,21 @@
+{
+  "id": 37,
+  "pid": 2280087,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "hm-w8a8",
+  "timeout_min": 10.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/job_hm.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/t2-hm",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/agents/leader-2.w1/hm_out"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval",
+  "submitted": "2026-11-15T16:33:07+00:00",
+  "state": "done",
+  "started": "2026-11-15T16:35:53+00:00",
+  "ended": "2026-11-15T16:38:25+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.529
+}

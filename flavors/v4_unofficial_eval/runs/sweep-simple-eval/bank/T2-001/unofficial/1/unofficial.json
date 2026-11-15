@@ -1,0 +1,32 @@
+{
+ "name": "t2-cg2048",
+ "workspace": "t2-cg",
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 0,
+ "requested_by": "leader-2",
+ "team": "T2",
+ "started": "2026-11-15T15:24:59+00:00",
+ "tok_s": [
+  648.6478183869102,
+  658.5908742955595
+ ],
+ "mean": 653.62,
+ "stopped_early": false,
+ "gsm8k": null,
+ "long_request": true,
+ "p99": {
+  "p99_ttft_ms": 1265.0,
+  "p99_tpot_ms": 44.1
+ },
+ "base_official_p99": {
+  "p99_ttft_ms": 1341.418,
+  "p99_tpot_ms": 46.102
+ },
+ "mtp_acceptance": [
+  2.356,
+  2.345
+ ],
+ "ended": "2026-11-15T15:35:32+00:00"
+}

@@ -1,0 +1,30 @@
+{
+ "name": "t1-mtp-k3",
+ "workspace": "leader-1.base",
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 625.0,
+ "requested_by": "leader-1",
+ "team": "T1",
+ "started": "2026-11-15T15:29:46+00:00",
+ "tok_s": [
+  602.5449952746977
+ ],
+ "mean": 602.54,
+ "stopped_early": true,
+ "gsm8k": null,
+ "long_request": null,
+ "p99": {
+  "p99_ttft_ms": 2134.5,
+  "p99_tpot_ms": 62.7
+ },
+ "base_official_p99": {
+  "p99_ttft_ms": 1341.418,
+  "p99_tpot_ms": 46.102
+ },
+ "mtp_acceptance": [
+  2.701
+ ],
+ "ended": "2026-11-15T15:39:54+00:00"
+}

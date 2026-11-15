@@ -1,0 +1,32 @@
+{
+ "name": "BASE",
+ "workspace": null,
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 0,
+ "requested_by": "manager",
+ "team": "",
+ "started": "2026-11-15T15:19:44+00:00",
+ "tok_s": [
+  634.5112958773979,
+  643.352846189302
+ ],
+ "mean": 638.93,
+ "stopped_early": false,
+ "gsm8k": null,
+ "long_request": null,
+ "p99": {
+  "p99_ttft_ms": 1239.5,
+  "p99_tpot_ms": 40.3
+ },
+ "base_official_p99": {
+  "p99_ttft_ms": 1341.418,
+  "p99_tpot_ms": 46.102
+ },
+ "mtp_acceptance": [
+  2.359,
+  2.356
+ ],
+ "ended": "2026-11-15T15:27:44+00:00"
+}

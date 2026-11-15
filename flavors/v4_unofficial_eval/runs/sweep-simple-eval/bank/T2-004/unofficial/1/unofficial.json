@@ -1,0 +1,32 @@
+{
+ "name": "t2-rv64k-mbt1024",
+ "workspace": "t2-rv",
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 650.0,
+ "requested_by": "leader-2",
+ "team": "T2",
+ "started": "2026-11-15T16:16:24+00:00",
+ "tok_s": [
+  660.0045103524199,
+  664.2397761726703
+ ],
+ "mean": 662.12,
+ "stopped_early": false,
+ "gsm8k": null,
+ "long_request": true,
+ "p99": {
+  "p99_ttft_ms": 1040.0,
+  "p99_tpot_ms": 47.1
+ },
+ "base_official_p99": {
+  "p99_ttft_ms": 1341.418,
+  "p99_tpot_ms": 46.102
+ },
+ "mtp_acceptance": [
+  2.32,
+  2.305
+ ],
+ "ended": "2026-11-15T16:27:03+00:00"
+}

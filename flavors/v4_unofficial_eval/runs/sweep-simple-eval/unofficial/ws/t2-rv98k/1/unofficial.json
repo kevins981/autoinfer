@@ -1,0 +1,30 @@
+{
+ "name": "t2-rv98k",
+ "workspace": "t2-rv",
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 655.0,
+ "requested_by": "leader-2",
+ "team": "T2",
+ "started": "2026-11-15T15:59:47+00:00",
+ "tok_s": [
+  646.5602078588103
+ ],
+ "mean": 646.56,
+ "stopped_early": true,
+ "gsm8k": null,
+ "long_request": null,
+ "p99": {
+  "p99_ttft_ms": 1573.6,
+  "p99_tpot_ms": 45.9
+ },
+ "base_official_p99": {
+  "p99_ttft_ms": 1341.418,
+  "p99_tpot_ms": 46.102
+ },
+ "mtp_acceptance": [
+  2.346
+ ],
+ "ended": "2026-11-15T16:02:28+00:00"
+}

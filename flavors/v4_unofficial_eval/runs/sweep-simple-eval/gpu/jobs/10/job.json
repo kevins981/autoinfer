@@ -1,0 +1,19 @@
+{
+  "id": 10,
+  "pid": 2221573,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": "ar-fi",
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "run_fi.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/leader-1.ar/bench",
+  "submitted": "2026-11-15T15:39:27+00:00",
+  "state": "done",
+  "started": "2026-11-15T15:43:29+00:00",
+  "ended": "2026-11-15T15:43:37+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.124
+}

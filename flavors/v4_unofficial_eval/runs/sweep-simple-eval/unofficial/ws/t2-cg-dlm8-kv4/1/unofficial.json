@@ -1,0 +1,30 @@
+{
+ "name": "t2-cg-dlm8-kv4",
+ "workspace": "t2-cg",
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 648.0,
+ "requested_by": "leader-2",
+ "team": "T2",
+ "started": "2026-11-15T15:44:01+00:00",
+ "tok_s": [
+  645.2779942968577
+ ],
+ "mean": 645.28,
+ "stopped_early": true,
+ "gsm8k": null,
+ "long_request": null,
+ "p99": {
+  "p99_ttft_ms": 1514.6,
+  "p99_tpot_ms": 65.2
+ },
+ "base_official_p99": {
+  "p99_ttft_ms": 1341.418,
+  "p99_tpot_ms": 46.102
+ },
+ "mtp_acceptance": [
+  2.346
+ ],
+ "ended": "2026-11-15T15:51:56+00:00"
+}

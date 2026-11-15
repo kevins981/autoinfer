@@ -1,0 +1,15 @@
+team:         T2
+builds_on:    T2-004
+performance:  unofficial: 715.7 / 720.2 tok/s (mean 718.0) vs T2-004 660.0 / 664.2 (+8.4%) and champion T1-006 676.6 / 680.7 (+5.8%)
+summary:
+  hypothesis: the checkpoint's own W8A8 scheme (FP8 e4m3 activations, dynamic per-token-group-128 scales, against the 128x128 block-scaled FP8 weights, fp32 accumulation) doubles tensor throughput in compute-bound mixed prefill steps (FP8 MMA ~315 vs Marlin's bf16-class ~155 TFLOP/s) while matching Marlin at decode, with one weight layout (humming's flat fp8 layout) for all batch sizes.
+  change:     serve flag --quantization humming (vLLM's humming backend: NVRTC-JIT mma.sync kernels) + 3 code changes (work by leader-2.w1):
+              vllm/envs.py: VLLM_HUMMING_INPUT_QUANT_CONFIG defaults to {"dtype":"float8e4m3","group_size":128,"quant_mode":"dynamic_group"} (env still wins);
+              vllm/utils/humming.py: put the pip nvidia/cu*/lib dir on LD_LIBRARY_PATH for humming's NVRTC compile subprocess (libnvrtc-builtins);
+              vllm/model_executor/layers/quantization/humming.py: bug fix: is_layer_skipped matched module names by substring, so the checkpoint's ignore entry "...mlp.gate" also skipped "...mlp.gate_up_proj"; now whole dotted components.
+              Serve args otherwise T2-004's.
+  results:    Observed: unofficial_eval --ws t2-hm2 --gsm8k --long: 715.7 / 720.2 tok/s, GSM8K-250 93.2% (gate 89.6; BASE 94.4), 128K pass, p99 TTFT 940 ms / TPOT 41.2 ms, MTP acceptance 2.304; 16 running, server ready in 68 s; reduced draft head active (log).
+              Mechanism (agents/leader-2.w1/humming_gemm.md, jobs 24): sum of a GDN layer's 4 GEMMs per GPU: M=48 236 us (Marlin 243), M=260 563 us (Marlin 841, -33%), M=512 777 (1255), M=2048 2850 (4926); numerics vs fp32 reference identical to vLLM's Triton block-FP8 kernel (rel L2 2.59% vs 2.58%, kernels differ by 0.30%). Coverage (worker trace): all 260 FP8 linears per rank (GDN in_proj_qkvz/out_proj, MLP gate_up/down, attention qkv/o, MTP layer) run W8A8; lm_head, in_proj_ba, MTP fc, embeddings, norms, comm stay bf16.
+  conclusion: Interpretation: most of the gain is mixed prefill steps (GEMM per prompt row ~ -35%) plus ~3% at decode.
+validity:     leader-2 review against task_definition.md "Activations (2026-11-09)": W8A8 with dynamic per-token-group-128 e4m3 activations against the checkpoint's 128x128 block FP8 weights: allowed, per layer/batch size (here all FP8 linears). No per-tensor/larger-group/static scales; fp32 accumulation across K blocks (VLLM_HUMMING_USE_F16_ACCUM off, default); weight block scales stored bf16 as in BASE's Marlin. Residual, norms, GDN/attention, KV, communication and the target lm_head unchanged. GSM8K-250 93.2% passes the gate. Memory: model load 14.4 GiB as BASE; 128K pass. Env defaults in code are generic (ruling 3). Not keyed to the benchmark.
+unofficial #1 (copied from unofficial/ws/t2-hm2/1): 715.7 / 720.2 tok/s (200 prompts); GSM8K 93.2%, 128K pass, p99 TTFT 940 ms / TPOT 41.2 ms (BASE official 1341 / 46.1), MTP acceptance 2.304

@@ -1,0 +1,19 @@
+{
+  "id": 48,
+  "pid": 2311639,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": "gdn-sync",
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "bench/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/leader-1.gdncg",
+  "submitted": "2026-11-15T17:09:16+00:00",
+  "state": "done",
+  "started": "2026-11-15T17:18:20+00:00",
+  "ended": "2026-11-15T17:19:30+00:00",
+  "exit_code": 1,
+  "gpu_minutes": 1.155
+}

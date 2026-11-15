@@ -1,0 +1,34 @@
+{
+ "name": "t1-t2001-ncclsimple",
+ "workspace": "leader-1.t2001",
+ "env": [
+  "NCCL_PROTO=Simple"
+ ],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 645.0,
+ "requested_by": "leader-1",
+ "team": "T1",
+ "started": "2026-11-15T15:39:29+00:00",
+ "tok_s": [
+  663.1691706962315,
+  659.9845981908795
+ ],
+ "mean": 661.58,
+ "stopped_early": false,
+ "gsm8k": null,
+ "long_request": null,
+ "p99": {
+  "p99_ttft_ms": 1289.3,
+  "p99_tpot_ms": 46.3
+ },
+ "base_official_p99": {
+  "p99_ttft_ms": 1341.418,
+  "p99_tpot_ms": 46.102
+ },
+ "mtp_acceptance": [
+  2.349,
+  2.341
+ ],
+ "ended": "2026-11-15T15:48:04+00:00"
+}

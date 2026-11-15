@@ -1,0 +1,19 @@
+{
+  "id": 34,
+  "pid": 2268099,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": "argmax-fallbacks",
+  "timeout_min": 2.0,
+  "command": [
+    "bash",
+    "bench/job4.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/leader-1.argmax",
+  "submitted": "2026-11-15T16:21:47+00:00",
+  "state": "done",
+  "started": "2026-11-15T16:29:23+00:00",
+  "ended": "2026-11-15T16:30:28+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.077
+}

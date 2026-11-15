@@ -1,0 +1,32 @@
+{
+ "name": "t2-hm2",
+ "workspace": "t2-hm2",
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 655.0,
+ "requested_by": "leader-2",
+ "team": "T2",
+ "started": "2026-11-15T16:39:40+00:00",
+ "tok_s": [
+  715.7478204700782,
+  720.2398301708986
+ ],
+ "mean": 717.99,
+ "stopped_early": false,
+ "gsm8k": 0.932,
+ "long_request": true,
+ "p99": {
+  "p99_ttft_ms": 940.2,
+  "p99_tpot_ms": 41.2
+ },
+ "base_official_p99": {
+  "p99_ttft_ms": 1341.418,
+  "p99_tpot_ms": 46.102
+ },
+ "mtp_acceptance": [
+  2.301,
+  2.306
+ ],
+ "ended": "2026-11-15T16:47:56+00:00"
+}

@@ -1,0 +1,19 @@
+{
+  "id": 33,
+  "pid": 2266429,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "t1-protocheck",
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "agents/leader-1/protocheck/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval",
+  "submitted": "2026-11-15T16:19:38+00:00",
+  "state": "done",
+  "started": "2026-11-15T16:27:05+00:00",
+  "ended": "2026-11-15T16:29:21+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.282
+}

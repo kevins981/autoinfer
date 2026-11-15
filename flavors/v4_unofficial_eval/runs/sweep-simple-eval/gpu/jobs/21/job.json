@@ -1,0 +1,19 @@
+{
+  "id": 21,
+  "pid": 2244618,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "t1-nccl-simple-sweep",
+  "timeout_min": 4.0,
+  "command": [
+    "bash",
+    "job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/agents/leader-1/ncclsweep",
+  "submitted": "2026-11-15T16:01:00+00:00",
+  "state": "done",
+  "started": "2026-11-15T16:02:40+00:00",
+  "ended": "2026-11-15T16:04:15+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.576
+}

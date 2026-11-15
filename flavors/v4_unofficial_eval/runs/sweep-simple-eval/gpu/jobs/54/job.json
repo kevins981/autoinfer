@@ -1,0 +1,19 @@
+{
+  "id": 54,
+  "pid": 2323006,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "gdn-ncu",
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/gdnbench/job_ncu.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval",
+  "submitted": "2026-11-15T17:21:18+00:00",
+  "state": "done",
+  "started": "2026-11-15T17:22:20+00:00",
+  "ended": "2026-11-15T17:22:30+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.162
+}

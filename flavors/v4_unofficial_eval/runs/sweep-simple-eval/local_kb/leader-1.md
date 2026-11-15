@@ -1,0 +1,32 @@
+# leader-1 notes (T1)
+- Map: reports/T1-sweep/1-6. Split with T2: T1 = I-AR, R-ARGMAX, MTP k=3; T2 = graphs, draft lm_head, W8A8, GDN.
+- BASE unofficial 634.5/643.4 (bank/BASE/unofficial/1).
+- AR pairing (BASE nsys): prefill AR 299 us fast rank / 691 slow; decode 57/63.
+- Tight loop NCCL default (job 3): M=48 107us (88 in graph), M=260 289us, M=2048 1493us. flashinfer PCIe IPC failed.
+- Jobs: 3 = AR bench (w1), 6 = unofficial t1-mtp-k3 (--long).
+- T2-001 champion (graphs to 2048): 648.6/658.6 (+2.3%, far below both napkins of +6/+12%). Number to beat. Stack future work on T2-001.
+- T1-001 MTP k=3: 602.5 (1 start), accept 2.701, p99 gates fail. Screen negative.
+- T1-002 (NCCL_PROTO=Simple default, on T2-001): 662.3/655.4 code, 663.2/660.0 env. +1.0%. Sent to manager.
+- T1-002 promoted to unofficial champion. Worker hostar must rebase onto T1-002 (it built from T2-001).
+- Manager: T1-002 counted as T1 win; no profile needed. Official eval at ~5% or 4 promotions.
+- T1-003 hostar: correct, standalone timing inconclusive (52-92us @M48). Parked.
+- T1-004 W-DBO microbench: overlap hides ~50% of AR, halves cost +25% GEMM -> ~0 gain. Dropped. Weakens W3 too.
+- T2: humming W8A8 all-M (T2's). Marlin in-situ loss mine if wanted (~1-2ms). T2-002 FP8 draft+local argmax: 645.3 1 start, TPOT p99 65 unexplained. Memory tight with cg2048.
+- Job: t1-nccl-simple-sweep (Simple + nch/threads/buffsize), agents/leader-1/ncclsweep.
+- T1-005 NCCL Simple tuning sweep: null (within noise).
+- T1-002 REVERTED (setdefault in pynccl too late, LL kernels). Fix: T1-006 in env_override.py, ws leader-1.simple2; verifying with nsys job t1-prof-simple2.
+- CAUTION: NCCL kernel names (RING_LL) may not show protocol (generic kernels dispatch by funcIndex). Simple2 (env_override) profile also showed only LL names. Verifying with NCCL_DEBUG TUNING log (job t1-protocheck), both T1-002 code (ws leader-1.t2001) and env_override (leader-1.simple2).
+- T2-004 champion (rv draft head 64K + local draft argmax + mnbt 1024): 660.0/664.2. Rebase T1 work on T2-004.
+- protocheck: T1-002 code DOES use Simple, but profiles show no in-engine NCCL gain -> +1% was noise. Revert stands. Drop the NCCL_PROTO line; don't file T1-006.
+- T1-006 target argmax on T2-004: 676.6/680.7 (+2.5%). Profiling (job t1-prof-T1-006) for mechanism, compare with agents/leader-2/prof_rv.
+- T1-006 PROMOTED (+2.5%), official eval running. Testing k=3 on T1-006 (label t1-t1006-k3, stop-below 681).
+- T2-005 champion (humming W8A8) 715.7/720.2. k3-on-T1-006 cancelled before start. T1-007 = argmax on T2-005, eval running stop-below 715.
+- T1-007 == T2-006 (identical diff+args); eval cancelled. T1-006 official 712.1 (+12% vs BASE). Unofficial champion T2-006 738.8/747.8.
+- T1 lane now: W1b graph-capture GDN prefill in mixed steps (worker CPU plan). k=3 retest is T2's (t2-k3). TRACE=graph profile of T2-006 running (prof_t2006_graph). T1-006 mixed step 137ms, idle 15ms, NCCL 39ms@300 rows.
+- T2-007 k=3 on T2-006: 704.6 (1 start) because only 13-14 concurrent (GDN state slots in 5GiB pool); TPOT faster. My T1-001 k=3 failure may have the same cause (not step cost). Watch 'Running: N reqs' for memory changes.
+- TRACE=graph T2-006 (prof_t2006_graph): decode 34.1ms idle 1.9 (71% of time); mixed 120ms idle 10.1. Decode idle cause: worker blocks ~30.7ms in pageable DtoH cudaMemcpyAsync (int32 x num_reqs) after launching graphs, then 1.8ms eager prep for next step -> GPU idle. Candidate H-PREP (~4%). Worker asked to find call site.
+- T1-008 (drafter UB planning, leader-1.draftmeta) PROMOTED: 758.8/762.4; decode idle 1.92->0.61, period 34.11->32.78 (prof agents/leader-1/prof_t1008_graph). update-3 written, resync 2 requested (9.0 left).
+- Open: T1-008 decode shows 1.58 ms "other GEMM" eager (absent in T2-006 profile) -> worker checking (regression or classification?). Mixed-step idle 16.6 ms (T2-006 10.1) -> worker ranking causes from sqlite.
+- Worker: "other GEMM" = target lm_head eager alternating variants (classification, not regression). Mixed real idle 15.5 -> 7.7 ms (step_anatomy windows unreliable when host leads by ~30 ms).
+- prof_t1008_node decode: humming 17.4 ms (~72% BW of 12.5 GB), AR 7.7, gdn mtp 2.75 (T2's), splitKreduce on side stream (not critical).
+- Lanes agreed with leader-2: T1 = humming decode M<=64 tuning (worker, ws leader-1.hmtune, cap 4 min), W1b GDN prefill capture, small decode kernels; T2 = GDN commit kernel, k=3, humming prefill M>=128. Override table: one dict keyed (N,K,M-bucket) in vllm humming integration.

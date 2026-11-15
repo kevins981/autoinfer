@@ -1,0 +1,1845 @@
+diff --git a/csrc/gdn/fused_gdn_decode_kernel.cu b/csrc/gdn/fused_gdn_decode_kernel.cu
+index 5e606ffd7f..9aac00d3ac 100644
+--- a/csrc/gdn/fused_gdn_decode_kernel.cu
++++ b/csrc/gdn/fused_gdn_decode_kernel.cu
+@@ -9,8 +9,10 @@
+ #include <cuda_fp16.h>
+ #include <cuda_runtime.h>
+ 
++#ifndef GDN_STANDALONE_TEST
+ #include "../torch_utils.h"
+ #include "core/cuda_compat.h"
++#endif
+ 
+ namespace {
+ 
+@@ -373,6 +375,476 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+   }
+ }
+ 
++// ===================== GDN replay commit (committed state in column 0) =====================
++// Per request/head the committed state S0 lives in state_indices[req, 0]. The kernel inputs
++// of the previous step (normalised q/k fp32, v bf16, decay, beta) are kept in a "P" record
++// inside the column-1 slot (this head's [128x128] fp32 region, first ~10 KB), together with
++// a header {magic, generation, n_tokens}. The next step replays `accepted` tokens of P onto S0
++// (same per-token device function => bitwise identical to the slot the legacy kernel stored),
++// writes S0' back in place, runs the new tokens in registers and writes the new P. A header
++// is valid only if magic and the request's generation id match, so stale / recycled slots
++// never replay. Steps near a mamba block boundary ("materialize") behave like the legacy
++// kernel (all per-position slots written) so the align-mode prefix-cache copies stay valid.
++constexpr uint32_t kReplayMagic = 0x50455247u;
++constexpr int kReplayCap = 8;
++constexpr int kReplayQOff = 16;                                 // bytes
++constexpr int kReplayKOff = kReplayQOff + kReplayCap * kDimK * 4;
++constexpr int kReplayVOff = kReplayKOff + kReplayCap * kDimK * 4;
++constexpr int kReplayGOff = kReplayVOff + kReplayCap * kDimV * 2;  // float2 {decay,beta}
++constexpr int kReplayNearTokens = 8;  // margin around block boundaries (tokens)
++
++// One recurrence step on the register-resident state rows of this warp. kOut=false skips
++// the output dot (replay): it never feeds the state, so the state is bit-identical.
++template <bool kOut>
++__device__ __forceinline__ void gdn_token_step(
++    float (&h)[kRowsPerWarp][4], const float (&q_values)[4],
++    const float (&k_values)[4], float decay, float beta,
++    const float (&v_row)[kRowsPerWarp], float (&out_row)[kRowsPerWarp]) {
++  float dot_hk[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      h[row][i] *= decay;
++      dot_hk[row] += h[row][i] * k_values[i];
++    }
++  }
++  const Sum2 dot_hk_01 = warp_reduce_sum_pair(dot_hk[0], dot_hk[1]);
++  const Sum2 dot_hk_23 = warp_reduce_sum_pair(dot_hk[2], dot_hk[3]);
++  const float reduced_hk[kRowsPerWarp] = {dot_hk_01.x, dot_hk_01.y, dot_hk_23.x,
++                                          dot_hk_23.y};
++  float dot_hq[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++    const float delta = (v_row[row] - reduced_hk[row]) * beta;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      h[row][i] += k_values[i] * delta;
++      if (kOut) dot_hq[row] += h[row][i] * q_values[i];
++    }
++  }
++  if (kOut) {
++    const Sum2 dot_hq_01 = warp_reduce_sum_pair(dot_hq[0], dot_hq[1]);
++    const Sum2 dot_hq_23 = warp_reduce_sum_pair(dot_hq[2], dot_hq[3]);
++    out_row[0] = dot_hq_01.x;
++    out_row[1] = dot_hq_01.y;
++    out_row[2] = dot_hq_23.x;
++    out_row[3] = dot_hq_23.y;
++  }
++}
++
++struct ReplayHeader {
++  uint32_t magic;
++  int32_t gen;
++  int32_t n;
++  int32_t pad;
++};
++
++__device__ __forceinline__ bool read_replay_header(const float* region,
++                                                   int expected_gen,
++                                                   int& n_tokens) {
++  const uint4 raw = *reinterpret_cast<const uint4*>(region);
++  n_tokens = static_cast<int>(raw.z);
++  return raw.x == kReplayMagic && static_cast<int>(raw.y) == expected_gen &&
++         n_tokens > 0;
++}
++
++template <int MaxTok, int ValueHeadsPerKeyHead, bool SigmoidGate>
++__global__ __launch_bounds__(kThreads, 2) void gdn_decode_replay_kernel(
++    const __nv_bfloat16* __restrict__ mixed_qkv,
++    const __nv_bfloat16* __restrict__ a, const __nv_bfloat16* __restrict__ b,
++    const float* __restrict__ a_log, const void* __restrict__ dt_bias,
++    const int* __restrict__ state_indices, const int* __restrict__ cu_seqlens,
++    const int* __restrict__ num_accepted_tokens, float* __restrict__ state,
++    const __nv_bfloat16* __restrict__ output_gate,
++    const void* __restrict__ norm_weight, __nv_bfloat16* __restrict__ out,
++    const int* __restrict__ replay_gen, const int* __restrict__ seq_lens,
++    int H, int HV, int state_indices_width, int dt_bias_type,
++    bool norm_weight_is_bf16, float scale, float norm_eps,
++    int mamba_block_size, GdnDecodeStrides strides) {
++  const int request = blockIdx.x;
++  const int value_head = blockIdx.y;
++  const int tid = threadIdx.x;
++  const int lane = tid & 31;
++  const int warp = tid >> 5;
++  const int bos = cu_seqlens[request];
++  const int eos = cu_seqlens[request + 1];
++  const int num_tokens = eos - bos;
++  if (num_tokens <= 0) {
++    return;
++  }
++  const int width = state_indices_width;
++  const int accepted = num_accepted_tokens[request];
++  const bool accepted_in_range = accepted > 0 && accepted <= width;
++  const int slot0 = state_indices[request * width];
++  const int slot1 = width > 1 ? state_indices[request * width + 1] : 0;
++
++  // Header check (this request/head's P record in the column-1 slot).
++  float* region1 =
++      slot1 > 0 ? state + static_cast<int64_t>(slot1) * strides.state_slot +
++                      value_head * kDimV * kDimK
++                : nullptr;
++  int n_prev = 0;
++  bool hdr_ok = false;
++  if (region1 != nullptr && slot0 > 0 && accepted_in_range) {
++    hdr_ok = read_replay_header(region1, replay_gen[request], n_prev);
++  }
++  const int replay_count = hdr_ok ? min(min(accepted, n_prev), MaxTok) : 0;
++  const int source_slot =
++      hdr_ok ? slot0
++             : (accepted_in_range ? state_indices[request * width + accepted - 1]
++                                  : 0);
++  if (source_slot <= 0 || num_tokens > MaxTok) {
++    for (int linear = tid; linear < num_tokens * kDimV; linear += kThreads) {
++      const int token = bos + linear / kDimV;
++      const int value = linear % kDimV;
++      const int64_t out_offset =
++          (static_cast<int64_t>(token) * HV + value_head) * kDimV + value;
++      out[out_offset] = __float2bfloat16(0.0f);
++    }
++    return;
++  }
++
++  // Materialize (legacy per-position stores) when the step may touch a mamba block
++  // boundary (align-mode prefix-cache copies read the per-position slots), or when the
++  // column-1 scratch is unavailable.
++  bool materialize = num_tokens < 2 || slot0 <= 0 || slot1 <= 0;
++  if (mamba_block_size > 0) {
++    const int rem = seq_lens[request] % mamba_block_size;
++    materialize = materialize || rem <= kReplayNearTokens ||
++                  rem >= mamba_block_size - kReplayNearTokens;
++  }
++  const bool commit_store =
++      !materialize && (replay_count > 0 || source_slot != slot0);
++
++  const int key_head = value_head / ValueHeadsPerKeyHead;
++  __shared__ float shared_state[2][kChunkV][kDimK];
++  __shared__ float shared_q[MaxTok][kDimK];
++  __shared__ float shared_k[MaxTok][kDimK];
++  __shared__ __nv_bfloat16 shared_v[MaxTok][kDimV];
++  __shared__ __nv_bfloat16 shared_out[MaxTok][kDimV];
++  __shared__ float shared_decay[MaxTok];
++  __shared__ float shared_beta[MaxTok];
++  __shared__ float replay_q[MaxTok][kDimK];
++  __shared__ float replay_k[MaxTok][kDimK];
++  __shared__ __nv_bfloat16 replay_v[MaxTok][kDimV];
++  __shared__ float replay_decay[MaxTok];
++  __shared__ float replay_beta[MaxTok];
++
++  float* source_state = state + static_cast<int64_t>(source_slot) * strides.state_slot +
++                        value_head * kDimV * kDimK;
++  copy_state_chunk<float, kChunkV, kDimK, 2>(&shared_state[0][0][0], source_state,
++                                             0, tid, kThreads);
++
++  if (replay_count > 0) {
++    const char* base = reinterpret_cast<const char*>(region1);
++    for (int i = tid; i < replay_count * (kDimK / 4); i += kThreads) {
++      const int t = i / (kDimK / 4);
++      const int c = (i % (kDimK / 4)) * 4;
++      *reinterpret_cast<float4*>(&replay_q[t][c]) = *reinterpret_cast<const float4*>(
++          base + kReplayQOff + (t * kDimK + c) * 4);
++      *reinterpret_cast<float4*>(&replay_k[t][c]) = *reinterpret_cast<const float4*>(
++          base + kReplayKOff + (t * kDimK + c) * 4);
++    }
++    for (int i = tid; i < replay_count * kDimV; i += kThreads) {
++      const int t = i / kDimV;
++      const int c = i % kDimV;
++      replay_v[t][c] = *reinterpret_cast<const __nv_bfloat16*>(
++          base + kReplayVOff + (t * kDimV + c) * 2);
++    }
++    if (tid < replay_count) {
++      const float2 g = *reinterpret_cast<const float2*>(base + kReplayGOff + tid * 8);
++      replay_decay[tid] = g.x;
++      replay_beta[tid] = g.y;
++    }
++  }
++
++  if (warp < num_tokens) {
++    const int t = warp;
++    const int token = bos + t;
++    const int64_t mixed_base = static_cast<int64_t>(token) * strides.mixed_row;
++    float q_values[4];
++    float k_values[4];
++    float q_square = 0.0f;
++    float k_square = 0.0f;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int dim = lane + i * 32;
++      q_values[i] =
++          __bfloat162float(mixed_qkv[mixed_base + key_head * kDimK + dim]);
++      k_values[i] = __bfloat162float(
++          mixed_qkv[mixed_base + H * kDimK + key_head * kDimK + dim]);
++      shared_v[t][dim] =
++          mixed_qkv[mixed_base + 2 * H * kDimK + value_head * kDimV + dim];
++      q_square += q_values[i] * q_values[i];
++      k_square += k_values[i] * k_values[i];
++    }
++    const Sum2 qk_sums = warp_reduce_sum_pair(q_square, k_square);
++    const float q_scale = __shfl_sync(
++        0xffffffffu, lane == 0 ? rsqrtf(qk_sums.x + 1.0e-6f) * scale : 0.0f, 0);
++    const float k_scale = __shfl_sync(
++        0xffffffffu, lane == 0 ? rsqrtf(qk_sums.y + 1.0e-6f) : 0.0f, 0);
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int dim = lane + i * 32;
++      shared_q[t][dim] = q_values[i] * q_scale;
++      shared_k[t][dim] = k_values[i] * k_scale;
++    }
++    if (lane == 0) {
++      const float a_value = __bfloat162float(
++          a[static_cast<int64_t>(token) * strides.a_row + value_head]);
++      const float b_value = __bfloat162float(
++          b[static_cast<int64_t>(token) * strides.b_row + value_head]);
++      const float g = -__expf(a_log[value_head]) *
++                      softplus_fast(a_value + load_dt_bias(dt_bias, value_head,
++                                                           dt_bias_type));
++      shared_decay[t] = __expf(g);
++      shared_beta[t] = sigmoid_fast(b_value);
++    }
++  }
++  __syncthreads();
++
++  const int k_base = lane * 4;
++  int rows[kRowsPerWarp];
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++    rows[row] = warp + row * kWarps;
++  }
++
++#pragma unroll
++  for (int chunk = 0; chunk < kNumChunks; ++chunk) {
++    cp_async_wait_all();
++    __syncthreads();
++    if (chunk + 1 < kNumChunks) {
++      copy_state_chunk<float, kChunkV, kDimK, 2>(&shared_state[0][0][0],
++                                                 source_state, chunk + 1, tid,
++                                                 kThreads);
++    }
++
++    float h[kRowsPerWarp][4];
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) {
++      const float4 state_value =
++          load_state4(&shared_state[chunk & 1][rows[row]][k_base]);
++      h[row][0] = state_value.x;
++      h[row][1] = state_value.y;
++      h[row][2] = state_value.z;
++      h[row][3] = state_value.w;
++    }
++
++    // Replay the previous step's accepted tokens (no outputs).
++    for (int t = 0; t < replay_count; ++t) {
++      const float4 q4 = *reinterpret_cast<const float4*>(&replay_q[t][k_base]);
++      const float4 k4 = *reinterpret_cast<const float4*>(&replay_k[t][k_base]);
++      const float q_values[4] = {q4.x, q4.y, q4.z, q4.w};
++      const float k_values[4] = {k4.x, k4.y, k4.z, k4.w};
++      float v_row[kRowsPerWarp];
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        v_row[row] = __bfloat162float(replay_v[t][chunk * kChunkV + rows[row]]);
++      }
++      float unused[kRowsPerWarp];
++      gdn_token_step<false>(h, q_values, k_values, replay_decay[t], replay_beta[t],
++                            v_row, unused);
++    }
++    if (commit_store) {
++      float* commit_state = state + static_cast<int64_t>(slot0) * strides.state_slot +
++                            value_head * kDimV * kDimK;
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        const int value = chunk * kChunkV + rows[row];
++        store_state4(commit_state + value * kDimK + k_base,
++                     make_float4(h[row][0], h[row][1], h[row][2], h[row][3]));
++      }
++    }
++
++    for (int t = 0; t < num_tokens; ++t) {
++      const float4 q4 = *reinterpret_cast<const float4*>(&shared_q[t][k_base]);
++      const float4 k4 = *reinterpret_cast<const float4*>(&shared_k[t][k_base]);
++      const float q_values[4] = {q4.x, q4.y, q4.z, q4.w};
++      const float k_values[4] = {k4.x, k4.y, k4.z, k4.w};
++      float v_row[kRowsPerWarp];
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        v_row[row] = __bfloat162float(shared_v[t][chunk * kChunkV + rows[row]]);
++      }
++      float o_row[kRowsPerWarp];
++      gdn_token_step<true>(h, q_values, k_values, shared_decay[t], shared_beta[t],
++                           v_row, o_row);
++      if (lane == 0) {
++#pragma unroll
++        for (int row = 0; row < kRowsPerWarp; ++row) {
++          shared_out[t][chunk * kChunkV + rows[row]] = __float2bfloat16(o_row[row]);
++        }
++      }
++      if (materialize) {
++        const int destination_slot = state_indices[request * width + t];
++        if (destination_slot > 0) {
++          float* destination_state =
++              state + static_cast<int64_t>(destination_slot) * strides.state_slot +
++              value_head * kDimV * kDimK;
++#pragma unroll
++          for (int row = 0; row < kRowsPerWarp; ++row) {
++            const int value = chunk * kChunkV + rows[row];
++            store_state4(destination_state + value * kDimK + k_base,
++                         make_float4(h[row][0], h[row][1], h[row][2], h[row][3]));
++          }
++        }
++      }
++    }
++  }
++  __syncthreads();
++
++  if (warp < num_tokens) {
++    const int t = warp;
++    float output_values[4];
++    float sum_square = 0.0f;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int value = lane + i * 32;
++      output_values[i] = __bfloat162float(shared_out[t][value]);
++      sum_square += output_values[i] * output_values[i];
++    }
++    sum_square = warp_reduce_sum(sum_square);
++    const float rstd =
++        rsqrtf(sum_square / static_cast<float>(kDimV) + norm_eps);
++    const int token = bos + t;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int value = lane + i * 32;
++      const float gate_input = __bfloat162float(
++          output_gate[static_cast<int64_t>(token) * strides.gate_row +
++                      value_head * kDimV + value]);
++      const float gate =
++          SigmoidGate ? sigmoid_fast(gate_input) : silu_fast(gate_input);
++      const float weight =
++          norm_weight_is_bf16
++              ? __bfloat162float(
++                    static_cast<const __nv_bfloat16*>(norm_weight)[value])
++              : static_cast<const float*>(norm_weight)[value];
++      const int64_t out_offset =
++          (static_cast<int64_t>(token) * HV + value_head) * kDimV + value;
++      out[out_offset] =
++          __float2bfloat16(output_values[i] * rstd * weight * gate);
++    }
++  }
++
++  // Record this step's inputs (P) for the next step's replay.
++  if (!materialize) {
++    char* base = reinterpret_cast<char*>(region1);
++    for (int i = tid; i < num_tokens * (kDimK / 4); i += kThreads) {
++      const int t = i / (kDimK / 4);
++      const int c = (i % (kDimK / 4)) * 4;
++      *reinterpret_cast<float4*>(base + kReplayQOff + (t * kDimK + c) * 4) =
++          *reinterpret_cast<const float4*>(&shared_q[t][c]);
++      *reinterpret_cast<float4*>(base + kReplayKOff + (t * kDimK + c) * 4) =
++          *reinterpret_cast<const float4*>(&shared_k[t][c]);
++    }
++    for (int i = tid; i < num_tokens * kDimV; i += kThreads) {
++      const int t = i / kDimV;
++      const int c = i % kDimV;
++      *reinterpret_cast<__nv_bfloat16*>(base + kReplayVOff + (t * kDimV + c) * 2) =
++          shared_v[t][c];
++    }
++    if (tid < num_tokens) {
++      *reinterpret_cast<float2*>(base + kReplayGOff + tid * 8) =
++          make_float2(shared_decay[tid], shared_beta[tid]);
++    }
++    __syncthreads();  // payload before the header within this block
++    if (tid == 0) {
++      *reinterpret_cast<uint4*>(base) =
++          make_uint4(kReplayMagic, static_cast<uint32_t>(replay_gen[request]),
++                     static_cast<uint32_t>(num_tokens), 0u);
++    }
++  } else if (slot1 > 0 && num_tokens < 2) {
++    // Column 1 holds no per-position state in this step: drop the (consumed) record.
++    __syncthreads();
++    if (tid == 0) {
++      *reinterpret_cast<uint32_t*>(region1) = 0u;
++    }
++  }
++}
++
++// Applies the pending replay (if any) of spec rows to S0 and drops the record, so a
++// legacy per-position kernel can run next with accepted_eff (=1 for flushed rows).
++__global__ __launch_bounds__(kThreads) void gdn_replay_flush_kernel(
++    const int* __restrict__ state_indices,
++    const int* __restrict__ num_accepted_tokens,
++    const int* __restrict__ replay_gen, float* __restrict__ state,
++    int* __restrict__ accepted_eff, int state_indices_width,
++    int64_t state_slot_stride) {
++  const int request = blockIdx.x;
++  const int value_head = blockIdx.y;
++  const int tid = threadIdx.x;
++  const int lane = tid & 31;
++  const int warp = tid >> 5;
++  const int width = state_indices_width;
++  const int accepted = num_accepted_tokens[request];
++  const int slot0 = state_indices[request * width];
++  const int slot1 = width > 1 ? state_indices[request * width + 1] : 0;
++  int n_prev = 0;
++  bool hdr_ok = false;
++  float* region1 = nullptr;
++  if (slot1 > 0 && slot0 > 0 && accepted > 0 && accepted <= width) {
++    region1 = state + static_cast<int64_t>(slot1) * state_slot_stride +
++              value_head * kDimV * kDimK;
++    hdr_ok = read_replay_header(region1, replay_gen[request], n_prev);
++  }
++  if (value_head == 0 && tid == 0) {
++    accepted_eff[request] = hdr_ok ? 1 : accepted;
++  }
++  if (!hdr_ok) {
++    return;
++  }
++  const int replay_count = min(min(accepted, n_prev), kReplayCap);
++  const char* base = reinterpret_cast<const char*>(region1);
++  float* s0 = state + static_cast<int64_t>(slot0) * state_slot_stride +
++              value_head * kDimV * kDimK;
++  const int k_base = lane * 4;
++  for (int chunk = 0; chunk < kNumChunks; ++chunk) {
++    float h[kRowsPerWarp][4];
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) {
++      const int value = chunk * kChunkV + warp + row * kWarps;
++      const float4 sv = *reinterpret_cast<const float4*>(s0 + value * kDimK + k_base);
++      h[row][0] = sv.x;
++      h[row][1] = sv.y;
++      h[row][2] = sv.z;
++      h[row][3] = sv.w;
++    }
++    for (int t = 0; t < replay_count; ++t) {
++      const float4 q4 = *reinterpret_cast<const float4*>(
++          base + kReplayQOff + (t * kDimK + k_base) * 4);
++      const float4 k4 = *reinterpret_cast<const float4*>(
++          base + kReplayKOff + (t * kDimK + k_base) * 4);
++      const float2 g = *reinterpret_cast<const float2*>(base + kReplayGOff + t * 8);
++      const float q_values[4] = {q4.x, q4.y, q4.z, q4.w};
++      const float k_values[4] = {k4.x, k4.y, k4.z, k4.w};
++      float v_row[kRowsPerWarp];
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        const int value = chunk * kChunkV + warp + row * kWarps;
++        v_row[row] = __bfloat162float(*reinterpret_cast<const __nv_bfloat16*>(
++            base + kReplayVOff + (t * kDimV + value) * 2));
++      }
++      float unused[kRowsPerWarp];
++      gdn_token_step<false>(h, q_values, k_values, g.x, g.y, v_row, unused);
++    }
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) {
++      const int value = chunk * kChunkV + warp + row * kWarps;
++      store_state4(s0 + value * kDimK + k_base,
++                   make_float4(h[row][0], h[row][1], h[row][2], h[row][3]));
++    }
++  }
++  __syncthreads();
++  if (tid == 0) {
++    *reinterpret_cast<uint32_t*>(region1) = 0u;
++  }
++}
++// ===================== end replay commit =====================
++
++#ifndef GDN_STANDALONE_TEST
+ template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate>
+ void launch_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a_log,
+@@ -417,9 +889,60 @@ void launch_gdn_decode_post_conv_mtp(
+                   cudaGetErrorString(error));
+ }
+ 
++
++template <int MaxTok, int ValueHeadsPerKeyHead, bool SigmoidGate>
++void launch_gdn_replay(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor const& norm_weight,
++    torch::stable::Tensor& out, const __nv_bfloat16* a, const __nv_bfloat16* b,
++    const __nv_bfloat16* output_gate, torch::stable::Tensor const& replay_gen,
++    torch::stable::Tensor const& seq_lens, int mamba_block_size,
++    int num_key_heads, int num_value_heads, double scale, double norm_eps,
++    GdnDecodeStrides strides) {
++  using torch::headeronly::ScalarType;
++  const auto dt_bias_scalar_type = dt_bias.scalar_type();
++  const int dt_bias_type =
++      dt_bias_scalar_type == ScalarType::Float
++          ? kDtBiasFloat32
++          : (dt_bias_scalar_type == ScalarType::BFloat16 ? kDtBiasBFloat16
++                                                         : kDtBiasFloat16);
++  torch::stable::accelerator::DeviceGuard const device_guard(
++      mixed_qkv.get_device_index());
++  const cudaStream_t stream =
++      get_current_cuda_stream(mixed_qkv.get_device_index());
++  const int num_requests = static_cast<int>(state_indices.size(0));
++  const dim3 grid(num_requests, num_value_heads);
++  gdn_decode_replay_kernel<MaxTok, ValueHeadsPerKeyHead, SigmoidGate>
++      <<<grid, kThreads, 0, stream>>>(
++          static_cast<const __nv_bfloat16*>(mixed_qkv.data_ptr()), a, b,
++          static_cast<const float*>(a_log.data_ptr()), dt_bias.data_ptr(),
++          static_cast<const int*>(state_indices.data_ptr()),
++          static_cast<const int*>(cu_seqlens.data_ptr()),
++          static_cast<const int*>(num_accepted_tokens.data_ptr()),
++          static_cast<float*>(state.data_ptr()), output_gate,
++          norm_weight.data_ptr(), static_cast<__nv_bfloat16*>(out.data_ptr()),
++          static_cast<const int*>(replay_gen.data_ptr()),
++          static_cast<const int*>(seq_lens.data_ptr()), num_key_heads,
++          num_value_heads, static_cast<int>(state_indices.size(1)),
++          dt_bias_type, norm_weight.scalar_type() == ScalarType::BFloat16,
++          static_cast<float>(scale), static_cast<float>(norm_eps),
++          mamba_block_size, strides);
++  const cudaError_t error = cudaGetLastError();
++  STD_TORCH_CHECK(error == cudaSuccess,
++                  "GDN decode replay kernel launch failed: ",
++                  cudaGetErrorString(error));
++}
++
++#endif  // GDN_STANDALONE_TEST
++
+ }  // namespace
+ 
+-void fused_gdn_decode_post_conv_mtp(
++#ifndef GDN_STANDALONE_TEST
++static void fused_gdn_decode_impl(
+     torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
+     torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
+     torch::stable::Tensor const& dt_bias,
+@@ -428,8 +951,11 @@ void fused_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor const& num_accepted_tokens,
+     torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
+     torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
+-    double scale, double norm_eps, const std::string& output_gate_activation) {
++    double scale, double norm_eps, const std::string& output_gate_activation,
++    torch::stable::Tensor const* replay_gen,
++    torch::stable::Tensor const* seq_lens, int64_t mamba_block_size) {
+   using torch::headeronly::ScalarType;
++  const bool replay = replay_gen != nullptr;
+ 
+   STD_TORCH_CHECK(
+       mixed_qkv.is_cuda() && mixed_qkv.scalar_type() == ScalarType::BFloat16,
+@@ -553,8 +1079,43 @@ void fused_gdn_decode_post_conv_mtp(
+   const auto* b_ptr = static_cast<const __nv_bfloat16*>(b.data_ptr());
+   const auto* output_gate_ptr =
+       static_cast<const __nv_bfloat16*>(output_gate.data_ptr());
++  if (replay) {
++    STD_TORCH_CHECK(state_scalar_type == ScalarType::Float,
++                    "GDN replay commit requires an fp32 state");
++    STD_TORCH_CHECK(state_indices.size(1) >= 2 && state_indices.size(1) <= 5,
++                    "GDN replay commit requires 2 <= state_indices width <= 5");
++    STD_TORCH_CHECK(replay_gen->is_cuda() &&
++                        replay_gen->scalar_type() == ScalarType::Int &&
++                        replay_gen->numel() == num_requests &&
++                        replay_gen->is_contiguous(),
++                    "replay_gen must be a contiguous CUDA int32 [N] tensor");
++    STD_TORCH_CHECK(seq_lens->is_cuda() &&
++                        seq_lens->scalar_type() == ScalarType::Int &&
++                        seq_lens->numel() == num_requests &&
++                        seq_lens->is_contiguous(),
++                    "seq_lens must be a contiguous CUDA int32 [N] tensor");
++  }
++  const auto launch_replay = [&]<int MaxTok, int ValueHeadsPerKeyHead,
++                                 bool SigmoidGate>() {
++    launch_gdn_replay<MaxTok, ValueHeadsPerKeyHead, SigmoidGate>(
++        mixed_qkv, a_log, dt_bias, state_indices, cu_seqlens,
++        num_accepted_tokens, state, norm_weight, out, a_ptr, b_ptr,
++        output_gate_ptr, *replay_gen, *seq_lens,
++        static_cast<int>(mamba_block_size), num_key_heads, num_value_heads,
++        scale, norm_eps, strides);
++  };
+   const auto launch = [&]<typename StateT, int ValueHeadsPerKeyHead,
+                           bool SigmoidGate>() {
++    if (replay) {
++      if (state_indices.size(1) <= 4) {
++        launch_replay.template operator()<4, ValueHeadsPerKeyHead,
++                                          SigmoidGate>();
++      } else {
++        launch_replay.template operator()<5, ValueHeadsPerKeyHead,
++                                          SigmoidGate>();
++      }
++      return;
++    }
+     launch_gdn_decode_post_conv_mtp<StateT, ValueHeadsPerKeyHead, SigmoidGate>(
+         mixed_qkv, a_log, dt_bias, state_indices, cu_seqlens,
+         num_accepted_tokens, state, norm_weight, out, a_ptr, b_ptr,
+@@ -595,3 +1156,90 @@ void fused_gdn_decode_post_conv_mtp(
+       break;
+   }
+ }
++void fused_gdn_decode_post_conv_mtp(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
++    torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
++    double scale, double norm_eps, const std::string& output_gate_activation) {
++  fused_gdn_decode_impl(mixed_qkv, a, b, a_log, dt_bias, state_indices,
++                        cu_seqlens, num_accepted_tokens, state, output_gate,
++                        norm_weight, out, scale, norm_eps,
++                        output_gate_activation, nullptr, nullptr, 0);
++}
++
++void fused_gdn_decode_post_conv_mtp_replay(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
++    torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
++    torch::stable::Tensor const& replay_gen,
++    torch::stable::Tensor const& seq_lens, int64_t mamba_block_size,
++    double scale, double norm_eps, const std::string& output_gate_activation) {
++  fused_gdn_decode_impl(mixed_qkv, a, b, a_log, dt_bias, state_indices,
++                        cu_seqlens, num_accepted_tokens, state, output_gate,
++                        norm_weight, out, scale, norm_eps,
++                        output_gate_activation, &replay_gen, &seq_lens,
++                        mamba_block_size);
++}
++
++// Applies pending replays of the spec rows to column 0 and drops their records.
++// accepted_eff[r] = 1 for flushed rows, else num_accepted_tokens[r].
++void gdn_replay_flush(torch::stable::Tensor const& state_indices,
++                      torch::stable::Tensor const& num_accepted_tokens,
++                      torch::stable::Tensor const& replay_gen,
++                      torch::stable::Tensor& state,
++                      torch::stable::Tensor& accepted_eff) {
++  using torch::headeronly::ScalarType;
++  STD_TORCH_CHECK(state.is_cuda() && state.scalar_type() == ScalarType::Float &&
++                      state.dim() == 4 && state.size(2) == kDimV &&
++                      state.size(3) == kDimK &&
++                      state.stride(1) == kDimV * kDimK &&
++                      state.stride(2) == kDimK && state.stride(3) == 1,
++                  "state must be fp32 [slots, HV, 128, 128]");
++  STD_TORCH_CHECK(state_indices.is_cuda() &&
++                      state_indices.scalar_type() == ScalarType::Int &&
++                      state_indices.dim() == 2 &&
++                      state_indices.is_contiguous() &&
++                      state_indices.size(1) >= 2 &&
++                      state_indices.size(1) <= 8,
++                  "state_indices must be CUDA int32 [N, S], 2 <= S <= 8");
++  const int num_requests = static_cast<int>(state_indices.size(0));
++  STD_TORCH_CHECK(num_requests > 0, "empty batch");
++  STD_TORCH_CHECK(
++      num_accepted_tokens.is_cuda() && replay_gen.is_cuda() &&
++          accepted_eff.is_cuda() &&
++          num_accepted_tokens.scalar_type() == ScalarType::Int &&
++          replay_gen.scalar_type() == ScalarType::Int &&
++          accepted_eff.scalar_type() == ScalarType::Int &&
++          num_accepted_tokens.numel() == num_requests &&
++          replay_gen.numel() == num_requests &&
++          accepted_eff.numel() == num_requests &&
++          num_accepted_tokens.is_contiguous() && replay_gen.is_contiguous() &&
++          accepted_eff.is_contiguous(),
++      "num_accepted_tokens / replay_gen / accepted_eff must be contiguous "
++      "CUDA int32 [N]");
++  torch::stable::accelerator::DeviceGuard const device_guard(
++      state.get_device_index());
++  const cudaStream_t stream = get_current_cuda_stream(state.get_device_index());
++  const dim3 grid(num_requests, static_cast<int>(state.size(1)));
++  gdn_replay_flush_kernel<<<grid, kThreads, 0, stream>>>(
++      static_cast<const int*>(state_indices.data_ptr()),
++      static_cast<const int*>(num_accepted_tokens.data_ptr()),
++      static_cast<const int*>(replay_gen.data_ptr()),
++      static_cast<float*>(state.data_ptr()),
++      static_cast<int*>(accepted_eff.data_ptr()),
++      static_cast<int>(state_indices.size(1)), state.stride(0));
++  const cudaError_t error = cudaGetLastError();
++  STD_TORCH_CHECK(error == cudaSuccess, "GDN replay flush launch failed: ",
++                  cudaGetErrorString(error));
++}
++#endif  // GDN_STANDALONE_TEST
+diff --git a/csrc/ops.h b/csrc/ops.h
+index 81a0065c98..75a0e52e18 100644
+--- a/csrc/ops.h
++++ b/csrc/ops.h
+@@ -452,6 +452,25 @@ void fused_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
+     double scale, double norm_eps, const std::string& output_gate_activation);
+ 
++void fused_gdn_decode_post_conv_mtp_replay(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
++    torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
++    torch::stable::Tensor const& replay_gen,
++    torch::stable::Tensor const& seq_lens, int64_t mamba_block_size,
++    double scale, double norm_eps, const std::string& output_gate_activation);
++
++void gdn_replay_flush(torch::stable::Tensor const& state_indices,
++                      torch::stable::Tensor const& num_accepted_tokens,
++                      torch::stable::Tensor const& replay_gen,
++                      torch::stable::Tensor& state,
++                      torch::stable::Tensor& accepted_eff);
++
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+diff --git a/csrc/torch_bindings.cpp b/csrc/torch_bindings.cpp
+index 78ae89a646..ddba26a1d6 100644
+--- a/csrc/torch_bindings.cpp
++++ b/csrc/torch_bindings.cpp
+@@ -573,6 +573,17 @@ STABLE_TORCH_LIBRARY_FRAGMENT(_C, ops) {
+       "Tensor! state, Tensor output_gate, Tensor norm_weight, Tensor! out, "
+       "float scale, float norm_eps=1e-5, "
+       "str output_gate_activation='silu') -> ()");
++  ops.def(
++      "fused_gdn_decode_post_conv_mtp_replay("
++      "Tensor mixed_qkv, Tensor a, Tensor b, Tensor A_log, Tensor dt_bias, "
++      "Tensor state_indices, Tensor cu_seqlens, Tensor num_accepted_tokens, "
++      "Tensor! state, Tensor output_gate, Tensor norm_weight, Tensor! out, "
++      "Tensor replay_gen, Tensor seq_lens, int mamba_block_size, "
++      "float scale, float norm_eps=1e-5, "
++      "str output_gate_activation='silu') -> ()");
++  ops.def(
++      "gdn_replay_flush(Tensor state_indices, Tensor num_accepted_tokens, "
++      "Tensor replay_gen, Tensor! state, Tensor! accepted_eff) -> ()");
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+@@ -907,6 +918,9 @@ STABLE_TORCH_LIBRARY_IMPL(_C, CUDA, ops) {
+ #ifdef VLLM_ENABLE_FUSED_GDN_DECODE
+   ops.impl("fused_gdn_decode_post_conv_mtp",
+            TORCH_BOX(&fused_gdn_decode_post_conv_mtp));
++  ops.impl("fused_gdn_decode_post_conv_mtp_replay",
++           TORCH_BOX(&fused_gdn_decode_post_conv_mtp_replay));
++  ops.impl("gdn_replay_flush", TORCH_BOX(&gdn_replay_flush));
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+diff --git a/vllm/_custom_ops.py b/vllm/_custom_ops.py
+index 00fe25c0f4..77bacfb9ef 100644
+--- a/vllm/_custom_ops.py
++++ b/vllm/_custom_ops.py
+@@ -3210,6 +3210,64 @@ def fused_gdn_decode_post_conv_mtp(
+     return out
+ 
+ 
++def fused_gdn_decode_post_conv_mtp_replay(
++    mixed_qkv: torch.Tensor,
++    a: torch.Tensor,
++    b: torch.Tensor,
++    A_log: torch.Tensor,
++    dt_bias: torch.Tensor,
++    state_indices: torch.Tensor,
++    cu_seqlens: torch.Tensor,
++    num_accepted_tokens: torch.Tensor,
++    state: torch.Tensor,
++    output_gate: torch.Tensor,
++    norm_weight: torch.Tensor,
++    replay_gen: torch.Tensor,
++    seq_lens: torch.Tensor,
++    mamba_block_size: int,
++    out: torch.Tensor | None = None,
++    scale: float = 128**-0.5,
++    norm_eps: float = 1e-5,
++    output_gate_activation: str = "silu",
++) -> torch.Tensor:
++    if out is None:
++        out = torch.empty_like(output_gate)
++    torch.ops._C.fused_gdn_decode_post_conv_mtp_replay(
++        mixed_qkv,
++        a,
++        b,
++        A_log,
++        dt_bias,
++        state_indices,
++        cu_seqlens,
++        num_accepted_tokens,
++        state,
++        output_gate,
++        norm_weight,
++        out,
++        replay_gen,
++        seq_lens,
++        mamba_block_size,
++        scale,
++        norm_eps,
++        output_gate_activation,
++    )
++    return out
++
++
++def gdn_replay_flush(
++    state_indices: torch.Tensor,
++    num_accepted_tokens: torch.Tensor,
++    replay_gen: torch.Tensor,
++    state: torch.Tensor,
++) -> torch.Tensor:
++    accepted_eff = torch.empty_like(num_accepted_tokens)
++    torch.ops._C.gdn_replay_flush(
++        state_indices, num_accepted_tokens, replay_gen, state, accepted_eff
++    )
++    return accepted_eff
++
++
+ def concat_and_cache_mla(
+     kv_c: torch.Tensor,
+     k_pe: torch.Tensor,
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 20de13f59d..88540520ba 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -321,6 +321,7 @@ if TYPE_CHECKING:
+     VLLM_COHERE2_ATTN_MOE_DUAL_STREAM_TOKEN_THRESHOLD: int = 256
+     VLLM_COMPILE_CACHE_SAVE_FORMAT: Literal["binary", "unpacked"] = "binary"
+     VLLM_USE_V2_MODEL_RUNNER: bool | None = None
++    VLLM_GDN_REPLAY_COMMIT: bool = True
+     VLLM_LOG_MODEL_INSPECTION: bool = False
+     VLLM_DEBUG_MFU_METRICS: bool = False
+     VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY: bool = False
+@@ -1616,7 +1617,15 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     # The activation dtype config for humming kernel. Explicit schemas disable
+     # fallback unless the config includes "allow_fallback": true.
+     "VLLM_HUMMING_INPUT_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
+-        os.environ.get("VLLM_HUMMING_INPUT_QUANT_CONFIG", None)
++        # Default (when unset): the W8A8 scheme of FP8 block-quantized checkpoints, i.e.
++        # fp8 e4m3 activations quantized dynamically per token per 128-channel group
++        # (same granularity as vLLM's per_token_group_quant_fp8 / the checkpoint's
++        # 128x128 block weights); fp32 accumulation. Only read when
++        # `--quantization humming` is used. Setting the env var still wins.
++        os.environ.get(
++            "VLLM_HUMMING_INPUT_QUANT_CONFIG",
++            '{"dtype": "float8e4m3", "group_size": 128, "quant_mode": "dynamic_group"}',
++        )
+     ),
+     # Whether to use fp16 accumulator mma
+     "VLLM_HUMMING_USE_F16_ACCUM": lambda: maybe_convert_bool(
+@@ -2251,6 +2260,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
+         "VLLM_COMPILE_CACHE_SAVE_FORMAT", "binary", ["binary", "unpacked"]
+     ),
+     # Flag to control the v2 model runner. If unset, use config defaults.
++    # GDN replay commit (see gdn_attn.gdn_replay_commit_enabled); 0 = legacy kernel.
++    "VLLM_GDN_REPLAY_COMMIT": lambda: bool(
++        int(os.getenv("VLLM_GDN_REPLAY_COMMIT", "1"))
++    ),
+     "VLLM_USE_V2_MODEL_RUNNER": lambda: maybe_convert_bool(
+         os.getenv("VLLM_USE_V2_MODEL_RUNNER", None)
+     ),
+diff --git a/vllm/model_executor/layers/logits_processor.py b/vllm/model_executor/layers/logits_processor.py
+index 1ca1d71381..06c1bc5ec7 100644
+--- a/vllm/model_executor/layers/logits_processor.py
++++ b/vllm/model_executor/layers/logits_processor.py
+@@ -55,6 +55,22 @@ def _topk(scores: torch.Tensor, k: int) -> tuple[torch.Tensor, torch.Tensor]:
+ 
+ # --8<-- [start:logits_processor]
+ @PluggableLayer.register("logits_processor")
++def combine_local_argmax(
++    gathered: torch.Tensor, batch: int, tp_size: int
++) -> torch.Tensor:
++    """Combine all-gathered per-rank (max value, global index) pairs.
++
++    ``gathered`` is [batch, 2 * tp_size] (rank-major pairs). The largest value
++    wins; ties go to the lowest rank, whose vocab shard holds the lowest global
++    indices, so the result equals ``torch.argmax`` over the full logits (first
++    max).
++    """
++    gathered = gathered.view(batch, tp_size, 2)
++    max_rank_idx = gathered[:, :, 0].argmax(dim=-1, keepdim=True)
++    top_tokens = gathered[:, :, 1].gather(dim=-1, index=max_rank_idx)
++    return top_tokens.squeeze(-1).to(torch.int64)
++
++
+ class LogitsProcessor(PluggableLayer):
+     """Process logits and apply logits processors from sampling metadata.
+ 
+@@ -257,10 +273,7 @@ class LogitsProcessor(PluggableLayer):
+         # [batch, 2] -> [batch, 2 * tp_size]
+         gathered = tensor_model_parallel_all_gather(local_pair, dim=-1)
+         # [batch, tp_size, 2] where [:, :, 0]=values, [:, :, 1]=indices
+-        gathered = gathered.view(hidden_states.shape[0], tp_size, 2)
+-        max_rank_idx = gathered[:, :, 0].argmax(dim=-1, keepdim=True)
+-        top_tokens = gathered[:, :, 1].gather(dim=-1, index=max_rank_idx)
+-        return top_tokens.squeeze(-1).to(torch.int64)
++        return combine_local_argmax(gathered, hidden_states.shape[0], tp_size)
+ 
+     def get_top_k_tokens(
+         self,
+diff --git a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+index bdea28e11a..2d919c6131 100644
+--- a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
++++ b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+@@ -1962,6 +1962,18 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+ 
+         # 2.1: Process the multi-query part
+         if spec_sequence_masks is not None:
++            if attn_metadata.replay_gen is not None:
++                # Replay commit: apply the pending replay of each spec row to its
++                # committed state (column 0) so this per-position path sees a
++                # plain state; flushed rows then start from column 0.
++                assert spec_state_indices_tensor is not None
++                assert num_accepted_tokens is not None
++                num_accepted_tokens = ops.gdn_replay_flush(
++                    spec_state_indices_tensor.contiguous(),
++                    num_accepted_tokens.contiguous(),
++                    attn_metadata.replay_gen,
++                    ssm_state,
++                )
+             core_attn_out_spec, last_recurrent_state = (
+                 fused_sigmoid_gating_delta_rule_update(
+                     A_log=self.A_log,
+@@ -2362,6 +2374,32 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         assert num_accepted_tokens is not None
+ 
+         num_requests = attn_metadata.num_spec_decodes
++        if attn_metadata.replay_gen is not None:
++            # Replay commit: state_indices column 0 holds the committed state,
++            # column 1 the previous step's inputs (see gdn_decode_replay_kernel).
++            assert attn_metadata.replay_seq_lens is not None
++            assert self.kv_cache[1].dtype == torch.float32
++            ops.fused_gdn_decode_post_conv_mtp_replay(
++                mixed_qkv=mixed_qkv,
++                a=a,
++                b=b,
++                A_log=self.A_log,
++                dt_bias=self.dt_bias,
++                state_indices=state_indices[:num_requests],
++                cu_seqlens=cu_seqlens[: num_requests + 1],
++                num_accepted_tokens=num_accepted_tokens[:num_requests],
++                state=self.kv_cache[1],
++                output_gate=output_gate,
++                norm_weight=self.norm.weight,
++                replay_gen=attn_metadata.replay_gen[:num_requests],
++                seq_lens=attn_metadata.replay_seq_lens[:num_requests],
++                mamba_block_size=attn_metadata.replay_block_size,
++                out=core_attn_out,
++                scale=self.head_k_dim**-0.5,
++                norm_eps=self.layer_norm_epsilon,
++                output_gate_activation=self.norm.activation,
++            )
++            return
+         fused_mtp_decode_impl()(
+             mixed_qkv=mixed_qkv,
+             a=a,
+diff --git a/vllm/model_executor/layers/quantization/humming.py b/vllm/model_executor/layers/quantization/humming.py
+index ea4c9f6c47..9f70560497 100644
+--- a/vllm/model_executor/layers/quantization/humming.py
++++ b/vllm/model_executor/layers/quantization/humming.py
+@@ -213,7 +213,10 @@ class HummingConfig(QuantizationConfig):
+             if module_name.startswith("re:"):
+                 if re.match(module_name[3:], prefix):
+                     return True
+-            elif module_name in prefix:
++            elif f".{module_name}." in f".{prefix}.":
++                # Match whole dotted components only: a plain substring test made the
++                # (dense-model) ignore entry "...layers.0.mlp.gate" also skip
++                # "...layers.0.mlp.gate_up_proj", leaving the MLP unquantized.
+                 return True
+         if "lm_head" in prefix:
+             return True
+diff --git a/vllm/models/qwen3_5/nvidia/mtp.py b/vllm/models/qwen3_5/nvidia/mtp.py
+index dfdee2d90b..197de1e5fd 100644
+--- a/vllm/models/qwen3_5/nvidia/mtp.py
++++ b/vllm/models/qwen3_5/nvidia/mtp.py
+@@ -279,8 +279,77 @@ class Qwen3_5MTP(LocalArgmaxMixin, nn.Module, SupportsMultiModal, SupportsPP):
+         hidden_states: torch.Tensor,
+         spec_step_idx: int = 0,
+     ) -> torch.Tensor:
+-        # One lm_head is shared by all MTP modules, as in compute_logits.
+-        return super().get_top_tokens(hidden_states)
++        # T2 (leader-2): reduced-vocabulary draft head. The drafter only proposes; the
++        # target verifies with its full lm_head, so outputs are unchanged. The draft
++        # head covers token ids [0, N) (the tokenizer's id order, roughly BPE merge
++        # order: a data-free, generic choice), split evenly across TP ranks so each
++        # rank reads N/tp rows instead of vocab/tp.
++        w = getattr(self, "_t2_draft_head", None)
++        if w is None:
++            # One lm_head is shared by all MTP modules, as in compute_logits.
++            return super().get_top_tokens(hidden_states)
++        logits = torch.nn.functional.linear(hidden_states, w)
++        vals, idx = logits.max(dim=-1)
++        gidx = idx + self._t2_draft_offset
++        tp = self.lm_head.tp_size
++        if tp == 1:
++            return gidx
++        pair = torch.stack([vals.float(), gidx.float()], dim=-1)
++        gathered = tensor_model_parallel_all_gather(pair, dim=-1)
++        gathered = gathered.view(hidden_states.shape[0], tp, 2)
++        best = gathered[:, :, 0].argmax(dim=-1, keepdim=True)
++        return gathered[:, :, 1].gather(dim=-1, index=best).squeeze(-1).to(torch.int64)
++
++    def _t2_build_draft_head(self) -> None:
++        import os
++
++        from vllm.distributed.parallel_state import get_tp_group
++
++        n = int(os.environ.get("VLLM_T2_DRAFT_VOCAB", "65536"))
++        head = self.lm_head
++        if n <= 0 or isinstance(head, PPMissingLayer):
++            return
++        tp = head.tp_size
++        weight = head.weight
++        si = head.shard_indices
++        vocab = si.org_vocab_end_index - si.org_vocab_start_index
++        per_rank = n // tp
++        if weight.dtype not in (torch.bfloat16, torch.float16) or per_rank * tp != n:
++            return
++        # Every rank's slice [r*per_rank, (r+1)*per_rank) must live in some rank's shard.
++        local_vocab = weight.shape[0]
++        group = get_tp_group()
++        rank = group.rank_in_group
++        mine = None
++        for r in range(tp):
++            lo, hi = r * per_rank, (r + 1) * per_rank
++            src = lo // local_vocab
++            if (hi - 1) // local_vocab != src:
++                return  # slice spans two shards: keep the full head
++            if src == rank:
++                part = weight[lo - src * local_vocab : hi - src * local_vocab].clone()
++            else:
++                part = torch.empty(
++                    (per_rank, weight.shape[1]), dtype=weight.dtype, device=weight.device
++                )
++            if tp > 1 and src != r:
++                # move the slice from its owner (src) to rank r
++                if rank in (src, r):
++                    part = part.contiguous()
++                    group.broadcast(part, src=src)
++                else:
++                    group.broadcast(part, src=src)
++            if r == rank:
++                mine = part
++            del part
++        del vocab
++        self._t2_draft_head = mine
++        self._t2_draft_offset = rank * per_rank
++        logger.info(
++            "T2 reduced-vocab draft head: token ids [0, %d), %d rows on this rank",
++            n,
++            per_rank,
++        )
+ 
+     def is_unused_checkpoint_weight(self, name: str) -> bool:
+         return not name.startswith("mtp.") and not any(
+@@ -299,7 +368,9 @@ class Qwen3_5MTP(LocalArgmaxMixin, nn.Module, SupportsMultiModal, SupportsPP):
+                 yield name, weight
+ 
+         loader = AutoWeightsLoader(self)
+-        return loader.load_weights(remap_weight_names(weights))
++        loaded = loader.load_weights(remap_weight_names(weights))
++        self._t2_build_draft_head()
++        return loaded
+ 
+ 
+ class Qwen3_5MoeMTP(Qwen3_5MTP, QwenNextMixtureOfExperts):
+diff --git a/vllm/utils/humming.py b/vllm/utils/humming.py
+index 8004812ea4..b7d475e4bf 100644
+--- a/vllm/utils/humming.py
++++ b/vllm/utils/humming.py
+@@ -8,7 +8,10 @@ symbols to both the ``TYPE_CHECKING`` imports and ``_EXPORTS``, using
+ ``"module.path:attr"`` or ``"module.path"`` for a whole-module re-export.
+ """
+ 
++import glob
+ import importlib
++import importlib.util
++import os
+ from typing import TYPE_CHECKING, Any
+ 
+ import torch
+@@ -60,6 +63,32 @@ if TYPE_CHECKING:
+     from humming.tune import get_heuristics_config as get_heuristics_config
+     from humming.utils.weight import quantize_weight as quantize_weight
+ 
++def _expose_nvrtc_builtins() -> None:
++    """Make humming's NVRTC compile subprocess find libnvrtc-builtins.
++
++    humming JIT-compiles through a separate `nvrtc_compile` binary that dlopens the pip
++    package's libnvrtc.so (nvidia/cu13/lib). libnvrtc then dlopens libnvrtc-builtins.so.13.0
++    by bare name, which fails unless that directory is on LD_LIBRARY_PATH of the child
++    process. Children inherit os.environ at spawn time, so extending it here (before the
++    first compile) is enough; no manual LD_LIBRARY_PATH is needed. No-op when the library is
++    not in a pip `nvidia` package.
++    """
++    spec = importlib.util.find_spec("nvidia")
++    for base in (spec.submodule_search_locations or []) if spec else []:
++        for lib_dir in glob.glob(os.path.join(base, "cu*", "lib")):
++            if not glob.glob(os.path.join(lib_dir, "libnvrtc-builtins.so*")):
++                continue
++            cur = os.environ.get("LD_LIBRARY_PATH", "")
++            if lib_dir not in cur.split(os.pathsep):
++                os.environ["LD_LIBRARY_PATH"] = (
++                    lib_dir + (os.pathsep + cur if cur else "")
++                )
++            return
++
++
++_expose_nvrtc_builtins()
++
++
+ _EXPORTS: dict[str, str] = {
+     "dtypes": "humming.dtypes",
+     "DataType": "humming.dtypes:DataType",
+diff --git a/vllm/v1/attention/backends/flashinfer.py b/vllm/v1/attention/backends/flashinfer.py
+index d9436384ac..d0ef9ba231 100755
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -7,6 +7,10 @@ from enum import Enum
+ from functools import partial
+ from typing import ClassVar
+ 
++import contextlib
++import os
++import threading
++
+ import numpy as np
+ import torch
+ from flashinfer import (
+@@ -861,6 +865,46 @@ class FlashInferMetadata:
+     """
+ 
+ 
++
++# --- Draft-metadata fast path (T1, leader-1.w1) -------------------------------
++# While the drafter builds its uniform decode metadata, the exact seq_lens only
++# exist on the GPU (rejections of the previous verify step). Reading them with
++# `.cpu()` blocks the host until the whole step has finished on the GPU and
++# leaves the GPU idle while the host prepares the next step. FlashInfer's
++# plan() only needs the lengths for scheduling (split-KV chunking); the kernel
++# reads the real indptr / last_page_len / indices from GPU buffers. So: plan
++# with the CPU upper bound and overwrite those GPU buffers with exact values
++# computed on the GPU. Checked bitwise-identical to an exact plan in
++# bench/test_plan_ub.py (workspace leader-1.draftmeta). Only the drafter path,
++# only the cuda-graph decode wrapper; everything else keeps the exact path.
++_draft_ub_state = threading.local()
++
++
++@contextlib.contextmanager
++def draft_upper_bound_planning():
++    prev = getattr(_draft_ub_state, "on", False)
++    _draft_ub_state.on = _DRAFT_UB_ENABLED
++    try:
++        yield
++    finally:
++        _draft_ub_state.on = prev
++
++
++def _draft_ub_active() -> bool:
++    if not getattr(_draft_ub_state, "on", False):
++        return False
++    mode = _DRAFT_UB_MODE
++    if mode.startswith("file:"):  # debug: old path while the file exists
++        return not os.path.exists(mode[5:])
++    return mode != "0"
++
++
++_DRAFT_UB_MODE = os.environ.get("VLLM_DRAFT_UB_PLAN", "1")
++_DRAFT_UB_ENABLED = _DRAFT_UB_MODE != "0"
++_DRAFT_UB_CHECK_FILE = os.environ.get("VLLM_DRAFT_UB_CHECK")  # debug: checks run while this path exists
++_draft_ub_check_stats = [0, 0, 0]  # steps checked, mismatching steps, rows
++
++
+ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+     kv_cache_spec: AttentionSpec
+     reorder_batch_threshold: int = 1
+@@ -1686,6 +1730,7 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+         # When all attention (both prefill and decode) uses TRTLLM,
+         # seq_lens_cpu is not needed since TRTLLM paths use GPU tensors
+         # (block_tables, seq_lens) directly.
++        draft_ub_plan = False
+         needs_seq_lens_cpu = self.use_dcp or not all_uses_trtllm
+         if needs_seq_lens_cpu:
+             if (
+@@ -1694,6 +1739,18 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+             ):
+                 # No speculative token accounting, so the upper bound is exact.
+                 seq_lens_cpu = common_attn_metadata.seq_lens_cpu_upper_bound
++            elif (
++                _draft_ub_active()
++                and not self.use_dcp
++                and common_attn_metadata.seq_lens_cpu_upper_bound is not None
++                and num_prefills == 0
++                and self.enable_cuda_graph
++                and num_decode_tokens <= self._decode_cudagraph_max_bs
++            ):
++                # Drafter decode: plan with the upper bound, exact values are
++                # written on the GPU after planning (see _draft_ub_state).
++                seq_lens_cpu = common_attn_metadata.seq_lens_cpu_upper_bound
++                draft_ub_plan = True
+             else:
+                 with gpu_sync_allowed():
+                     seq_lens_cpu = common_attn_metadata.seq_lens.cpu()
+@@ -2019,9 +2076,88 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+                     disable_split_kv=self.disable_split_kv,
+                     q_len_per_req=q_len_per_req,
+                 )
++                if draft_ub_plan and use_cudagraph:
++                    self._write_exact_decode_kv_metadata(
++                        common_attn_metadata.seq_lens,
++                        block_table_tensor,
++                        num_reqs,
++                        page_size,
++                        seq_lens_cpu_check=(
++                            common_attn_metadata.seq_lens_cpu_upper_bound
++                        ),
++                    )
+                 attn_metadata.decode = FIDecode(wrapper=decode_wrapper)
+         return attn_metadata
+ 
++    def _write_exact_decode_kv_metadata(
++        self,
++        seq_lens: torch.Tensor,
++        block_table_tensor: torch.Tensor,
++        num_reqs: int,
++        page_size: int,
++        seq_lens_cpu_check: torch.Tensor | None,
++    ) -> None:
++        """Overwrite paged_kv_indptr / indices / last_page_len (GPU) with the
++        exact values from the device seq_lens; same formulas as the host path in
++        _compute_flashinfer_kv_metadata. Stream-ordered after plan()'s H2D copies."""
++        sl = seq_lens[:num_reqs]
++        nb = (sl + (page_size - 1)) // page_size
++        indptr = self.paged_kv_indptr.gpu[: num_reqs + 1]
++        indptr[:1].zero_()
++        torch.cumsum(nb, dim=0, dtype=torch.int32, out=indptr[1 : num_reqs + 1])
++        lp = sl % page_size
++        lp = torch.where((lp == 0) & (sl != 0), page_size, lp)
++        self.paged_kv_last_page_len.gpu[:num_reqs].copy_(lp)
++        # Pages past the exact count are never read; the grid is the (host)
++        # upper-bound page count, the kernel copies only exact pages.
++        _copy_page_indices_kernel[(num_reqs,)](
++            self.paged_kv_indices,
++            block_table_tensor,
++            block_table_tensor.stride(0),
++            indptr,
++            BLOCK_SIZE=1024,
++        )
++        if _DRAFT_UB_CHECK_FILE and os.path.exists(_DRAFT_UB_CHECK_FILE):
++            # Debug only (syncs): compare with the exact host computation.
++            with gpu_sync_allowed():
++                sl_cpu = seq_lens[:num_reqs].cpu().numpy()
++                nb_np = (sl_cpu + (page_size - 1)) // page_size
++                ip_np = np.concatenate([[0], np.cumsum(nb_np)]).astype(np.int32)
++                lp_np = sl_cpu % page_size
++                lp_np = np.where((lp_np == 0) & (sl_cpu != 0), page_size, lp_np)
++                ok = bool(
++                    np.array_equal(indptr.cpu().numpy(), ip_np)
++                    and np.array_equal(
++                        self.paged_kv_last_page_len.gpu[:num_reqs].cpu().numpy(),
++                        lp_np.astype(np.int32),
++                    )
++                )
++                # indices: compare against block_table rows
++                tot = int(ip_np[-1])
++                ref = np.concatenate(
++                    [
++                        block_table_tensor[r, : int(nb_np[r])].cpu().numpy()
++                        for r in range(num_reqs)
++                    ]
++                    or [np.zeros(0, np.int32)]
++                )
++                ok &= bool(
++                    np.array_equal(self.paged_kv_indices[:tot].cpu().numpy(), ref)
++                )
++                ub = seq_lens_cpu_check
++                ub_ok = ub is None or bool(
++                    (ub[:num_reqs].cpu().numpy() >= sl_cpu).all()
++                )
++            st = _draft_ub_check_stats
++            st[0] += 1
++            st[1] += 0 if (ok and ub_ok) else 1
++            st[2] += num_reqs
++            if st[0] % 50 == 0 or not (ok and ub_ok):
++                logger.info(
++                    "DRAFT_UB_CHECK steps=%d bad=%d rows=%d (this: bufs_ok=%s ub>=exact=%s)",
++                    st[0], st[1], st[2], ok, ub_ok,
++                )
++
+     def update_draft_decode_metadata(self, _metadata: FlashInferMetadata) -> None:
+         pass
+ 
+diff --git a/vllm/v1/attention/backends/gdn_attn.py b/vllm/v1/attention/backends/gdn_attn.py
+index f28b3e42ad..f6e8912adb 100644
+--- a/vllm/v1/attention/backends/gdn_attn.py
++++ b/vllm/v1/attention/backends/gdn_attn.py
+@@ -8,12 +8,15 @@ from typing import Literal
+ 
+ import torch
+ 
++from vllm import envs
+ from vllm._aiter_ops import rocm_aiter_ops
+ from vllm.config import VllmConfig
++from vllm.logger import init_logger
+ from vllm.model_executor.layers.mamba.checkpoint import (
+     MambaPrefillCheckpointBuilder,
+     MambaPrefillCheckpointMetadata,
+ )
++from vllm.platforms import current_platform
+ from vllm.utils.torch_utils import async_tensor_h2d
+ from vllm.v1.attention.backend import (
+     AttentionBackend,
+@@ -90,6 +93,35 @@ class GDNAttentionBackend(AttentionBackend):
+         return True
+ 
+ 
++logger = init_logger(__name__)
++
++
++def gdn_replay_commit_enabled(vllm_config: VllmConfig) -> bool:
++    """Whether the GDN replay commit is active for this server.
++
++    Needs: env switch, model runner V2 (per-request generation ids), MTP/spec decode
++    with 2..5 state columns, prefix-cache mode "none" or "align" (not "all": every
++    position must be materialized there), fp32 recurrent state, and the CUDA op.
++    """
++    if not envs.VLLM_GDN_REPLAY_COMMIT:
++        return False
++    spec = vllm_config.speculative_config
++    if spec is None or spec.num_speculative_tokens is None:
++        return False
++    if not 1 <= spec.num_speculative_tokens <= 4:
++        return False
++    if not vllm_config.use_v2_model_runner:
++        return False
++    cache_config = vllm_config.cache_config
++    if cache_config.mamba_cache_mode not in ("none", "align"):
++        return False
++    if cache_config.mamba_ssm_cache_dtype not in ("auto", "float32"):
++        return False
++    if not current_platform.is_cuda():
++        return False
++    return hasattr(torch.ops._C, "fused_gdn_decode_post_conv_mtp_replay")
++
++
+ @dataclass
+ class GDNAttentionMetadata:
+     num_prefills: int
+@@ -120,6 +152,12 @@ class GDNAttentionMetadata:
+ 
+     num_accepted_tokens: torch.Tensor | None = None  # shape: [batch,]
+     uniform_spec_sequence_length: int | None = None  # None for ragged batches
++    # GDN replay commit (None when disabled): per spec row request generation id
++    # and sequence length at the end of the step, plus the mamba block size used
++    # to decide which steps must materialize per-position states.
++    replay_gen: torch.Tensor | None = None  # shape: [batch,]
++    replay_seq_lens: torch.Tensor | None = None  # shape: [batch,]
++    replay_block_size: int = 0
+ 
+     # Pre-computed FLA chunk metadata (avoids GPU->CPU sync in prepare_chunk_indices)
+     chunk_indices: torch.Tensor | None = None
+@@ -259,6 +297,25 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
+             dtype=torch.int32,
+             device=device,
+         )
++        # GDN replay commit (see gdn_replay_commit_enabled). The model state sets
++        # replay_gen_batch (per batch row generation ids) before each build.
++        self.replay_enabled: bool = gdn_replay_commit_enabled(vllm_config)
++        self.replay_gen_batch: torch.Tensor | None = None
++        self.replay_block_size: int = 0
++        if self.replay_enabled:
++            logger.info_once(
++                "GDN replay commit enabled (VLLM_GDN_REPLAY_COMMIT=0 disables)"
++            )
++            cache_config = vllm_config.cache_config
++            if cache_config.mamba_cache_mode == "align":
++                assert cache_config.mamba_block_size is not None
++                self.replay_block_size = int(cache_config.mamba_block_size)
++            self.replay_gen_buf = torch.zeros(
++                (self.decode_cudagraph_max_bs,), dtype=torch.int32, device=device
++            )
++            self.replay_seq_lens_buf = torch.zeros(
++                (self.decode_cudagraph_max_bs,), dtype=torch.int32, device=device
++            )
+ 
+     @staticmethod
+     def _check_chunk_metadata_override(
+@@ -526,6 +583,23 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
+             else:
+                 num_accepted_tokens = num_accepted_tokens[spec_sequence_masks_cpu]
+ 
++        replay_gen: torch.Tensor | None = None
++        replay_seq_lens: torch.Tensor | None = None
++        if self.replay_enabled and spec_sequence_masks is not None:
++            gen_all = self.replay_gen_batch
++            if gen_all is None:
++                gen_all = torch.zeros(
++                    m.num_reqs, dtype=torch.int32, device=query_start_loc.device
++                )
++            gen_all = gen_all[: m.num_reqs]
++            seq_all = m.seq_lens[: m.num_reqs].to(torch.int32)
++            if num_prefills == 0 and num_decodes == 0:
++                replay_gen = gen_all[:num_spec_decodes]
++                replay_seq_lens = seq_all[:num_spec_decodes]
++            else:
++                replay_gen = gen_all[spec_sequence_masks_cpu]
++                replay_seq_lens = seq_all[spec_sequence_masks_cpu]
++
+         chunk_indices: torch.Tensor | None = None
+         chunk_offsets: torch.Tensor | None = None
+         prefill_query_start_loc: torch.Tensor | None = None
+@@ -672,6 +746,19 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
+             num_accepted_tokens = self.num_accepted_tokens[:batch_size]
+             num_accepted_tokens[num_spec_decodes:].fill_(1)
+ 
++            if replay_gen is not None:
++                assert replay_seq_lens is not None
++                self.replay_gen_buf[:num_spec_decodes].copy_(
++                    replay_gen, non_blocking=True
++                )
++                replay_gen = self.replay_gen_buf[:batch_size]
++                replay_gen[num_spec_decodes:].fill_(0)
++                self.replay_seq_lens_buf[:num_spec_decodes].copy_(
++                    replay_seq_lens, non_blocking=True
++                )
++                replay_seq_lens = self.replay_seq_lens_buf[:batch_size]
++                replay_seq_lens[num_spec_decodes:].fill_(0)
++
+         if self._stage_decode(num_prefills, num_decodes, num_spec_decodes):
+             self.non_spec_state_indices_tensor[:num_decodes].copy_(
+                 non_spec_state_indices_tensor, non_blocking=True
+@@ -715,6 +802,9 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
+             non_spec_token_indx=non_spec_token_indx,
+             num_accepted_tokens=num_accepted_tokens,
+             uniform_spec_sequence_length=uniform_spec_sequence_length,
++            replay_gen=replay_gen,
++            replay_seq_lens=replay_seq_lens,
++            replay_block_size=self.replay_block_size,
+             nums_dict=nums_dict,
+             batch_ptr=batch_ptr,
+             token_chunk_offset_ptr=token_chunk_offset_ptr,
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+index 5286d9008d..228b4f51bd 100644
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -16,6 +16,7 @@ hidden. Prefer utility functions defined elsewhere and call them from here,
+ instead of embedding feature-specific logic directly.
+ """
+ 
++import os
+ import functools
+ import gc
+ import time
+@@ -1698,6 +1699,106 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         )
+         return block_tables, slot_mappings
+ 
++    def _local_argmax_head(self):
++        """(logits_processor, lm_head) of the target if it exposes both."""
++        cached = getattr(self, "_local_argmax_head_cache", 0)
++        if cached != 0:
++            return cached
++        found = None
++        for m in (self.model, getattr(self.model, "language_model", None)):
++            if (
++                m is not None
++                and hasattr(m, "logits_processor")
++                and hasattr(m, "lm_head")
++                and not getattr(m.logits_processor, "logits_as_input", False)
++            ):
++                found = (m.logits_processor, m.lm_head)
++                break
++        self._local_argmax_head_cache = found
++        return found
++
++    def _use_target_local_argmax(
++        self, input_batch: InputBatch, grammar_output: GrammarOutput | None
++    ) -> bool:
++        # VLLM_TARGET_LOCAL_ARGMAX=0 disables. Pure host-side checks: the same
++        # outcome on every TP rank (state is replicated), so no rank can skip
++        # a collective the others run.
++        ok, reason = self._local_argmax_decision(input_batch, grammar_output)
++        if os.environ.get("VLLM_TARGET_LOCAL_ARGMAX_LOG") == "1":
++            idx = input_batch.idx_mapping_np
++            s = self.sampler
++            assert s is not None
++            logger.info(
++                "LA_GATE tp_rank=%d use=%s reason=%s reqs=%d drafts=%d "
++                "temp=%s needs_proc=%s",
++                self.tp_rank_for_log(),
++                ok,
++                reason,
++                input_batch.num_reqs,
++                input_batch.num_draft_tokens,
++                s.sampling_states.temperature.np[idx].tolist(),
++                s.needs_logits_processing[idx].tolist(),
++            )
++        return ok
++
++    def tp_rank_for_log(self) -> int:
++        from vllm.distributed.parallel_state import get_tp_group
++
++        return get_tp_group().rank_in_group
++
++    def _local_argmax_decision(
++        self, input_batch: InputBatch, grammar_output: GrammarOutput | None
++    ) -> tuple[bool, str]:
++        if os.environ.get("VLLM_TARGET_LOCAL_ARGMAX", "1") == "0":
++            return False, "env_off"
++        rs = self.rejection_sampler
++        if rs is None:
++            return False, "no_rejection_sampler"
++        if grammar_output is not None:
++            return False, "grammar"
++        if self.batch_sharder is not None:
++            return False, "batch_sharder"
++        if input_batch.num_reqs == 0:
++            return False, "no_reqs"
++        if input_batch.num_draft_tokens == 0:
++            return False, "no_drafts"
++        if self.speculator is None:
++            return False, "no_speculator"
++        if self._local_argmax_head() is None:
++            return False, "no_head"
++        if not rs.supports_greedy_target_tokens():
++            return False, "sampler_unsupported"
++        if not rs.can_verify_greedy_tokens(input_batch):
++            return False, "not_greedy_or_processed"
++        return True, "ok"
++
++    def _check_local_argmax(self, use_local: bool, hidden: torch.Tensor) -> None:
++        """Debug only (syncs): compare local-argmax tokens with the argmax of
++        the gathered full logits, and count used/fallback steps."""
++        st = self.__dict__.setdefault("_la_stats", [0, 0, 0, 0])  # used, fb, rows, bad
++        if not use_local:
++            st[1] += 1
++        else:
++            top = self._target_top_tokens(hidden)
++            ref = self.model_state.compute_sample_logits(hidden).argmax(dim=-1)
++            st[0] += 1
++            st[2] += int(top.numel())
++            st[3] += int((top != ref).sum().item())
++        if (st[0] + st[1]) % 25 == 0 or st[3]:
++            logger.info(
++                "LOCAL_ARGMAX_CHECK used=%d fallback=%d rows=%d mismatches=%d",
++                *st,
++            )
++
++    def _target_top_tokens(self, sample_hidden_states: torch.Tensor) -> torch.Tensor:
++        lp, head = self._local_argmax_head()
++        return lp.get_top_tokens(head, sample_hidden_states)
++
++    def _sample_greedy_tokens(self, top, input_batch):
++        assert self.rejection_sampler is not None
++        out = self.rejection_sampler.verify_greedy_tokens(top, input_batch)
++        return out, out.num_sampled, out.num_rejected
++
+     def sample(
+         self,
+         hidden_states: torch.Tensor,
+@@ -1725,6 +1826,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+             logits = logits[:, : self.vocab_size]
+         else:
+             sample_hidden_states = hidden_states[input_batch.logits_indices]
++            use_local = self._use_target_local_argmax(input_batch, grammar_output)
++            if os.environ.get("VLLM_TARGET_LOCAL_ARGMAX_CHECK") == "1":
++                self._check_local_argmax(use_local, sample_hidden_states)
++            if use_local:
++                # All-greedy, unprocessed, no logprobs: skip the full-vocab
++                # logits all-gather; exchange only (max, index) pairs.
++                top = self._target_top_tokens(sample_hidden_states)
++                return self._sample_greedy_tokens(top, input_batch)
+             logits = self.model_state.compute_sample_logits(sample_hidden_states)
+ 
+         # A diffusion prefill has no logit rows even when a bitmask row
+diff --git a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
+index d97672d163..20c642f015 100644
+--- a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
++++ b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
+@@ -12,7 +12,10 @@ from vllm.config.compilation import CUDAGraphMode
+ from vllm.model_executor.layers.mamba.mamba_utils import MambaStateCopyFuncsByType
+ from vllm.triton_utils import tl, triton
+ from vllm.utils.torch_utils import async_tensor_h2d
+-from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadataBuilder
++from vllm.v1.attention.backends.gdn_attn import (
++    GDNAttentionMetadataBuilder,
++    gdn_replay_commit_enabled,
++)
+ from vllm.v1.attention.backends.mamba2_attn import (
+     Mamba2AttentionMetadata,
+     Mamba2AttentionMetadataBuilder,
+@@ -91,6 +94,14 @@ class MambaHybridModelState(DefaultModelState):
+         self.num_accepted_tokens_gpu = torch.ones(
+             self.max_num_reqs, dtype=torch.int32, device=self.device
+         )
++        # GDN replay commit: a unique id per request lifetime (new and resumed
++        # requests get a fresh one) so stale replay records in recycled state
++        # slots can never match.
++        self._replay_gen_gpu = torch.zeros(
++            self.max_num_reqs, dtype=torch.int32, device=self.device
++        )
++        self._replay_gen_counter = 0
++        self._replay_enabled = gdn_replay_commit_enabled(vllm_config)
+         self._replayssm_query_start_loc: torch.Tensor | None = None
+         # Pre-copy prefix-cache state (V2). The migration of each request's
+         # mamba state across block boundaries runs as a fused GPU kernel reusing
+@@ -125,6 +136,9 @@ class MambaHybridModelState(DefaultModelState):
+         super().add_request(req_index, new_req_data)
+         # Must reset the speculative acceptance count in this idx which could be stale.
+         self.num_accepted_tokens_gpu[req_index].fill_(1)
++        if self._replay_enabled:
++            self._replay_gen_counter += 1
++            self._replay_gen_gpu[req_index].fill_(self._replay_gen_counter)
+         if self._align_mode:
+             # Seed the running state block from the resumed/prefilled position.
+             # The column is in mamba blocks. cache_config.block_size is the
+@@ -340,6 +354,19 @@ class MambaHybridModelState(DefaultModelState):
+                 for group_idx, builder in aligned_index_builders:
+                     builder.mamba_aligned_state_indices = all_group_indices[group_idx]
+ 
++        if self._replay_enabled:
++            replay_gen = None
++            if not for_capture:
++                replay_gen = self._replay_gen_gpu.new_zeros(num_reqs)
++                replay_gen[: input_batch.num_reqs] = self._replay_gen_gpu[
++                    input_batch.idx_mapping
++                ]
++            for groups in attn_groups:
++                for group in groups:
++                    builder = group.get_metadata_builder(0)
++                    if isinstance(builder, GDNAttentionMetadataBuilder):
++                        builder.replay_gen_batch = replay_gen
++
+         mamba_attn_metadata = MambaHybridAttnMetadata(
+             is_prefilling=is_prefilling,
+             num_accepted_tokens=num_accepted_tokens,
+diff --git a/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py b/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
+index f5f40ea271..3c3f522491 100644
+--- a/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
++++ b/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py
+@@ -112,6 +112,41 @@ def _gather_draft_sampled_kernel(
+     tl.store(pos_ptr + block, pos, mask=mask)
+ 
+ 
++@triton.jit
++def _greedy_verify_kernel(
++    # [num_reqs, num_speculative_steps + 1]
++    sampled_ptr,
++    sampled_stride,
++    # [num_reqs]
++    num_sampled_ptr,
++    # [num_logits] target argmax of each logits row
++    target_tokens_ptr,
++    # [num_logits] (row j holds the draft token that row j-1 verifies)
++    draft_sampled_ptr,
++    # [num_reqs + 1]
++    cu_num_logits_ptr,
++):
++    req_idx = tl.program_id(0)
++    start_idx = tl.load(cu_num_logits_ptr + req_idx).to(tl.int64)
++    end_idx = tl.load(cu_num_logits_ptr + req_idx + 1).to(tl.int64)
++    num_draft_tokens = end_idx - start_idx - 1
++    running = tl.full((), 1, tl.int32)
++    accepted = tl.full((), 0, tl.int32)
++    for i in range(num_draft_tokens):
++        target = tl.load(target_tokens_ptr + start_idx + i).to(tl.int64)
++        draft = tl.load(draft_sampled_ptr + start_idx + i + 1).to(tl.int64)
++        # -1 placeholders are never accepted (draft >= 0 fails).
++        ok = ((target == draft) & (draft >= 0)).to(tl.int32)
++        running = running * ok
++        accepted += running
++        # Accepted slots equal the target argmax; the first rejected slot is
++        # the target argmax too, so every slot up to the bonus holds it.
++        tl.store(sampled_ptr + req_idx * sampled_stride + i, target)
++    bonus = tl.load(target_tokens_ptr + start_idx + num_draft_tokens).to(tl.int64)
++    tl.store(sampled_ptr + req_idx * sampled_stride + num_draft_tokens, bonus)
++    tl.store(num_sampled_ptr + req_idx, accepted + 1)
++
++
+ def gather_draft_sampled(
+     input_ids: torch.Tensor,
+     positions: torch.Tensor,
+@@ -421,6 +456,81 @@ class RejectionSampler:
+         )
+         return sampled, num_sampled, logprobs_tensors, sampling_mask_tensors
+ 
++    def supports_greedy_target_tokens(self) -> bool:
++        """Whether verification may consume precomputed target argmax tokens
++        (static part; the per-batch part is `can_verify_greedy_tokens`)."""
++        s = self.sampler
++        return (
++            self.watermark_key is None
++            and not self.use_block_verification
++            and self.fly_window_size == 0
++            and self.synthetic_conditional_rates is None
++            and not self.enable_adaptive_verification
++            and not s.compute_nans
++            and not s.return_sampling_mask
++            and s.trace_replay_state is None
++            and len(s.logits_processors) == 3  # no custom logits processors
++        )
++
++    def can_verify_greedy_tokens(self, input_batch: InputBatch) -> bool:
++        """Per-batch check (host-side, no GPU sync): every request is greedy,
++        needs no logits processing of any kind (penalties, logit bias, allowed
++        ids, min_tokens, bad words, thinking budget, ...) and no logprobs."""
++        idx = input_batch.idx_mapping_np
++        s = self.sampler
++        return (
++            bool(np.all(s.sampling_states.temperature.np[idx] == 0.0))
++            and not np.any(s.needs_logits_processing[idx])
++            and s.get_logprobs_dims(idx) is None
++        )
++
++    def verify_greedy_tokens(
++        self, target_tokens: torch.Tensor, input_batch: InputBatch
++    ) -> SamplerOutput:
++        """Greedy verification from per-row target argmax tokens [num_logits].
++
++        Equivalent to `__call__` on the full logits when all requests are
++        greedy and unprocessed: accept draft j while it equals the target
++        argmax of row j; the first mismatch (or the bonus row) emits the
++        target argmax."""
++        draft_sampled, _ = gather_draft_sampled(
++            input_batch.input_ids,
++            input_batch.positions,
++            input_batch.logits_indices,
++            input_batch.expanded_idx_mapping,
++            input_batch.expanded_local_pos,
++            self.sampler.req_states.prefill_len.gpu,
++        )
++        num_reqs = input_batch.num_reqs
++        sampled = draft_sampled.new_empty(
++            num_reqs, self.num_speculative_steps + 1, dtype=torch.int64
++        )
++        num_sampled = sampled.new_empty(num_reqs, dtype=torch.int32)
++        _greedy_verify_kernel[(num_reqs,)](
++            sampled,
++            sampled.stride(0),
++            num_sampled,
++            target_tokens,
++            draft_sampled,
++            input_batch.cu_num_logits,
++            num_warps=1,
++        )
++        num_sampled, num_rejected = get_num_sampled_and_rejected(
++            num_sampled,
++            input_batch.seq_lens,
++            input_batch.cu_num_logits,
++            input_batch.idx_mapping,
++            self.sampler.req_states.prefill_len.gpu,
++        )
++        return SamplerOutput(
++            sampled_token_ids=sampled,
++            logprobs_tensors=None,
++            num_nans=None,
++            num_sampled=num_sampled,
++            num_rejected=num_rejected,
++            sampling_mask_tensors=None,
++        )
++
+     def __call__(
+         self,
+         logits: torch.Tensor,
+diff --git a/vllm/v1/worker/gpu/spec_decode/speculator.py b/vllm/v1/worker/gpu/spec_decode/speculator.py
+index 3040e3306d..abe35a89b3 100644
+--- a/vllm/v1/worker/gpu/spec_decode/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/speculator.py
+@@ -10,6 +10,7 @@ import numpy as np
+ import torch
+ import torch.nn as nn
+ 
++from vllm.v1.attention.backends.flashinfer import draft_upper_bound_planning
+ from vllm.config import VllmConfig, get_layers_from_vllm_config
+ from vllm.config.compilation import CUDAGraphMode
+ from vllm.config.speculative import _DRAFT_VLLM_CONFIG_OVERRIDES
+@@ -494,30 +495,31 @@ class DraftModelSpeculator(BaseSpeculator):
+                 self.block_tables.cp_rank,
+                 self.block_tables.cp_interleave,
+             )
+-        attn_metadata = build_attn_metadata(
+-            attn_groups=self.attn_groups,
+-            num_reqs=num_reqs_padded,
+-            num_tokens=num_tokens,
+-            query_start_loc_gpu=self.input_buffers.query_start_loc[
+-                : num_reqs_padded + 1
+-            ],
+-            query_start_loc_cpu=query_start_loc_cpu,
+-            max_query_len=max_query_len,
+-            seq_lens=self.input_buffers.seq_lens[:num_reqs_padded],
+-            dcp_local_seq_lens=(
+-                None
+-                if dcp_local_seq_lens is None
+-                else dcp_local_seq_lens[:num_reqs_padded]
+-            ),
+-            max_seq_len=min(self.draft_max_seq_len, self.max_model_len),
+-            block_tables=block_tables,
+-            slot_mappings=slot_mappings,
+-            kv_cache_config=self.kv_cache_config,
+-            causal=causal,
+-            seq_lens_cpu_upper_bound=draft_seq_lens_cpu_upper_bound,
+-            positions=self.input_buffers.positions[:num_tokens],
+-            is_prefilling=self.draft_is_prefilling[:num_reqs_padded],
+-        )
++        with draft_upper_bound_planning():
++            attn_metadata = build_attn_metadata(
++                attn_groups=self.attn_groups,
++                num_reqs=num_reqs_padded,
++                num_tokens=num_tokens,
++                query_start_loc_gpu=self.input_buffers.query_start_loc[
++                    : num_reqs_padded + 1
++                ],
++                query_start_loc_cpu=query_start_loc_cpu,
++                max_query_len=max_query_len,
++                seq_lens=self.input_buffers.seq_lens[:num_reqs_padded],
++                dcp_local_seq_lens=(
++                    None
++                    if dcp_local_seq_lens is None
++                    else dcp_local_seq_lens[:num_reqs_padded]
++                ),
++                max_seq_len=min(self.draft_max_seq_len, self.max_model_len),
++                block_tables=block_tables,
++                slot_mappings=slot_mappings,
++                kv_cache_config=self.kv_cache_config,
++                causal=causal,
++                seq_lens_cpu_upper_bound=draft_seq_lens_cpu_upper_bound,
++                positions=self.input_buffers.positions[:num_tokens],
++                is_prefilling=self.draft_is_prefilling[:num_reqs_padded],
++            )
+         return attn_metadata
+ 
+     def draft_logits_spec(self, vllm_config: VllmConfig) -> tuple[torch.dtype, float]:

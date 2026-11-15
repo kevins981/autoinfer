@@ -1,0 +1,14 @@
+{
+ "name": "T1-007",
+ "workspace": null,
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 715.0,
+ "requested_by": "leader-1",
+ "team": "T1",
+ "started": "2026-11-15T16:49:18+00:00",
+ "tok_s": [],
+ "failed_stage": "exit 130",
+ "ended": "2026-11-15T17:04:56+00:00"
+}

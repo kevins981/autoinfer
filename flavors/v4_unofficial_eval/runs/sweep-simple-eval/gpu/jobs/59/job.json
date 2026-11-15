@@ -1,0 +1,19 @@
+{
+  "id": 59,
+  "pid": 2332137,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": "draftmeta",
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "bench/job_srv.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/leader-1.draftmeta",
+  "submitted": "2026-11-15T17:30:54+00:00",
+  "state": "done",
+  "started": "2026-11-15T17:30:54+00:00",
+  "ended": "2026-11-15T17:32:09+00:00",
+  "exit_code": 1,
+  "gpu_minutes": 1.245
+}

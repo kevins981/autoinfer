@@ -1,0 +1,246 @@
+diff --git a/vllm/v1/attention/backends/flashinfer.py b/vllm/v1/attention/backends/flashinfer.py
+index d9436384ac..d0ef9ba231 100755
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -7,6 +7,10 @@ from enum import Enum
+ from functools import partial
+ from typing import ClassVar
+ 
++import contextlib
++import os
++import threading
++
+ import numpy as np
+ import torch
+ from flashinfer import (
+@@ -861,6 +865,46 @@ class FlashInferMetadata:
+     """
+ 
+ 
++
++# --- Draft-metadata fast path (T1, leader-1.w1) -------------------------------
++# While the drafter builds its uniform decode metadata, the exact seq_lens only
++# exist on the GPU (rejections of the previous verify step). Reading them with
++# `.cpu()` blocks the host until the whole step has finished on the GPU and
++# leaves the GPU idle while the host prepares the next step. FlashInfer's
++# plan() only needs the lengths for scheduling (split-KV chunking); the kernel
++# reads the real indptr / last_page_len / indices from GPU buffers. So: plan
++# with the CPU upper bound and overwrite those GPU buffers with exact values
++# computed on the GPU. Checked bitwise-identical to an exact plan in
++# bench/test_plan_ub.py (workspace leader-1.draftmeta). Only the drafter path,
++# only the cuda-graph decode wrapper; everything else keeps the exact path.
++_draft_ub_state = threading.local()
++
++
++@contextlib.contextmanager
++def draft_upper_bound_planning():
++    prev = getattr(_draft_ub_state, "on", False)
++    _draft_ub_state.on = _DRAFT_UB_ENABLED
++    try:
++        yield
++    finally:
++        _draft_ub_state.on = prev
++
++
++def _draft_ub_active() -> bool:
++    if not getattr(_draft_ub_state, "on", False):
++        return False
++    mode = _DRAFT_UB_MODE
++    if mode.startswith("file:"):  # debug: old path while the file exists
++        return not os.path.exists(mode[5:])
++    return mode != "0"
++
++
++_DRAFT_UB_MODE = os.environ.get("VLLM_DRAFT_UB_PLAN", "1")
++_DRAFT_UB_ENABLED = _DRAFT_UB_MODE != "0"
++_DRAFT_UB_CHECK_FILE = os.environ.get("VLLM_DRAFT_UB_CHECK")  # debug: checks run while this path exists
++_draft_ub_check_stats = [0, 0, 0]  # steps checked, mismatching steps, rows
++
++
+ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+     kv_cache_spec: AttentionSpec
+     reorder_batch_threshold: int = 1
+@@ -1686,6 +1730,7 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+         # When all attention (both prefill and decode) uses TRTLLM,
+         # seq_lens_cpu is not needed since TRTLLM paths use GPU tensors
+         # (block_tables, seq_lens) directly.
++        draft_ub_plan = False
+         needs_seq_lens_cpu = self.use_dcp or not all_uses_trtllm
+         if needs_seq_lens_cpu:
+             if (
+@@ -1694,6 +1739,18 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+             ):
+                 # No speculative token accounting, so the upper bound is exact.
+                 seq_lens_cpu = common_attn_metadata.seq_lens_cpu_upper_bound
++            elif (
++                _draft_ub_active()
++                and not self.use_dcp
++                and common_attn_metadata.seq_lens_cpu_upper_bound is not None
++                and num_prefills == 0
++                and self.enable_cuda_graph
++                and num_decode_tokens <= self._decode_cudagraph_max_bs
++            ):
++                # Drafter decode: plan with the upper bound, exact values are
++                # written on the GPU after planning (see _draft_ub_state).
++                seq_lens_cpu = common_attn_metadata.seq_lens_cpu_upper_bound
++                draft_ub_plan = True
+             else:
+                 with gpu_sync_allowed():
+                     seq_lens_cpu = common_attn_metadata.seq_lens.cpu()
+@@ -2019,9 +2076,88 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+                     disable_split_kv=self.disable_split_kv,
+                     q_len_per_req=q_len_per_req,
+                 )
++                if draft_ub_plan and use_cudagraph:
++                    self._write_exact_decode_kv_metadata(
++                        common_attn_metadata.seq_lens,
++                        block_table_tensor,
++                        num_reqs,
++                        page_size,
++                        seq_lens_cpu_check=(
++                            common_attn_metadata.seq_lens_cpu_upper_bound
++                        ),
++                    )
+                 attn_metadata.decode = FIDecode(wrapper=decode_wrapper)
+         return attn_metadata
+ 
++    def _write_exact_decode_kv_metadata(
++        self,
++        seq_lens: torch.Tensor,
++        block_table_tensor: torch.Tensor,
++        num_reqs: int,
++        page_size: int,
++        seq_lens_cpu_check: torch.Tensor | None,
++    ) -> None:
++        """Overwrite paged_kv_indptr / indices / last_page_len (GPU) with the
++        exact values from the device seq_lens; same formulas as the host path in
++        _compute_flashinfer_kv_metadata. Stream-ordered after plan()'s H2D copies."""
++        sl = seq_lens[:num_reqs]
++        nb = (sl + (page_size - 1)) // page_size
++        indptr = self.paged_kv_indptr.gpu[: num_reqs + 1]
++        indptr[:1].zero_()
++        torch.cumsum(nb, dim=0, dtype=torch.int32, out=indptr[1 : num_reqs + 1])
++        lp = sl % page_size
++        lp = torch.where((lp == 0) & (sl != 0), page_size, lp)
++        self.paged_kv_last_page_len.gpu[:num_reqs].copy_(lp)
++        # Pages past the exact count are never read; the grid is the (host)
++        # upper-bound page count, the kernel copies only exact pages.
++        _copy_page_indices_kernel[(num_reqs,)](
++            self.paged_kv_indices,
++            block_table_tensor,
++            block_table_tensor.stride(0),
++            indptr,
++            BLOCK_SIZE=1024,
++        )
++        if _DRAFT_UB_CHECK_FILE and os.path.exists(_DRAFT_UB_CHECK_FILE):
++            # Debug only (syncs): compare with the exact host computation.
++            with gpu_sync_allowed():
++                sl_cpu = seq_lens[:num_reqs].cpu().numpy()
++                nb_np = (sl_cpu + (page_size - 1)) // page_size
++                ip_np = np.concatenate([[0], np.cumsum(nb_np)]).astype(np.int32)
++                lp_np = sl_cpu % page_size
++                lp_np = np.where((lp_np == 0) & (sl_cpu != 0), page_size, lp_np)
++                ok = bool(
++                    np.array_equal(indptr.cpu().numpy(), ip_np)
++                    and np.array_equal(
++                        self.paged_kv_last_page_len.gpu[:num_reqs].cpu().numpy(),
++                        lp_np.astype(np.int32),
++                    )
++                )
++                # indices: compare against block_table rows
++                tot = int(ip_np[-1])
++                ref = np.concatenate(
++                    [
++                        block_table_tensor[r, : int(nb_np[r])].cpu().numpy()
++                        for r in range(num_reqs)
++                    ]
++                    or [np.zeros(0, np.int32)]
++                )
++                ok &= bool(
++                    np.array_equal(self.paged_kv_indices[:tot].cpu().numpy(), ref)
++                )
++                ub = seq_lens_cpu_check
++                ub_ok = ub is None or bool(
++                    (ub[:num_reqs].cpu().numpy() >= sl_cpu).all()
++                )
++            st = _draft_ub_check_stats
++            st[0] += 1
++            st[1] += 0 if (ok and ub_ok) else 1
++            st[2] += num_reqs
++            if st[0] % 50 == 0 or not (ok and ub_ok):
++                logger.info(
++                    "DRAFT_UB_CHECK steps=%d bad=%d rows=%d (this: bufs_ok=%s ub>=exact=%s)",
++                    st[0], st[1], st[2], ok, ub_ok,
++                )
++
+     def update_draft_decode_metadata(self, _metadata: FlashInferMetadata) -> None:
+         pass
+ 
+diff --git a/vllm/v1/worker/gpu/spec_decode/speculator.py b/vllm/v1/worker/gpu/spec_decode/speculator.py
+index 3040e3306d..abe35a89b3 100644
+--- a/vllm/v1/worker/gpu/spec_decode/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/speculator.py
+@@ -10,6 +10,7 @@ import numpy as np
+ import torch
+ import torch.nn as nn
+ 
++from vllm.v1.attention.backends.flashinfer import draft_upper_bound_planning
+ from vllm.config import VllmConfig, get_layers_from_vllm_config
+ from vllm.config.compilation import CUDAGraphMode
+ from vllm.config.speculative import _DRAFT_VLLM_CONFIG_OVERRIDES
+@@ -494,30 +495,31 @@ class DraftModelSpeculator(BaseSpeculator):
+                 self.block_tables.cp_rank,
+                 self.block_tables.cp_interleave,
+             )
+-        attn_metadata = build_attn_metadata(
+-            attn_groups=self.attn_groups,
+-            num_reqs=num_reqs_padded,
+-            num_tokens=num_tokens,
+-            query_start_loc_gpu=self.input_buffers.query_start_loc[
+-                : num_reqs_padded + 1
+-            ],
+-            query_start_loc_cpu=query_start_loc_cpu,
+-            max_query_len=max_query_len,
+-            seq_lens=self.input_buffers.seq_lens[:num_reqs_padded],
+-            dcp_local_seq_lens=(
+-                None
+-                if dcp_local_seq_lens is None
+-                else dcp_local_seq_lens[:num_reqs_padded]
+-            ),
+-            max_seq_len=min(self.draft_max_seq_len, self.max_model_len),
+-            block_tables=block_tables,
+-            slot_mappings=slot_mappings,
+-            kv_cache_config=self.kv_cache_config,
+-            causal=causal,
+-            seq_lens_cpu_upper_bound=draft_seq_lens_cpu_upper_bound,
+-            positions=self.input_buffers.positions[:num_tokens],
+-            is_prefilling=self.draft_is_prefilling[:num_reqs_padded],
+-        )
++        with draft_upper_bound_planning():
++            attn_metadata = build_attn_metadata(
++                attn_groups=self.attn_groups,
++                num_reqs=num_reqs_padded,
++                num_tokens=num_tokens,
++                query_start_loc_gpu=self.input_buffers.query_start_loc[
++                    : num_reqs_padded + 1
++                ],
++                query_start_loc_cpu=query_start_loc_cpu,
++                max_query_len=max_query_len,
++                seq_lens=self.input_buffers.seq_lens[:num_reqs_padded],
++                dcp_local_seq_lens=(
++                    None
++                    if dcp_local_seq_lens is None
++                    else dcp_local_seq_lens[:num_reqs_padded]
++                ),
++                max_seq_len=min(self.draft_max_seq_len, self.max_model_len),
++                block_tables=block_tables,
++                slot_mappings=slot_mappings,
++                kv_cache_config=self.kv_cache_config,
++                causal=causal,
++                seq_lens_cpu_upper_bound=draft_seq_lens_cpu_upper_bound,
++                positions=self.input_buffers.positions[:num_tokens],
++                is_prefilling=self.draft_is_prefilling[:num_reqs_padded],
++            )
+         return attn_metadata
+ 
+     def draft_logits_spec(self, vllm_config: VllmConfig) -> tuple[torch.dtype, float]:

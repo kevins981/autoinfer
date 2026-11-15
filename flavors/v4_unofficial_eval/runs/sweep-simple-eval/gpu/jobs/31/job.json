@@ -1,0 +1,20 @@
+{
+  "id": 31,
+  "pid": 2262059,
+  "team": "T2",
+  "agent": "leader-2",
+  "label": "unofficial:t2-rv64k-mbt1024",
+  "timeout_min": 11.5,
+  "command": [
+    "bash",
+    "-c",
+    "env  TRIALS=2 PROMPTS=200 GATES=long STOP_BELOW=650.0 /scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness/eval.sh /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/t2-rv /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/unofficial/ws/t2-rv64k-mbt1024/1/b /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/agents/leader-2/args_rv64_mbt1024.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval",
+  "submitted": "2026-11-15T16:16:24+00:00",
+  "state": "done",
+  "started": "2026-11-15T16:21:12+00:00",
+  "ended": "2026-11-15T16:27:03+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 5.841
+}

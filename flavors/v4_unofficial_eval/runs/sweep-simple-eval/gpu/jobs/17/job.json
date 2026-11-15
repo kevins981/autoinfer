@@ -1,0 +1,19 @@
+{
+  "id": 17,
+  "pid": 2232979,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": "hostar-tune",
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "bench/job2.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/leader-1.hostar",
+  "submitted": "2026-11-15T15:49:53+00:00",
+  "state": "done",
+  "started": "2026-11-15T15:56:45+00:00",
+  "ended": "2026-11-15T15:57:15+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.505
+}

@@ -1,0 +1,20 @@
+{
+  "id": 46,
+  "pid": 2306241,
+  "team": "T2",
+  "agent": "leader-2",
+  "label": "unofficial:t2-k3",
+  "timeout_min": 11.5,
+  "command": [
+    "bash",
+    "-c",
+    "env  TRIALS=2 PROMPTS=200 GATES=long STOP_BELOW=740.0 /scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness/eval.sh /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/t2-k3 /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/unofficial/ws/t2-k3/1/b /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/agents/leader-2/args_k3.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval",
+  "submitted": "2026-11-15T17:04:58+00:00",
+  "state": "done",
+  "started": "2026-11-15T17:14:01+00:00",
+  "ended": "2026-11-15T17:16:17+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.264
+}

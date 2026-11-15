@@ -92,3 +92,9 @@ it is never a training or tuning set.
 Questions this file doesn't settle go to the manager, who rules from the principles above (exact
 math up to floating-point reordering; precision; exact verification for anything draft-side;
 nothing fitted to the benchmark) or asks the human, and adds the ruling here.
+
+## Ruling (manager, 2026-11-15, from the principles; the human may overrule): disabling prefix caching
+`--no-enable-prefix-caching` is ALLOWED. It changes no outputs, it is a generic serving setting
+(serving flags are open), and it uses nothing from the benchmark. The forbidden item is caching
+*tuned to* the benchmark. Not using a cache is the opposite. The usual memory rules apply: any KV
+or concurrency change it enables must pass the 128K check and the no-OOM check under load.

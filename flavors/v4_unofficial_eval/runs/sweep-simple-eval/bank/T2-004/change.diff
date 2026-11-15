@@ -1,0 +1,95 @@
+diff --git a/vllm/models/qwen3_5/nvidia/mtp.py b/vllm/models/qwen3_5/nvidia/mtp.py
+index dfdee2d90b..197de1e5fd 100644
+--- a/vllm/models/qwen3_5/nvidia/mtp.py
++++ b/vllm/models/qwen3_5/nvidia/mtp.py
+@@ -279,8 +279,77 @@ class Qwen3_5MTP(LocalArgmaxMixin, nn.Module, SupportsMultiModal, SupportsPP):
+         hidden_states: torch.Tensor,
+         spec_step_idx: int = 0,
+     ) -> torch.Tensor:
+-        # One lm_head is shared by all MTP modules, as in compute_logits.
+-        return super().get_top_tokens(hidden_states)
++        # T2 (leader-2): reduced-vocabulary draft head. The drafter only proposes; the
++        # target verifies with its full lm_head, so outputs are unchanged. The draft
++        # head covers token ids [0, N) (the tokenizer's id order, roughly BPE merge
++        # order: a data-free, generic choice), split evenly across TP ranks so each
++        # rank reads N/tp rows instead of vocab/tp.
++        w = getattr(self, "_t2_draft_head", None)
++        if w is None:
++            # One lm_head is shared by all MTP modules, as in compute_logits.
++            return super().get_top_tokens(hidden_states)
++        logits = torch.nn.functional.linear(hidden_states, w)
++        vals, idx = logits.max(dim=-1)
++        gidx = idx + self._t2_draft_offset
++        tp = self.lm_head.tp_size
++        if tp == 1:
++            return gidx
++        pair = torch.stack([vals.float(), gidx.float()], dim=-1)
++        gathered = tensor_model_parallel_all_gather(pair, dim=-1)
++        gathered = gathered.view(hidden_states.shape[0], tp, 2)
++        best = gathered[:, :, 0].argmax(dim=-1, keepdim=True)
++        return gathered[:, :, 1].gather(dim=-1, index=best).squeeze(-1).to(torch.int64)
++
++    def _t2_build_draft_head(self) -> None:
++        import os
++
++        from vllm.distributed.parallel_state import get_tp_group
++
++        n = int(os.environ.get("VLLM_T2_DRAFT_VOCAB", "65536"))
++        head = self.lm_head
++        if n <= 0 or isinstance(head, PPMissingLayer):
++            return
++        tp = head.tp_size
++        weight = head.weight
++        si = head.shard_indices
++        vocab = si.org_vocab_end_index - si.org_vocab_start_index
++        per_rank = n // tp
++        if weight.dtype not in (torch.bfloat16, torch.float16) or per_rank * tp != n:
++            return
++        # Every rank's slice [r*per_rank, (r+1)*per_rank) must live in some rank's shard.
++        local_vocab = weight.shape[0]
++        group = get_tp_group()
++        rank = group.rank_in_group
++        mine = None
++        for r in range(tp):
++            lo, hi = r * per_rank, (r + 1) * per_rank
++            src = lo // local_vocab
++            if (hi - 1) // local_vocab != src:
++                return  # slice spans two shards: keep the full head
++            if src == rank:
++                part = weight[lo - src * local_vocab : hi - src * local_vocab].clone()
++            else:
++                part = torch.empty(
++                    (per_rank, weight.shape[1]), dtype=weight.dtype, device=weight.device
++                )
++            if tp > 1 and src != r:
++                # move the slice from its owner (src) to rank r
++                if rank in (src, r):
++                    part = part.contiguous()
++                    group.broadcast(part, src=src)
++                else:
++                    group.broadcast(part, src=src)
++            if r == rank:
++                mine = part
++            del part
++        del vocab
++        self._t2_draft_head = mine
++        self._t2_draft_offset = rank * per_rank
++        logger.info(
++            "T2 reduced-vocab draft head: token ids [0, %d), %d rows on this rank",
++            n,
++            per_rank,
++        )
+ 
+     def is_unused_checkpoint_weight(self, name: str) -> bool:
+         return not name.startswith("mtp.") and not any(
+@@ -299,7 +368,9 @@ class Qwen3_5MTP(LocalArgmaxMixin, nn.Module, SupportsMultiModal, SupportsPP):
+                 yield name, weight
+ 
+         loader = AutoWeightsLoader(self)
+-        return loader.load_weights(remap_weight_names(weights))
++        loaded = loader.load_weights(remap_weight_names(weights))
++        self._t2_build_draft_head()
++        return loaded
+ 
+ 
+ class Qwen3_5MoeMTP(Qwen3_5MTP, QwenNextMixtureOfExperts):

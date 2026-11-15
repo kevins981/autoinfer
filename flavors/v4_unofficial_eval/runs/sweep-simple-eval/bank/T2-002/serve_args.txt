@@ -1,0 +1,3 @@
+--compilation-config '{"max_prefill_cudagraph_capture_tokens": 2048}'
+--speculative-config '{"method":"mtp","num_speculative_tokens":2,"draft_lm_head_quantization":"fp8","use_local_argmax_reduction":true}'
+--kv-cache-memory 4294967296

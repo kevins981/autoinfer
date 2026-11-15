@@ -1,0 +1,24 @@
+{
+  "id": 25,
+  "pid": 2249718,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "t1-prof-T1-002",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "task/scripts/profile_nsys.sh",
+    "workspaces/leader-1.t2001",
+    "agents/leader-1/prof_t1002",
+    "64",
+    "--compilation-config",
+    "{\"max_prefill_cudagraph_capture_tokens\": 2048}"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval",
+  "submitted": "2026-11-15T16:04:52+00:00",
+  "state": "done",
+  "started": "2026-11-15T16:10:36+00:00",
+  "ended": "2026-11-15T16:13:25+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.821
+}

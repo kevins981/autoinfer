@@ -1,0 +1,14 @@
+{
+ "name": "t1-t1006-k3",
+ "workspace": "leader-1.argmax2",
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 681.0,
+ "requested_by": "leader-1",
+ "team": "T1",
+ "started": "2026-11-15T16:42:05+00:00",
+ "tok_s": [],
+ "failed_stage": "exit 130",
+ "ended": "2026-11-15T16:49:03+00:00"
+}

@@ -1,0 +1,19 @@
+{
+  "id": 64,
+  "pid": 2345159,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "t1-prof-t1008-node",
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "agents/leader-1/prof_t1008_node.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval",
+  "submitted": "2026-11-15T17:43:51+00:00",
+  "state": "done",
+  "started": "2026-11-15T17:43:51+00:00",
+  "ended": "2026-11-15T17:46:11+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.338
+}

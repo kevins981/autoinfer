@@ -1,0 +1,9 @@
+{"t": "2026-11-15T15:19:24+00:00", "event": "open", "team": "MGR", "type": "manager", "by": "human"}
+{"t": "2026-11-15T15:19:44+00:00", "event": "open", "team": "T1", "type": "sweep", "by": "manager"}
+{"t": "2026-11-15T15:19:44+00:00", "event": "grant", "team": "T1", "kind": "seed", "minutes": 30.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-15T15:19:44+00:00", "event": "open", "team": "T2", "type": "sweep", "by": "manager"}
+{"t": "2026-11-15T15:19:44+00:00", "event": "grant", "team": "T2", "kind": "seed", "minutes": 30.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-15T15:58:09+00:00", "event": "grant", "team": "T2", "kind": "extension", "minutes": 30.0, "by": "manager", "note": "resync 1: win T2-001 (+2.3%, promoted); also enabled T1-002 via all-reduce table"}
+{"t": "2026-11-15T15:58:33+00:00", "event": "grant", "team": "T1", "kind": "extension", "minutes": 30.0, "by": "manager", "note": "resync 1: win T1-002 (+1.0%, promoted)"}
+{"t": "2026-11-15T17:05:02+00:00", "event": "grant", "team": "T2", "kind": "extension", "minutes": 60.0, "by": "manager", "note": "resync 2: wins T2-004 (+1.3%), T2-005 (+8.4%), T2-006 (stack, +3.5%) since resync 1; bigger grant per policy row 1"}
+{"t": "2026-11-15T17:41:11+00:00", "event": "grant", "team": "T1", "kind": "extension", "minutes": 30.0, "by": "manager", "note": "resync 2: wins T1-006 (official-confirmed), T1-008; net of T1-002 revert still positive"}

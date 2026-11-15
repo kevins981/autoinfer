@@ -1,0 +1,14 @@
+{
+ "name": "t2-rv64k",
+ "workspace": "t2-rv",
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 652.0,
+ "requested_by": "leader-2",
+ "team": "T2",
+ "started": "2026-11-15T16:10:48+00:00",
+ "tok_s": [],
+ "failed_stage": "no results",
+ "ended": "2026-11-15T16:15:54+00:00"
+}

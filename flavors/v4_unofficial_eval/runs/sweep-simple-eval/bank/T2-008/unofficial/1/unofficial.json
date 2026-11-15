@@ -1,0 +1,32 @@
+{
+ "name": "t2-gdn2",
+ "workspace": "t2-gdn2",
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 760.0,
+ "requested_by": "leader-2",
+ "team": "T2",
+ "started": "2026-11-15T17:55:12+00:00",
+ "tok_s": [
+  792.8118337493479,
+  789.088629873086
+ ],
+ "mean": 790.95,
+ "stopped_early": false,
+ "gsm8k": 0.932,
+ "long_request": true,
+ "p99": {
+  "p99_ttft_ms": 817.1,
+  "p99_tpot_ms": 36.1
+ },
+ "base_official_p99": {
+  "p99_ttft_ms": 1341.418,
+  "p99_tpot_ms": 46.102
+ },
+ "mtp_acceptance": [
+  2.294,
+  2.29
+ ],
+ "ended": "2026-11-15T18:02:19+00:00"
+}

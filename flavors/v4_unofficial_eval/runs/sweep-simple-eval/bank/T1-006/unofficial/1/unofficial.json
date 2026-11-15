@@ -1,0 +1,32 @@
+{
+ "name": "T1-006",
+ "workspace": null,
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 655.0,
+ "requested_by": "leader-1",
+ "team": "T1",
+ "started": "2026-11-15T16:31:07+00:00",
+ "tok_s": [
+  676.5966003408612,
+  680.7238942516007
+ ],
+ "mean": 678.66,
+ "stopped_early": false,
+ "gsm8k": null,
+ "long_request": null,
+ "p99": {
+  "p99_ttft_ms": 1334.4,
+  "p99_tpot_ms": 40.4
+ },
+ "base_official_p99": {
+  "p99_ttft_ms": 1341.418,
+  "p99_tpot_ms": 46.102
+ },
+ "mtp_acceptance": [
+  2.321,
+  2.299
+ ],
+ "ended": "2026-11-15T16:35:52+00:00"
+}

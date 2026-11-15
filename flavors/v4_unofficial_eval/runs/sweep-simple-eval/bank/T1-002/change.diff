@@ -1,0 +1,20 @@
+diff --git a/vllm/distributed/device_communicators/pynccl.py b/vllm/distributed/device_communicators/pynccl.py
+index 8981594aff..0f1eb4e65c 100644
+--- a/vllm/distributed/device_communicators/pynccl.py
++++ b/vllm/distributed/device_communicators/pynccl.py
+@@ -4,8 +4,15 @@
+ 
+ # ===================== import region =====================
+ import contextlib
++import os
+ import threading
+ 
++# T1-002 (leader-1): NCCL's tuner picks the LL protocol for every all-reduce size on PCIe
++# systems where the GPUs talk through host memory (SHM transport, no P2P). Measured on 2x4090
++# (leader-2.w1 microbenchmark, T2 jobs 2/5): LL is up to 2x slower than Simple from ~0.5 MB up.
++# Generic default only; an explicit NCCL_PROTO set by the user still wins.
++os.environ.setdefault("NCCL_PROTO", "Simple")
++
+ import torch
+ import torch.distributed as dist
+ from torch.distributed import ProcessGroup, ReduceOp

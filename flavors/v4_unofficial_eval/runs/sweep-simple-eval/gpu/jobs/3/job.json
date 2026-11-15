@@ -1,0 +1,19 @@
+{
+  "id": 3,
+  "pid": 2206284,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": "ar-bench",
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "run_all.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/leader-1.ar/bench",
+  "submitted": "2026-11-15T15:24:33+00:00",
+  "state": "done",
+  "started": "2026-11-15T15:28:13+00:00",
+  "ended": "2026-11-15T15:29:50+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.624
+}

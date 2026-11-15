@@ -1,0 +1,19 @@
+{
+  "id": 57,
+  "pid": 2327468,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": "gdn-stacks",
+  "timeout_min": 2.0,
+  "command": [
+    "bash",
+    "bench/job3.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/leader-1.gdncg",
+  "submitted": "2026-11-15T17:23:45+00:00",
+  "state": "done",
+  "started": "2026-11-15T17:25:05+00:00",
+  "ended": "2026-11-15T17:26:08+00:00",
+  "exit_code": 1,
+  "gpu_minutes": 1.044
+}

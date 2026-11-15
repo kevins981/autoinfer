@@ -1,0 +1,19 @@
+{
+  "id": 58,
+  "pid": 2330985,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": "plan-ub",
+  "timeout_min": 2.0,
+  "command": [
+    "bash",
+    "bench/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-simple-eval/workspaces/leader-1.draftmeta",
+  "submitted": "2026-11-15T17:28:54+00:00",
+  "state": "done",
+  "started": "2026-11-15T17:28:54+00:00",
+  "ended": "2026-11-15T17:29:22+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.451
+}

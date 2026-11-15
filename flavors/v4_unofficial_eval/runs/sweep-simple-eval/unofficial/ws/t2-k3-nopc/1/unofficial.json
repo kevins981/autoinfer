@@ -1,0 +1,30 @@
+{
+ "name": "t2-k3-nopc",
+ "workspace": "t2-k3",
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 740.0,
+ "requested_by": "leader-2",
+ "team": "T2",
+ "started": "2026-11-15T17:22:41+00:00",
+ "tok_s": [
+  687.430364631312
+ ],
+ "mean": 687.43,
+ "stopped_early": true,
+ "gsm8k": null,
+ "long_request": null,
+ "p99": {
+  "p99_ttft_ms": 1630.4,
+  "p99_tpot_ms": 31.6
+ },
+ "base_official_p99": {
+  "p99_ttft_ms": 1341.418,
+  "p99_tpot_ms": 46.102
+ },
+ "mtp_acceptance": [
+  2.632
+ ],
+ "ended": "2026-11-15T17:25:03+00:00"
+}

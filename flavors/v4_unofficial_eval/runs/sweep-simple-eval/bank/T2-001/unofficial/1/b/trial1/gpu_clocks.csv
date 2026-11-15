@@ -1,0 +1,7 @@
+index, clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu
+0, 2670 MHz, 10251 MHz, 260.25 W, 49
+1, 2685 MHz, 10251 MHz, 242.04 W, 51
+0, 2655 MHz, 10251 MHz, 287.04 W, 57
+1, 2670 MHz, 10251 MHz, 270.80 W, 59
+0, 2655 MHz, 10251 MHz, 289.02 W, 61
+1, 2670 MHz, 10251 MHz, 271.68 W, 61

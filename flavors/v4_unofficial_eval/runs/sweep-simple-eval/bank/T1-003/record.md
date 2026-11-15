@@ -1,0 +1,9 @@
+team:         T1
+builds_on:    T1-002 (same code: pynccl NCCL_PROTO=Simple line, comment wording differs) + T2-001 serve args
+performance:  "not measured in the server (standalone only; inconclusive)"
+summary:
+  hypothesis: a pinned-host-memory one-shot all-reduce (design and kernel: leader-2.w1, T2, agents/leader-2.w1/hostar.py; standalone 43 us at M=48 vs NCCL Simple 57) cuts decode all-reduce latency: napkin ~-14 us x 135 = -1.9 ms per decode step (~3-4%).
+  change:     new vllm/distributed/device_communicators/host_all_reduce.py (out-of-place, shared mmap file in $TMPDIR unlinked after mapping, cudaHostRegister, device-side sequence counters so CUDA-graph capturable, 60 s spin bound -> trap) + dispatch in cuda_communicator.all_reduce for world size 2, bf16, contiguous, <= VLLM_HOSTAR_MAX_BYTES (default 1310720 = 128 rows); VLLM_HOSTAR=0 disables. Built by leader-1.w1.
+  results:    Observed (leader-1.w1, GPU jobs 13 + 17, workspaces/leader-1.hostar/bench/): bitwise equal to bf16(fp32 a + fp32 b) on both ranks for M in {1,3,16,48,96,127,128}, eager and graph replay; server smoke test OK (TP=2, 3 greedy chats). Graph-replay timing noisy across runs: 8x512 M=48 52 / 92 us, M=96 108 / 177 us, M=128 192 us; did not reproduce T2's 43 / 82 us.
+  conclusion: Interpretation: at best a tie with NCCL Simple at M=48 and a loss at M>=96 in this harness (rank skew in the harness may inflate it, undiagnosed). Expected in-server gain small or negative; not worth GPU time now vs other candidates. Revisit only with an in-server A/B (arms: default threshold and 655360 bytes = 64 rows).
+validity:     leader-1 review: exact (2-rank fp32 sum in fixed order, rounded to bf16, bitwise = NCCL's 2-rank result); bf16 communication unchanged; no benchmark-specific behavior; adds ~40 MB pinned host memory, no GPU memory change beyond a small flag buffer. Not promoted / not evaluated.

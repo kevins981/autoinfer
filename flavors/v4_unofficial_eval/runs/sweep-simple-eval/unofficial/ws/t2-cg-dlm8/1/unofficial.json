@@ -1,0 +1,14 @@
+{
+ "name": "t2-cg-dlm8",
+ "workspace": "t2-cg",
+ "env": [],
+ "n": 1,
+ "prompts": 200,
+ "stop_below": 640.0,
+ "requested_by": "leader-2",
+ "team": "T2",
+ "started": "2026-11-15T15:36:05+00:00",
+ "tok_s": [],
+ "failed_stage": "server_start (trial 1)",
+ "ended": "2026-11-15T15:43:28+00:00"
+}

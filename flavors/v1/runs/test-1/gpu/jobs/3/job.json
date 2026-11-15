@@ -11,9 +11,6 @@
   ],
   "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v1/runs/test-1/scratch_T1",
   "submitted": "2026-11-06T22:00:22+00:00",
-  "state": "cancelled",
-  "started": "2026-11-06T22:00:22+00:00",
-  "ended": "2026-11-06T22:05:48+00:00",
-  "exit_code": 130,
-  "gpu_minutes": 5.445
+  "state": "running",
+  "started": "2026-11-06T22:00:22+00:00"
 }

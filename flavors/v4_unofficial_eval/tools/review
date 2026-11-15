@@ -79,7 +79,9 @@ def task_name(run):
 
 
 def first_prompt(run):
-    t = (FLAVOR / "agents" / "reviewer.md").read_text()
+    t = ((FLAVOR / "agents" / "reviewer.md").read_text() + "\n\n---\n\n# For context: the instructions every agent "
+         "of the run gets (you are not one of those roles; where they differ, your instructions above win)\n\n"
+         + (FLAVOR / "agents" / "common.md").read_text().replace("$AUTOINFER_RUN", "$RUN"))
     return (t.replace("$RUN", str(run)).replace("$FLAVOR", str(FLAVOR)).replace("$TASK", task_name(run))
             .replace("$CACHE_ROOT", os.environ.get("CACHE_ROOT", str(ROOT / ".cache"))))
 

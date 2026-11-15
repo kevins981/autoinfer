@@ -55,9 +55,9 @@ initialize():
     # These are the human's constraints: no agent may override them.
     # Baseline: new_run put its official result in bank/BASE/; `champion show` makes BASE both
     # CONFIRMED and HEAD (champion.json, champion.md).
-    unofficial_eval BASE    # before any team opens: BASE's 2 reference starts at the unofficial
-                            # eval's settings (charged to MGR, ~3 GPU-min), so every team's
-                            # unofficial eval runs only its own record
+    unofficial_eval BASE &  # in the background, then open the teams without waiting: BASE's 2
+                            # reference starts at the unofficial eval's settings (MGR, ~5 GPU-min),
+                            # so every team's unofficial eval runs only its own record
     # Tell the human the plan: teams, the pool, the funding policy in two lines.
 ```
 

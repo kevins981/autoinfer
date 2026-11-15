@@ -165,7 +165,7 @@ def main():
         out.mkdir(parents=True)
         sa = run / "bank" / head / "serve_args.txt"
         need = MIN_REF - have
-        cmd = [str(TOOLS / "gpu"), "run", "--timeout", str(round(MIN_PER_START * need + 2, 1)),
+        cmd = [str(TOOLS / "gpu"), "run", "--timeout", str(round(MIN_PER_START * need + 6, 1)),
                "--label", f"unofficial-ref:{head}", "--", "env", f"TRIALS={need}", f"PROMPTS={PROMPTS}", "GATES=none",
                str(eval_sh), str(run / "workspaces" / ws), str(out)] + ([str(sa)] if sa.exists() else [])
         print(f"measuring {need} reference starts of {head} ({PROMPTS} prompts); queued on the GPUs", flush=True)

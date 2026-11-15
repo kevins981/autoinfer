@@ -40,7 +40,6 @@ AutoInfer():
     while pool has GPU time:
         event = next message (a leader, the human, a GPU job result)
         handle(event)       # progress report / resync / champion candidate / question
-        if `champion show` says CONFIRMATION DUE: confirm()
     finalize()
 ```
 
@@ -53,32 +52,31 @@ initialize():
     #   sampling; GSM8K), hard constraints (TASK.md's fixed / open lists), and loopholes: actively
     #   look for ways to "win" without a real speedup and ask about each.
     # These are the human's constraints: no agent may override them.
-    # Baseline: new_run put its official result in bank/BASE/; `champion show` makes BASE both
-    # CONFIRMED and HEAD (champion.json, champion.md).
-    unofficial_eval BASE &  # in the background, then open the teams without waiting: BASE's 2
-                            # reference starts at the unofficial eval's settings (MGR, ~5 GPU-min),
-                            # so every team's unofficial eval runs only its own record
+    # Baseline: new_run put its official result in bank/BASE/; champion.md starts with BASE as
+    # both the unofficial and the official champion.
+    unofficial_eval BASE &  # in the background, then open the teams without waiting: BASE's
+                            # numbers at the unofficial settings (MGR, ~5 GPU-min), so teams
+                            # have a reference without measuring it themselves
     # Tell the human the plan: teams, the pool, the funding policy in two lines.
 ```
 
 ```python
 open_teams():                       # at the start, and whenever a team closes (keep CONFIG's count)
     for each new team (ids T1, T2, ...; never reuse an id):
-        gpu team open <team> --type sweep                   # grants the seed automatically
-        gpu grant <team> <start size> --kind start --note "sweep team start"
+        gpu team open <team> --type sweep                   # grants the opening 30 automatically
         agent start leader-<k> --role leader_sweep --team <team> --task-file <f>
             # if CONFIG has model slots: add --slot <S> (a replacement team takes the slot of the
             # team it replaces); don't pass --model.
             # the first task is short: team id and type; the framework folder (CONFIG's `sweep
-            # framework` line, one line, without describing it); HEAD and CONFIRMED (record ids
-            # + numbers, from `champion show`); its grant (seed + start); the other open sweep teams (names
+            # framework` line, one line, without describing it); the unofficial and official champions (record ids
+            # + numbers, from champion.md); its grant (30); the other open sweep teams (names
             # only); where things are (task/, task_definition.md, assumption_ledger.md, focus.md,
             # champion.md, bank/, shared_kb.md, reports/, announcements.md; its prompt says when
             # to read which). Speed of light: if CONFIG's `speed of light` line is on and
             # task/SPEED_OF_LIGHT.md exists, point to it (one line, no comment).
             # NO direction, and nothing about what other teams' maps or earlier teams found.
         teams/<team>.md = new track record          # see "Track records"
-        agent announce "team <team> (sweep) opened with <seed + start> GPU-min"
+        agent announce "team <team> (sweep) opened with 30 GPU-min"
 ```
 
 ```python
@@ -95,7 +93,7 @@ handle(resync request):                             # a team asks for more GPU t
     # evidence. Its sweep report (reports/<team>-sweep.md) is its first deliverable; at each
     # resync the team also adds an update to its own map (reports/<team>-sweep/update-<n>.md).
     decide (FUNDING_POLICY table):
-        # a win (a record promoted to HEAD; minus any of its promotions that were
+        # a win (a record promoted to unofficial champion; minus any of its promotions that were
         #   reverted: a revert counts against the team)                      -> extend (maybe more)
         # nothing new won, but a measured lead the team can name            -> last chance
         # second last chance in a row                                       -> close and replace
@@ -107,12 +105,12 @@ handle(resync request):                             # a team asks for more GPU t
         #   wants to close                                                   -> close and replace
         # Re-forecasting is not progress: a forecast that stays as high with nothing new measured
         # counts as none.
-    extend / last chance: gpu grant <team> <N> --kind extension|last-chance --note "<why>"
-                          agent announce "team <team> (sweep) received <N> GPU-min; resync report: reports/<file>"
+    extend / last chance: gpu grant <team> 30 --kind extension|last-chance --note "<why>"
+                          agent announce "team <team> (sweep) received 30 GPU-min; resync report: reports/<file>"
     close and replace:    ask the leader for its write-up (reports/<team>-writeup.md) and last map
                           update; gpu team close <team> --note "<why>";
                           agent stop its leader and workers; open a new sweep team (open_teams()
-                          steps) if the pool still has GPU time for one (seed + start)
+                          steps) if the pool still has GPU time for one (30)
                           agent announce the closure (with the write-up's path) and the new team
     agent remind <leader>                           # after EVERY resync
     save the resync report to reports/<team>-<n>.md; teams/<team>.md += decision
@@ -120,43 +118,18 @@ handle(resync request):                             # a team asks for more GPU t
 ```
 
 ```python
-handle(champion candidate):                         # a record whose unofficial PASSed against HEAD
-    if valid(record) and unofficial_pass(record) and evidence(record):
-        # valid: per TASK.definition (check its validity review; skim its diff). If anything in
-        #   the change was trained, tuned, calibrated or selected on data, check that data: never
-        #   the benchmark's (ShareGPT, its prompts, look-alikes); the change must generalize.
-        # unofficial_pass: its latest unofficial eval is a PASS against the current HEAD (`champion promote`
-        #   checks this and refuses otherwise), with the gates the change needs: --gsm8k if it
-        #   touches numerics, --long if it touches memory (CUDA graphs, KV budget, buffers).
-        #   Missing gate: ask the team to run unofficial_eval again with it. No minimum %.
-        # evidence: the leader cites mechanism evidence (a profile or microbenchmark showing the
-        #   change does what it claims), not only the unofficial_eval number.
-        champion promote <record>                   # HEAD = record; regenerates champion.md
-        agent announce "new HEAD <record> from team <team>: +X% over <old HEAD> (unofficial,
-                        unofficial); how: bank/<record>/"
-        teams/<team>.md += win (unofficial)
-        report_to_human()
-    # Unofficial evals are cheap and unofficial; the chain is checked with official evals in confirm().
-```
-
-```python
-confirm():          # exactly when `champion show` says CONFIRMATION DUE (fixed thresholds: summed
-                    # unofficial gains since CONFIRMED >= 5%, or 4 unconfirmed records), and at finalize
-    # MGR needs no grant: its jobs are always admitted and counted in the pool's total (~12 GPU-min)
-    # per official eval; keep enough in the pool for the final confirmation.
-    official_eval <HEAD>                            # background; charged to MGR
-    champion confirm <HEAD>
-    # MATCH: HEAD is CONFIRMED.
-    #   agent announce "<HEAD> confirmed: <tok/s> official (+X% over <old CONFIRMED>)"
-    # MISMATCH (official below expected, does not beat CONFIRMED, or a gate failed): the tool
-    #   names the next step: bisect the chain, each step `official_eval <mid>` + `champion confirm
-    #   <mid>`, until the cause is found; then `champion revert <cause> --note "<why>"` (this also
-    #   reverts every record promoted after it: they build on it).
-    #   agent announce "reverted <ids>: <why>; HEAD = <id>. Records built on them must rebase"
-    #   teams/<team>.md += revert (counts against the team that promoted it)
-    # Each official result is evidence: when the cause isn't obvious from the numbers (e.g. two
-    #   changes that interact), say so in the journal and the announcement.
-    report_to_human()
+handle(champion candidate):   # a team sends a record that beat the unofficial champion in its unofficial eval
+    # You keep champion.md (unofficial champion, official champion, history).
+    # Make a record the unofficial champion when it is valid (TASK.definition; anything trained, tuned or
+    #   calibrated must not use the benchmark's data), its unofficial starts beat the unofficial champion's (the
+    #   record need not be built on the unofficial champion), it ran the checks its change needs (--gsm8k for
+    #   numerics, --long for memory), and the leader shows the mechanism, not only the number.
+    # Unofficial numbers are cheap and noisy: check them with an official eval (`official_eval
+    #   <unofficial champion>`, ~10 GPU-min, MGR) when the unofficial champion is ~5% above the official champion or 4 records were promoted
+    #   since, and before finalizing. If the official number bears out the unofficial one, the unofficial champion
+    #   becomes the official champion; if not, find out why and revert what doesn't hold up.
+    # Announce every promotion, confirmation and revert (`agent announce`); a revert counts
+    #   against the team that made it (teams/<team>.md).
 ```
 
 ```python
@@ -172,8 +145,8 @@ handle(question):   # e.g. is something allowed? Answer from TASK.definition; as
 finalize():                                         # the pool can't fund another team or job
                                                     # worth running, or the human stops the run
     stop(every agent still alive)                   # `agent stop <name>`
-    if the chain is not empty: confirm()            # the run ends on an official number
-    write(reports/final.md)     # CONFIRMED champion and its path (and HEAD if unconfirmed), what each team mapped, tested and won,
+    if the unofficial champion is not the official one: confirm it                # the run ends on an official number
+    write(reports/final.md)     # the official champion and its path (and the unofficial one if unconfirmed), what each team mapped, tested and won,
                                 # and what its last map update left open
     report_to_human()
 ```
@@ -191,7 +164,7 @@ restarted, so keep it in the file, not in your memory:
   the only writer; leaders propose insights in their reports. When you add an entry on the same
   topic as older ones, append "(related: KBn)" to each of those older entries.
 - **journal.md**: decisions and why: every grant, refusal, closure and promotion.
-- **champion.md / champion.json** (through the `champion` tool only), **announcements.md** (through
+- **champion.md**, **announcements.md** (through
   `agent announce`), **teams/**, **reports/**.
 
 ## Reporting to the human

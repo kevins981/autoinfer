@@ -1,47 +1,34 @@
 #!/usr/bin/env python3
-"""unofficial_eval: compare a record with the current HEAD (the unofficial champion) at low GPU cost.
+"""unofficial_eval: measure the speed of some code at low GPU cost (unofficial numbers).
 
-Usage: unofficial_eval <record id> [--gsm8k] [--long] [--timeout MIN]
-       unofficial_eval BASE    (manager, at run start: measures BASE's reference starts, charged to MGR)
-  e.g. unofficial_eval T1-004         # a pure speed change
-       unofficial_eval T1-005 --gsm8k # a change that touches numerics (runs the GSM8K-250 gate too)
-       unofficial_eval T1-006 --long  # a change that touches memory (runs the 128K-request gate too)
+Usage:
+  unofficial_eval <record id> [--gsm8k] [--long] [--stop-below TOK_S] [--timeout MIN]
+      a bank record (its change.diff + serve_args.txt, in a fresh workspace)
+  unofficial_eval --ws <workspace> --label L [--args FILE] [--env K=V]... [same options]
+      a workspace as it is now (build it first if you changed compiled code), with optional
+      extra serve args (a file, like serve_args.txt) and environment variables
+  e.g. unofficial_eval T1-004 --stop-below 640
+       unofficial_eval --ws t1-w1 --env MY_CHANGE=1 --label t1-my-change-on
 
-What it does (like official_eval, from $AUTOINFER_RUN/bank/<record id>/):
-1. Checks that the record builds on HEAD (its record.md `builds_on:` line names HEAD's id, see
-   `champion show`). An unofficial eval is the comparison with HEAD; rebase first if HEAD moved.
-2. Prepare (CPU, not charged): a fresh workspace uo-<id>-<n> = the baseline + change.diff only
-   (+ `ws build` if the diff touches compiled code).
-3. Measure: one GPU job (`gpu run --label unofficial:<id>`, charged to your team, ~5 GPU-min): the
-   task's eval harness (harness/eval.sh, as the official eval) with 2 trials of PROMPTS prompts
-   instead of 400, i.e. 2 fresh server starts of the record (B), same prompts every start.
-   The reference (A) is NOT re-run: it is HEAD's cached starts, i.e. the starts of HEAD's own
-   eval (exact same code: the bank diff + serve args + bench settings).
-   Only when the cache has fewer than 2 starts of HEAD does the job first run the missing A
-   starts (they are cached for every later unofficial eval).
-   Early stop: if the first B start is more than STOP_LOSS % below the reference mean, the job
-   stops after 1 start (verdict: negative (1 start), a unofficial result, not a measured fact).
-4. Record: bank/<id>/unofficial/<n>/ (unofficial.json, per-start logs) and one line appended to
-   record.md. The record's B starts are cached: if it becomes HEAD, they are its reference.
+2 fresh inference-server starts of the code, each the task's eval harness (harness/eval.sh, as
+the official eval) with 200 prompts instead of 400. --gsm8k / --long add the GSM8K-250 and
+128K-request checks. --stop-below: skip the second start if the first is below this tok/s (one
+start can be an outlier). It only measures: compare with other codes' numbers yourself (a
+record's are in bank/<id>/unofficial/; a workspace label's in unofficial/ws/<label>/).
 
-Verdicts: PASS = both B starts above the reference mean (and every gate run passed);
-mixed = one above, one below; negative = both below; negative (1 start) = stopped early.
-A PASS is what the manager promotes to unofficial champion (HEAD); see `champion --help`.
-
-Exit codes: 0 = measured (any verdict); 1 = failed (recorded); 2 = not run (e.g. not built on
-HEAD); 75/76 as for `gpu run` (nothing run, nothing recorded).
+Output: tok/s of each start, p99 TTFT/TPOT (and BASE's official ones), MTP acceptance and the
+checks run, in unofficial.json (record: bank/<id>/unofficial/<n>/, plus a line in record.md;
+workspace: unofficial/ws/<label>/<n>/) and one line in unofficial/log.md.
+Exit codes: 0 = measured; 1 = failed (recorded); 2 = bad arguments; 75/76 as for `gpu run`
+(nothing run, nothing recorded).
 """
-import argparse, fcntl, hashlib, json, os, shlex, statistics as st, subprocess, sys
+import argparse, json, os, shlex, statistics as st, subprocess, sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
 ROOT = TOOLS.parents[2]
-PROMPTS = 200          # per start
-STOP_LOSS = 1.5        # % below the reference mean after the first B start
-MIN_REF = 2            # reference starts needed (missing ones run in the job, then are cached)
-GSM8K_MIN = 0.896      # TASK.md gate
-LAT_MAX = 1.20         # TASK.md latency guard (p99 TTFT / TPOT vs BASE)
+PROMPTS = 200
 MIN_PER_START = 3.0    # GPU-minutes per start, for the default timeout
 
 
@@ -54,6 +41,11 @@ def now():
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
+def task_folder(run):
+    t = run / "task"
+    return t.resolve() if t.is_symlink() else ROOT / "tasks" / json.loads((run / "task_source.json").read_text())["task"]
+
+
 def needs_build(diff_text):
     paths = [l.split(" b/", 1)[1] for l in diff_text.splitlines() if l.startswith("diff --git a/")]
     compiled = (".cu", ".cuh", ".cpp", ".cc", ".c", ".h", ".hpp", ".txt", ".cmake")
@@ -61,284 +53,137 @@ def needs_build(diff_text):
             or (p.endswith(compiled) and not p.startswith("vllm/"))]
 
 
-def file_version(path):
-    rel = path.relative_to(ROOT)
-    h = subprocess.run(["git", "-C", str(ROOT), "log", "-1", "--format=%h", "--", str(rel)],
-                       capture_output=True, text=True).stdout.strip() or "untracked"
-    dirty = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--", str(rel)],
-                           capture_output=True, text=True).stdout.strip()
-    return h + ("+modified" if dirty else "")
-
-
-def task_folder(run):
-    t = run / "task"
-    return t.resolve() if t.is_symlink() else ROOT / "tasks" / json.loads((run / "task_source.json").read_text())["task"]
-
-
-def head_of(run):
-    f = run / "champion.json"
-    if not f.exists():
-        return "BASE"
-    c = json.loads(f.read_text())
-    return c["chain"][-1]["id"] if c.get("chain") else c["confirmed"]["id"]
-
-
-def cache_key(run, rec_id, eval_sh):
-    rec = run / "bank" / rec_id
-    sa = rec / "serve_args.txt"
-    return {"diff_sha256": hashlib.sha256((rec / "change.diff").read_bytes()).hexdigest(),
-            "serve_args": sa.read_text().strip() if sa.exists() else "",
-            "prompts": PROMPTS, "eval_sh": file_version(eval_sh)}
-
-
-class Cache:
-    """unofficial/cache.json: {record id: [{tps, key, source, time}]}, under a lock."""
-    def __init__(self, run):
-        self.path = run / "unofficial" / "cache.json"
-        self.path.parent.mkdir(exist_ok=True)
-        self.lockf = open(self.path.with_suffix(".lock"), "w")
-
-    def __enter__(self):
-        fcntl.flock(self.lockf, fcntl.LOCK_EX)
-        self.data = json.loads(self.path.read_text()) if self.path.exists() else {}
-        return self
-
-    def __exit__(self, *e):
-        self.path.write_text(json.dumps(self.data, indent=1) + "\n")
-        fcntl.flock(self.lockf, fcntl.LOCK_UN)
-
-    def starts(self, rec_id, key):
-        return [s for s in self.data.get(rec_id, []) if s["key"] == key]
-
-    def add(self, rec_id, key, tps, source):
-        self.data.setdefault(rec_id, []).append({"tps": tps, "key": key, "source": source, "time": now()})
-
-
-def prepare(run, rec_id, name, log):
-    rec = run / "bank" / rec_id
-    r = subprocess.run([str(TOOLS / "ws"), "create", name, "--from", rec_id], capture_output=True, text=True)
-    log.append(r.stdout + r.stderr)
-    if r.returncode != 0:
-        return "apply_diff"
-    compiled = needs_build((rec / "change.diff").read_text(errors="replace"))
-    if compiled:
-        print(f"{rec_id}: diff touches compiled code ({', '.join(compiled[:5])}): building", flush=True)
-        r = subprocess.run([str(TOOLS / "ws"), "build", name], capture_output=True, text=True)
-        log.append(r.stdout + r.stderr)
-        if r.returncode != 0:
-            return "build"
-    return None
-
-
 def main():
     p = argparse.ArgumentParser(prog="unofficial_eval", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("record")
-    p.add_argument("--gsm8k", action="store_true", help="also run the GSM8K-250 gate (numerics-touching changes)")
-    p.add_argument("--long", action="store_true", help="also run the 128K-request gate (memory-touching changes)")
+    p.add_argument("record", nargs="?", help="bank record id")
+    p.add_argument("--ws", help="measure this workspace as it is now (instead of a record)")
+    p.add_argument("--label", help="with --ws: the name the results are saved under")
+    p.add_argument("--args", help="with --ws: file of extra serve args (like serve_args.txt)")
+    p.add_argument("--env", action="append", default=[], help="with --ws: K=V for the inference server")
+    p.add_argument("--gsm8k", action="store_true", help="also run GSM8K-250")
+    p.add_argument("--long", action="store_true", help="also run the 128K request")
+    p.add_argument("--stop-below", type=float, default=0, help="skip the 2nd start if the 1st is below this tok/s")
     p.add_argument("--timeout", type=float, help="GPU job timeout, minutes (default: from the planned starts)")
     a = p.parse_args()
+    if bool(a.record) == bool(a.ws):
+        die("give a record id or --ws <workspace> (one of them)", 2)
+    if a.record and (a.args or a.env or a.label):
+        die("--args/--env/--label go with --ws (a record's code is its change.diff + serve_args.txt)", 2)
+    if a.ws and not a.label:
+        die("--ws needs --label (the name its results are saved under)", 2)
+    bad = [e for e in a.env if "=" not in e]
+    if bad:
+        die(f"--env needs K=V: {bad}", 2)
 
     run = Path(os.environ.get("AUTOINFER_RUN") or die("AUTOINFER_RUN is not set")).resolve()
-    rec = run / "bank" / a.record
-    if not (rec / "change.diff").exists():
-        die(f"{rec}/change.diff not found", 2)
-    head = head_of(run)
-    task = task_folder(run)
-    harness = task / "harness"
-    eval_sh = harness / "eval.sh"
-    if a.record == head:   # reference-only: the manager measures HEAD's missing reference starts
-        if os.environ.get("AUTOINFER_ROLE", "") not in ("manager", ""):
-            die(f"{a.record} is HEAD already (only the manager measures HEAD's reference starts)", 2)
-        ka = cache_key(run, head, eval_sh)
-        with Cache(run) as c:
-            have = len(c.starts(head, ka))
-        if have >= MIN_REF:
-            print(f"{head}: {have} reference starts already cached; nothing to run")
-            sys.exit(0)
-        log = []
-        ws = f"uo-{head}-ref"
-        stage = prepare(run, head, ws, log)
-        if stage:
-            die(f"preparing {head} failed at {stage}:\n" + "\n".join(log)[-2000:])
-        out = run / "unofficial" / f"ref-{head}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-        out.mkdir(parents=True)
-        sa = run / "bank" / head / "serve_args.txt"
-        need = MIN_REF - have
-        cmd = [str(TOOLS / "gpu"), "run", "--timeout", str(round(MIN_PER_START * need + 6, 1)),
-               "--label", f"unofficial-ref:{head}", "--", "env", f"TRIALS={need}", f"PROMPTS={PROMPTS}", "GATES=none",
-               str(eval_sh), str(run / "workspaces" / ws), str(out)] + ([str(sa)] if sa.exists() else [])
-        print(f"measuring {need} reference starts of {head} ({PROMPTS} prompts); queued on the GPUs", flush=True)
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode in (75, 76):   # not admitted: nothing ran, leave nothing behind
-            for f in out.iterdir():
-                f.unlink()
-            out.rmdir()
-            sys.stderr.write(r.stderr)
-            die("the GPU job was not run; nothing recorded", r.returncode)
-        (out / "gpu_job.log").write_text(r.stdout + r.stderr)
-        subprocess.run([sys.executable, str(harness / "summarize.py"), str(out)], capture_output=True)
-        f = out / "results.json"
-        tps = [t["output_throughput"] for t in (json.loads(f.read_text()).get("trials", []) if f.exists() else [])
-               if t.get("output_throughput")]
-        if r.returncode != 0 or (out / "failed_stage").exists() or len(tps) < need:
-            die(f"reference run failed (exit {r.returncode}); see {out}", r.returncode or 1)
-        with Cache(run) as c:
-            for x in tps:
-                c.add(head, ka, x, str(out.relative_to(run)))
-        print(f"{head}: cached reference starts {', '.join(f'{x:.1f}' for x in tps)} tok/s ({out.relative_to(run)}/)")
-        sys.exit(0)
-    bo = next((l for l in (rec / "record.md").read_text().splitlines() if l.startswith("builds_on:")), "") \
-        if (rec / "record.md").exists() else ""
-    if head not in bo.replace("+", " ").replace(",", " ").replace("(", " ").split():
-        die(f"{a.record}'s record.md `builds_on:` line doesn't name HEAD ({head}): {bo.strip() or '(none)'}. "
-            f"An unofficial eval compares with HEAD: rebase the change onto {head} (ws create --from {head}), "
-            f"file it as a record that builds on {head}, and evaluate that.", 2)
-    kb, ka = cache_key(run, a.record, eval_sh), cache_key(run, head, eval_sh)
-
-    sdir = rec / "unofficial"
-    sdir.mkdir(exist_ok=True)
-    n = 1 + max([int(x.name) for x in sdir.iterdir() if x.name.isdigit()], default=0)
-    out = sdir / str(n)
-    out.mkdir()
-    res = {"record": a.record, "n": n, "head": head, "prompts": PROMPTS,
+    harness = task_folder(run) / "harness"
+    if a.record:
+        rec = run / "bank" / a.record
+        if not (rec / "change.diff").exists():
+            die(f"{rec}/change.diff not found", 2)
+        name, out_parent, args_file = a.record, rec / "unofficial", rec / "serve_args.txt"
+    else:
+        ws = run / "workspaces" / a.ws
+        if not ws.exists():
+            die(f"no workspace {ws}", 2)
+        name, out_parent = a.label, run / "unofficial" / "ws" / a.label
+        args_file = Path(a.args).resolve() if a.args else None
+    out_parent.mkdir(parents=True, exist_ok=True)
+    n = 1 + max([int(x.name) for x in out_parent.iterdir() if x.name.isdigit()], default=0)
+    out = out_parent / str(n)
+    res = {"name": name, "workspace": a.ws, "env": a.env, "n": n, "prompts": PROMPTS, "stop_below": a.stop_below,
            "requested_by": os.environ.get("AUTOINFER_AGENT", "human"), "team": os.environ.get("AUTOINFER_TEAM"),
-           "started": now(), "key_b": kb, "key_a": ka}
+           "started": now()}
 
     def record(line, code):
         res["ended"] = now()
+        out.mkdir(parents=True, exist_ok=True)
         (out / "unofficial.json").write_text(json.dumps(res, indent=1) + "\n")
-        with open(rec / "record.md", "a") as f:
-            f.write(f"\n{line}\n")
+        if a.record:
+            with open(rec / "record.md", "a") as f:
+                f.write(f"\n{line}\n")
+        (run / "unofficial").mkdir(exist_ok=True)
+        with open(run / "unofficial" / "log.md", "a") as f:
+            f.write(f"- {name}: {line} [{res['requested_by']}]\n")
         print(line)
         sys.exit(code)
 
-    def failed(stage, log):
-        (out / "prepare.log").write_text("\n".join(log))
-        res["verdict"] = "failed"
-        res["failed_stage"] = stage
-        record(f"unofficial #{n} ({now()[:16]}): FAILED at {stage} (unofficial/{n}/)", 1)
-
-    with Cache(run) as c:
-        ref0 = [s["tps"] for s in c.starts(head, ka)]
-    need = max(0, MIN_REF - len(ref0))
-    log = []
-    wsb = f"uo-{a.record}-{n}"
-    stage = prepare(run, a.record, wsb, log)
-    if stage:
-        failed(stage, log)
-    def args_of(rid):
-        f = run / "bank" / rid / "serve_args.txt"
-        return shlex.quote(str(f)) if f.exists() else ""
-    steps = []
-    if need:   # the missing reference starts of HEAD, cached for every later unofficial eval
-        wsa = f"uo-{head}-ref-{a.record}-{n}"
-        stage = prepare(run, head, wsa, log)
+    # prepare (CPU, not charged): a record gets a fresh workspace from its diff (+ build)
+    if a.record:
+        wsname = f"uo-{a.record}-{n}"
+        log = []
+        r = subprocess.run([str(TOOLS / "ws"), "create", wsname, "--from", a.record], capture_output=True, text=True)
+        log.append(r.stdout + r.stderr)
+        stage = "apply_diff" if r.returncode else None
+        if not stage and needs_build((rec / "change.diff").read_text(errors="replace")):
+            print(f"{a.record}: diff touches compiled code: building", flush=True)
+            r = subprocess.run([str(TOOLS / "ws"), "build", wsname], capture_output=True, text=True)
+            log.append(r.stdout + r.stderr)
+            stage = "build" if r.returncode else None
         if stage:
-            failed(f"reference {head}: {stage}", log)
-        steps.append(f"TRIALS={need} PROMPTS={PROMPTS} GATES=none {shlex.quote(str(eval_sh))} "
-                     f"{shlex.quote(str(run / 'workspaces' / wsa))} {shlex.quote(str(out / 'ref'))} {args_of(head)}")
-    stop = round(st.mean(ref0) * (1 - STOP_LOSS / 100), 2) if ref0 and not need else 0
-    gates = ",".join(["gsm8k"] * a.gsm8k + ["long"] * a.long) or "none"
-    steps.append(f"TRIALS=2 PROMPTS={PROMPTS} GATES={gates} STOP_BELOW={stop} {shlex.quote(str(eval_sh))} "
-                 f"{shlex.quote(str(run / 'workspaces' / wsb))} {shlex.quote(str(out / 'b'))} {args_of(a.record)}")
-    order = "A" * need + "BB"
-    res.update(order=order, stop_below=stop)
-    cmd = [str(TOOLS / "gpu"), "run", "--timeout",
-           str(a.timeout or round(MIN_PER_START * len(order) + 2.0 * a.gsm8k + 1.5 * a.long + 2, 1)),
-           "--label", f"unofficial:{a.record}", "--", "bash", "-c", " && ".join(steps)]
-    print(f"unofficial #{n} of {a.record} vs HEAD {head}: order {order} "
-          f"({len(ref0)} cached reference starts); queued on the GPUs", flush=True)
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    (out / "gpu_job.log").write_text(r.stdout + r.stderr)
-    if r.returncode in (75, 76):
-        for f in out.rglob("*"):
-            if f.is_file():
-                f.unlink()
-        for d in sorted((d for d in out.rglob("*") if d.is_dir()), reverse=True):
-            d.rmdir()
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "prepare.log").write_text("\n".join(log))
+            res["failed_stage"] = stage
+            record(f"unofficial #{n} ({now()[:16]}): FAILED at {stage} ({out.relative_to(run)}/)", 1)
+        ws = run / "workspaces" / wsname
+
+    checks = ",".join(["gsm8k"] * a.gsm8k + ["long"] * a.long) or "none"
+    step = (f"env {' '.join(shlex.quote(e) for e in a.env)} TRIALS=2 PROMPTS={PROMPTS} GATES={checks} "
+            f"STOP_BELOW={a.stop_below or 0} {shlex.quote(str(harness / 'eval.sh'))} {shlex.quote(str(ws))} "
+            f"{shlex.quote(str(out / 'b'))}" + (f" {shlex.quote(str(args_file))}" if args_file and args_file.exists() else ""))
+    timeout = a.timeout or round(MIN_PER_START * 2 + 2.0 * a.gsm8k + 1.5 * a.long + 4, 1)
+    print(f"unofficial #{n} of {name}: 2 starts, {PROMPTS} prompts; queued on the GPUs", flush=True)
+    out.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run([str(TOOLS / "gpu"), "run", "--timeout", str(timeout), "--label", f"unofficial:{name}",
+                        "--", "bash", "-c", step], capture_output=True, text=True)
+    if r.returncode in (75, 76):   # not admitted: nothing ran, leave nothing behind
+        for f in sorted(out.rglob("*"), reverse=True):
+            f.unlink() if f.is_file() else f.rmdir()
         out.rmdir()
         sys.stderr.write(r.stderr)
         die("the GPU job was not run; nothing recorded", r.returncode)
+    (out / "gpu_job.log").write_text(r.stdout + r.stderr)
 
-    def trials_of(d):   # per-start metrics, via the harness's summarize.py
-        if not d.exists():
-            return []
-        subprocess.run([sys.executable, str(harness / "summarize.py"), str(d)], capture_output=True)
-        f = d / "results.json"
-        return [t for t in json.loads(f.read_text()).get("trials", []) if t.get("output_throughput")] \
-            if f.exists() else []
-    am, bm = trials_of(out / "ref"), trials_of(out / "b")
-    A = [m["output_throughput"] for m in am]
+    d = out / "b"
+    subprocess.run([sys.executable, str(harness / "summarize.py"), str(d)], capture_output=True)
+    f = d / "results.json"
+    bm = [t for t in json.loads(f.read_text()).get("trials", []) if t.get("output_throughput")] if f.exists() else []
     B = [m["output_throughput"] for m in bm]
-    with Cache(run) as c:
-        for x in A:
-            c.add(head, ka, x, f"{a.record}/unofficial/{n}")
-        for x in B:
-            c.add(a.record, kb, x, f"{a.record}/unofficial/{n}")
-    fs = [f for f in (out / "ref" / "failed_stage", out / "b" / "failed_stage") if f.exists()]
-    if fs or r.returncode != 0:
-        stage = (("reference: " if fs[0].parent.name == "ref" else "") + fs[0].read_text().strip()) if fs else \
-            ("timeout" if r.returncode == 124 else f"exit {r.returncode}")
-        res.update(a_new=A, b=B, verdict="failed", failed_stage=stage)
-        record(f"unofficial #{n} ({now()[:16]}): FAILED at {stage} (unofficial/{n}/)", 1)
+    fs = d / "failed_stage"
+    if fs.exists() or r.returncode != 0 or not B:
+        stage = fs.read_text().strip() if fs.exists() else \
+            ("timeout" if r.returncode == 124 else f"exit {r.returncode}" if r.returncode else "no results")
+        res.update(tok_s=B, failed_stage=stage)
+        record(f"unofficial #{n} ({now()[:16]}): FAILED at {stage} ({out.relative_to(run)}/)", 1)
 
-    ref = ref0 + A
-    rm = st.mean(ref)
-    gain = 100 * (st.mean(B) / rm - 1)
-    stopped = (out / "b" / "stopped_early").exists() or len(B) < 2   # the gates didn't run
-    if stopped:
-        verdict = "negative (1 start)"
-    elif min(B) > rm:
-        verdict = "PASS"
-    elif max(B) < rm:
-        verdict = "negative"
-    else:
-        verdict = "mixed"
-    gates = []
-    acc = [m.get("mtp_acceptance_length") for m in bm if m.get("mtp_acceptance_length")]
+    stopped = (d / "stopped_early").exists()
+    acc = [m["mtp_acceptance_length"] for m in bm if m.get("mtp_acceptance_length")]
+    lat = {k: round(st.mean(m[k] for m in bm), 1) for k in ("p99_ttft_ms", "p99_tpot_ms")}
     base = run / "bank" / "BASE" / "official" / "1" / "results.json"
-    lat = {}
-    if base.exists():
-        bj = json.loads(base.read_text())
-        for k in ("p99_ttft_ms", "p99_tpot_ms"):
-            v = st.mean(m[k] for m in bm)
-            lat[k] = round(v, 1)
-            if v > LAT_MAX * bj[k]:
-                gates.append(f"latency {k} {v:.0f} > {LAT_MAX:.0%} of BASE {bj[k]:.0f}")
-    g = out / "b" / "gsm8k.json"
-    gsm = None
+    bj = json.loads(base.read_text()) if base.exists() else {}
+    gsm = lr = None
     if a.gsm8k and not stopped:
+        g = d / "gsm8k.json"
         gsm = json.loads(g.read_text())["accuracy"] if g.exists() else None
-        if gsm is None or gsm < GSM8K_MIN:
-            gates.append(f"GSM8K {gsm}")
-    lr = None
     if a.long and not stopped:
-        f = out / "b" / "long_request.json"
-        lr = bool(json.loads(f.read_text()).get("pass")) if f.exists() else False
-        if not lr:
-            gates.append("128K request")
-    if verdict == "PASS" and gates:
-        verdict = "FAIL (gates)"
-    res.update(reference=ref, reference_cached=ref0, a_new=A, b=B, reference_mean=round(rm, 2),
-               gain_pct=round(gain, 2), verdict=verdict, gates_failed=gates, gsm8k=gsm, long_request=lr,
-               p99=lat, mtp_acceptance=acc)
-    fb = " / ".join(f"{x:.1f}" for x in B)
+        g = d / "long_request.json"
+        lr = bool(json.loads(g.read_text()).get("pass")) if g.exists() else False
+    res.update(tok_s=B, mean=round(st.mean(B), 2), stopped_early=stopped, gsm8k=gsm, long_request=lr, p99=lat,
+               base_official_p99={k: bj.get(k) for k in lat}, mtp_acceptance=acc)
     extra = []
-    if stopped and (a.gsm8k or a.long):
-        extra.append("GSM8K/128K not run (stopped after 1 start)")
-    elif a.gsm8k:
-        extra.append(f"GSM8K {100 * gsm:.1f}%" if gsm is not None else "GSM8K failed")
-    if a.long and not stopped:
+    if stopped:
+        extra.append(f"stopped after 1 start (below {a.stop_below:g})" + ("; GSM8K/128K not run" if a.gsm8k or a.long else ""))
+    if a.gsm8k and not stopped:
+        extra.append(f"GSM8K {100 * gsm:.1f}%" if gsm is not None else "GSM8K failed to run")
+    if lr is not None:
         extra.append(f"128K {'pass' if lr else 'FAIL'}")
-    if lat:
-        extra.append(f"p99 TTFT {lat['p99_ttft_ms']:.0f} ms / TPOT {lat['p99_tpot_ms']:.1f} ms")
+    extra.append(f"p99 TTFT {lat['p99_ttft_ms']:.0f} ms / TPOT {lat['p99_tpot_ms']:.1f} ms"
+                 + (f" (BASE official {bj['p99_ttft_ms']:.0f} / {bj['p99_tpot_ms']:.1f})" if bj else ""))
     if acc:
         extra.append(f"MTP acceptance {st.mean(acc):.3f}")
-    record(f"unofficial #{n} ({now()[:16]}): {verdict}: {gain:+.2f}% vs HEAD {head} "
-           f"(B {fb} vs reference mean {rm:.1f} over {len(ref)} starts, {len(A)} run in this job; "
-           f"{PROMPTS} prompts){'; ' + ', '.join(extra) if extra else ''}"
-           f"{'; gates failed: ' + ', '.join(gates) if gates else ''} (unofficial/{n}/unofficial.json)", 0)
+    record(f"unofficial #{n} ({now()[:16]}): {' / '.join(f'{x:.1f}' for x in B)} tok/s ({PROMPTS} prompts"
+           f"{', env ' + ' '.join(a.env) if a.env else ''}); {', '.join(extra)} ({out.relative_to(run)}/unofficial.json)", 0)
 
 
 if __name__ == "__main__":

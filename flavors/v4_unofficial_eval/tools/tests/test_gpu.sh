@@ -34,7 +34,7 @@ W T1 $G run --timeout 500 -- true >/dev/null 2>&1; check "timeout over balance -
 W T1 $G run --timeout 0.05 -- sleep 30 >/dev/null 2>&1; check "timeout kill -> 124" 124 $?
 W TX $G run --timeout 1 -- true >/dev/null 2>&1; check "unknown team -> 76" 76 $?
 AUTOINFER_ROLE=worker AUTOINFER_AGENT=w $G run --timeout 1 -- true >/dev/null 2>&1; check "worker without team -> 76" 76 $?
-M $G run --timeout 1 -- true >/dev/null 2>&1; check "manager with empty MGR -> 76" 76 $?
+M $G run --timeout 1 -- true >/dev/null 2>&1; check "manager with empty MGR runs (MGR is unlimited)" 0 $?
 M $G grant MGR 10 --kind extension --note profiling >/dev/null; check "grant MGR" 0 $?
 M $G run --timeout 1 --label mgrjob -- sleep 1 >/dev/null 2>&1; check "manager job charged to MGR" 0 $?
 H $G run --timeout 1 --label human -- sleep 1 >/dev/null 2>&1; check "human job uncharged runs" 0 $?

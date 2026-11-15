@@ -1,6 +1,6 @@
 # v4 measurement spec: expected behavior
 
-How a change gets measured and becomes champion in v4. Tools: `tools/unofficial_eval`, `tools/champion`,
+How a change gets measured and becomes champion in v4. Tools: `tools/unofficial_eval`,
 `tools/official_eval`; GPU harness: the task's `harness/eval.sh` (one script for both kinds of
 measurement). If the tools disagree with this file, that is a bug.
 
@@ -8,48 +8,36 @@ measurement). If the tools disagree with this file, that is a bug.
 
 | | Unofficial eval | Official eval |
 |---|---|---|
-| Who runs it | a team (`unofficial_eval <record>`) | the manager only (`official_eval <record>`) |
-| GPU harness | `eval.sh` with `TRIALS=2 PROMPTS=200`, optional gates, stop-loss | `eval.sh` defaults: 2 trials x 400 prompts, GSM8K-250 + 128K request |
-| What runs | only the candidate (B); the champion's numbers come from a cache | the record |
-| Cost | ~5 GPU-min (~3 if stopped early), charged to the team | ~8-11 GPU-min, charged to MGR |
-| Result | a verdict vs HEAD | an official tok/s number |
+| Who runs it | anyone (`unofficial_eval <record>` or `--ws <workspace>`) | the manager only (`official_eval <record>`) |
+| GPU harness | `eval.sh` with `TRIALS=2 PROMPTS=200`, optional GSM8K/128K, stop-loss | `eval.sh` defaults: 2 trials x 400 prompts, GSM8K-250 + 128K request |
+| What runs | the code asked for, nothing else | the record |
+| Cost | ~5 GPU-min (~3 if stopped early), charged to the caller's team | ~8-11 GPU-min, charged to MGR |
+| Result | the code's tok/s per start (+ p99s, MTP acceptance, checks) | an official tok/s number |
 
 Every start is a freshly started inference server; the bench client runs the baseline code.
 
 ## Unofficial eval
-1. Refuses (exit 2, nothing run) unless the record's `builds_on:` names the current HEAD.
-2. Builds a fresh workspace from the bank diff (CPU, not charged).
-3. Reference = HEAD's cached starts (`unofficial/cache.json`). Cache key = diff hash + serve args +
-   prompts + eval.sh version, so the same code under the same harness never re-runs. If fewer
-   than 2 cached starts exist (e.g. BASE at run start), the same GPU job first runs the missing
-   ones (`eval.sh` on HEAD's workspace, no gates) and caches them. Normally this never happens:
-   the manager runs `unofficial_eval BASE` at run start (reference starts only, charged to MGR),
-   and every promoted champion's own 2 starts are its reference.
-4. Runs B: 2 trials. Stop-loss: if trial 1 is more than 1.5% below the reference mean, trial 2
-   is skipped (only when the reference was fully cached).
-5. Verdict: **PASS** = both B starts above the reference mean and every gate run passed (latency
-   guard always; GSM8K with `--gsm8k`; 128K with `--long`). Otherwise mixed / negative /
-   negative (1 start) / FAIL (gates) / failed.
-6. Writes `bank/<id>/unofficial/<n>/unofficial.json` and appends one `unofficial #n` line to record.md.
-   B's starts are cached, so if the record becomes HEAD they are its reference.
+1. Measures what it's asked: a bank record (its diff + serve args, in a fresh workspace built from
+   the bank, CPU, not charged) or a workspace as it is (`--ws`, `--label`, optional `--args FILE`,
+   `--env K=V`). It knows nothing about champions or references.
+2. 2 trials of 200 prompts; `--gsm8k` / `--long` add the checks; `--stop-below X`: skip trial 2
+   if trial 1 is below X tok/s (the agent picks X, usually from the unofficial champion's numbers).
+3. No verdict, no cache: it writes the numbers (`bank/<id>/unofficial/<n>/` + a line in record.md,
+   or `unofficial/ws/<label>/<n>/`) and a line in `unofficial/log.md`. Agents compare numbers
+   themselves; records don't change once filed, so a record's numbers stay valid.
+4. The manager measures BASE at run start (`unofficial_eval BASE`), so teams have a reference.
 
-## Champion (two tiers)
-- **HEAD** = the unofficial champion. `champion promote <id>` (manager) needs the record's
-  latest unofficial eval to be a PASS against the current HEAD. Teams build on and run unofficial_eval against HEAD.
-- **CONFIRMED** = the official champion (an official eval backs it).
-- The chain = records promoted since CONFIRMED, each with its unofficial gain.
-- **Confirmation is due** when the summed unofficial gains reach 5% or the chain holds 4 records
-  (fixed, not a judgment call). The manager then runs `official_eval HEAD` and
-  `champion confirm HEAD`.
-- **MATCH** if all hold: gates pass; the official number beats CONFIRMED's; and it is no lower
-  than expected - max(1.5%, 2 sigma), where expected = CONFIRMED x the chain's gains and
-  sigma = sqrt(k x 0.75^2 + 0.8^2) % for k records. Then the record becomes CONFIRMED.
-- **MISMATCH**: bisect the chain with official evals (the tool names the next record). The first
-  record that mismatches is reverted with everything promoted after it (`champion revert`);
-  HEAD falls back.
+## Champion (two tiers; the manager keeps champion.md, no tool)
+- **Unofficial champion**: the manager promotes a valid record whose unofficial starts
+  beat the unofficial champion's (it need not be built on the unofficial champion).
+- **Official champion** (an official eval backs it). The manager runs
+  `official_eval <unofficial champion>` when the unofficial champion is ~5% above the official champion or 4 records were promoted since, and at
+  the end; if the official number bears out the unofficial one, the unofficial champion becomes the official champion, otherwise
+  the manager finds out why and reverts what doesn't hold up. Judgment, not a formula.
 - Funding: a promotion counts as a win; a later revert counts against the team.
 
 ## Not in v4
-- No `abba.sh` (removed from the run's task copy): `unofficial_eval` is the only comparison path.
+- No `abba.sh` and no same-job A/B protocol in the run's task copy (new_run replaces TASK.md's
+  protocol with the noise facts): `unofficial_eval` measures and compares any code.
 - No `--ignore-eos`: tested, fixed output lengths don't reduce start-to-start noise.
 - No startup overlap: shelved.

@@ -20,7 +20,8 @@ worker.run(task) -> report:
             # Python-only: no build, just restart the server.
             # C++/CUDA: `ws build <workspace name>` as a BACKGROUND command (~1-10 min).
         test()              # cheapest first: unit check → microbenchmark with real shapes →
-                            # one forward pass + profile → short unofficial bench
+                            # one forward pass + profile → short quick bench →
+                            # `unofficial_eval --ws` to measure a variant (2 fresh starts)
             # GPU: only through `gpu run --timeout <min> -- <script>`, BACKGROUND, within your
             # allowance (`gpu status` shows the minutes you used). Need more? Ask your leader,
             # saying what for; don't just go over it. One job = one script: start the server, wait until ready,
@@ -38,8 +39,11 @@ worker.run(task) -> report:
 
 ## Notes
 - Quick numbers (smoke tests, microbenchmarks, short benches, profiles) are for deciding
-  what to do next; they never count. Say how sure a measurement is (the task's noise notes;
-  same-job A/B and repeats settle small gains) or when it is shaky. Don't oversell.
+  what to do next; they never count. Say how sure a measurement is (the task's noise notes) or
+  when it is shaky. Don't oversell. To compare variants of your change, `unofficial_eval --ws
+  <workspace> --label <name> [--env K=V] [--args FILE]` measures each one with 2 fresh
+  inference-server starts (the official harness, 200 prompts). The unofficial champion's numbers
+  are in its bank record: no need to measure it again.
 - **Don't edit a workspace while a GPU job uses it.** Each inference server loads the workspace's
   code when it starts (Python reads the files then), not when you submitted the job: an edit made
   mid-job silently changes what the later inference servers in that job run. To keep working in

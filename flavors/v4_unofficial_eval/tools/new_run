@@ -23,6 +23,21 @@ FLAVOR = TOOLS.parent
 ROOT = TOOLS.parents[2]                 # autoinfer/
 
 
+NOISE = """- **Noise**: repeat runs on the same inference server vary ~0.5% (CV). Across server restarts and
+  jobs it is larger: BASE scored 641.4, 631.4 and 635.9 tok/s in three jobs (up to 1.6% apart).
+  **Fresh-start noise, measured** (42 official trials, 400 prompts): per-start sigma ~0.3-0.5%,
+  median difference of two starts of the same code 0.3%, one 2.6% outlier in 20 pairs; the drift
+  between jobs is ~0.5%. There is no minimum gain: a change counts if its gain shows up
+  consistently (e.g. every start above the reference's mean), however small. The larger the gain,
+  the less repetition it needs to be convincing. A single start that looks worse can be the
+  outlier: record it as a screen negative, not a measured fact (weak negatives recorded as facts
+  deter later work wrongly). How codes are measured and compared in this run: the run's
+  instructions (`unofficial_eval`)."""
+LIB_NOTE = """# compare against another code measured the same way. To measure a record or a workspace (with
+# extra serve args or env) at the unofficial settings, use `unofficial_eval`.
+"""
+
+
 def die(msg):
     print(f"new_run: {msg}", file=sys.stderr)
     sys.exit(1)
@@ -60,14 +75,26 @@ def copy_task(run, task):
     """The run's own copy of the task, for agents to read (they stay in their run folder). Trusted
     tools (ws, the official eval) read the original in tasks/, found by task_source.json."""
     shutil.copytree(task, run / "task", symlinks=True)
-    # v4: `unofficial_eval` is the only comparison path; drop the task's A/B script from the run's copy
+    # v4: `unofficial_eval` measures any code; agents compare the numbers. The task's own
+    # comparison protocol (same-job interleaved A/B, abba.sh) is for flavors without it: replace it
+    # in the run's copy with the noise facts only.
     (run / "task" / "scripts" / "abba.sh").unlink(missing_ok=True)
     tm = run / "task" / "TASK.md"
     t = tm.read_text()
-    t2 = t.replace("\n  `scripts/abba.sh` runs this protocol (fresh starts, same prompts, interleaved, early stop,\n  verdict line) for two workspaces.", "")
-    if t2 == t:
-        sys.exit("new_run: TASK.md's abba.sh sentence not found (task changed?)")
-    tm.write_text(t2)
+    end = "verdict line) for two workspaces."
+    i, j = t.find("- **Noise**:"), t.find(end)
+    if i < 0 or j < 0:
+        sys.exit("new_run: TASK.md's noise/A-B paragraph not found (task changed?)")
+    tm.write_text(t[:i] + NOISE + t[j + len(end):])
+    lib = run / "task" / "scripts" / "lib.sh"
+    l = lib.read_text()
+    i = l.find("# compare a change against BASE measured the same way")
+    k = l.find("# Measure performance on a freshly started server")
+    m = l.find("# For a same-job A/B")
+    j = l.find("TASK_DIR=$(cd")
+    if min(i, j, k, m) < 0:
+        sys.exit("new_run: lib.sh's A/B comment not found (task changed?)")
+    lib.write_text(l[:i] + LIB_NOTE + l[k:m] + l[j:])
     g = lambda *c: subprocess.run(["git", "-C", str(ROOT), *c], capture_output=True, text=True).stdout.strip()
     (run / "task_source.json").write_text(json.dumps(
         {"task": task.name, "autoinfer_commit": g("rev-parse", "HEAD"),
@@ -176,7 +203,10 @@ def seed_base(run, task):
                 f"MTP acceptance {r.get('mtp_acceptance_length')}, TTFT p50/p99 "
                 f"{r['median_ttft_ms']:.0f}/{r['p99_ttft_ms']:.0f} ms, TPOT p50/p99 "
                 f"{r['median_tpot_ms']:.1f}/{r['p99_tpot_ms']:.1f} ms (official/1/results.json)")
-        (run / "champion.md").write_text(f"# Champion\nBASE (the task baseline): {line}\n")
+        (run / "champion.md").write_text(
+            "# Champion (the manager keeps this file)\n\n"
+            f"unofficial champion: BASE\nofficial champion: BASE {r['output_throughput']:.1f} tok/s\n\n"
+            f"## History\n- start: BASE is both champions: {line}\n")
     (base / "record.md").write_text(
         "team:         -\n"
         "builds_on:    -\n"
@@ -264,10 +294,6 @@ def main():
         for f in ("journal.md", "shared_kb.md", "champion.md", "focus.md", "announcements.md"):
             (run / f).write_text("")
         seed_base(run, task)
-        r = subprocess.run([str(TOOLS / "champion"), "show"], env=dict(os.environ, AUTOINFER_RUN=str(run), AUTOINFER_ROLE=""),
-                           capture_output=True, text=True)       # champion.json: BASE = CONFIRMED = HEAD
-        if r.returncode != 0:
-            die(f"champion show failed:\n{r.stderr}")
         copy_framework(run, Path(a.framework).resolve())
         env = dict(os.environ, AUTOINFER_RUN=str(run))
         r = subprocess.run([str(TOOLS / "ws"), "setup-task"], env=env, capture_output=True,

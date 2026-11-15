@@ -11,7 +11,7 @@ a model can be served. Use it to build your own map of this engine's search spac
 the other teams' maps and the run's history, and work on the most promising opportunities nobody
 has tried.
 
-The measure is wins under the task's rules: records promoted to HEAD (a unofficial PASS against HEAD,
+The measure is wins under the task's rules: records promoted to unofficial champion (unofficial numbers that beat the unofficial champion's,
 accepted by the manager) that the confirmation eval bears out. Small gains count.
 
 ## Why a framework
@@ -40,8 +40,8 @@ what you pruned and why.
 ### Phase 1: your own map, without the run's history
 In this phase, read only: the framework, `task/` (TASK.md, the harness, the baseline's profiles,
 PROFILING.md, SPEED_OF_LIGHT.md), `task_definition.md`, `assumption_ledger.md`, `focus.md`,
-`champion.md` (start from HEAD), HEAD's code (`bank/<HEAD>/change.diff`, `serve_args.txt`, or a
-workspace made with `ws create --from <HEAD>`), and your own team's files. Measure the
+`champion.md` (start from the unofficial champion), its code (`bank/<unofficial champion>/change.diff`, `serve_args.txt`, or a
+workspace made with `ws create --from <unofficial champion>`), and your own team's files. Measure the
 champion yourself where you need numbers (profiles, microbenchmarks). **Don't read**
 `shared_kb.md`, `journal.md`, `announcements.md`, `teams/`, `reports/` and `sparring/` (other
 than your own), other teams' records, workspaces, proposals and notes. Your workers follow the
@@ -96,10 +96,10 @@ between you is welcome.
 
 ## How you are funded
 - **GPU time is the only resource, and it is limited.** The manager hands it out as grants.
-- **You start with a seed grant and a starting grant.** `gpu status` shows your balance. Every GPU
+- **You start with 30 GPU-minutes; each extension adds 30.** `gpu status` shows your balance. Every GPU
   job, unofficial evals included, is charged to your team.
 - **More GPU time goes to teams that turn it into results.** For your team a result is a win: a
-  record promoted to HEAD. A promotion that is later reverted (the confirmation eval did not bear
+  record promoted to unofficial champion. A promotion that is later reverted (the confirmation eval did not bear
   it out) counts against the team.
 - **Request a resync whenever you like**, usually when your grant is nearly used up. Keep a little
   in reserve for it. At a resync you report what you planned, what you achieved, and what you want
@@ -120,8 +120,8 @@ not worth doing, or when you're stuck. It is for inspiration, not instructions. 
 first: it explains how to use it and how to start.
 
 ## What you hear from others
-- **Every promotion, confirmation and revert, from any team.** HEAD has moved: rebase and
-  re-check whether your current work still beats it.
+- **Every promotion, confirmation and revert, from any team.** The unofficial champion has moved: the number to beat
+  changed. Your measurements stay valid; decide whether your work should build on the new unofficial champion.
 - **Other teams' resync reports** (read them after your phase 1).
 
 ## How to lead
@@ -133,17 +133,21 @@ first: it explains how to use it and how to start.
   measurement; a mismatch is itself an observation.
 - **File every experiment as a bank record,** failures and null results too. Review every diff
   yourself against the task definition before an unofficial eval.
-- **Build on HEAD** (`champion show`). An unofficial eval compares with the current HEAD, so a record must
-  build on it (its `builds_on:` names HEAD). When HEAD moves, rebase your change onto it (as a new
-  record) before you run unofficial_eval on it. When the manager reverts a record, rebase off it.
+- **Usually start from the unofficial champion** (champion.md): most changes stack on its code. It is
+  not required: any record competes on its own measured number, and a record's `builds_on:` says
+  what code it contains (a revert also removes the records that build on the reverted one). When
+  the unofficial champion moves, your measured numbers stay valid; to beat the new unofficial champion, a change that stacks on it
+  must include its code (a new record).
 - **Unofficial evals** (`unofficial_eval <record id>`, in the background, ~5 GPU-min) are how a record competes:
-  two fresh starts of your record against HEAD's cached starts, stopping after one on a clear
-  loss. Add `--gsm8k` if the change touches numerics, `--long` if it touches memory (CUDA graphs,
-  KV budget, buffers). A **PASS** (both starts above HEAD's mean, gates pass) after your validity
-  review is a champion candidate: send the manager the record id, the unofficial line, your validity
+  two fresh starts of your record; compare with the unofficial champion's numbers (in its
+  record's unofficial/ folder); `--stop-below <tok/s>` skips the second start on a clear loss. Add `--gsm8k` if the change touches numerics, `--long` if it touches memory (CUDA graphs,
+  KV budget, buffers). A record that clearly beats the unofficial champion, after your validity review, is a
+  champion candidate: send the manager the record id, the unofficial line, your validity
   review and the mechanism evidence (a profile or microbenchmark showing the change does what you
-  claim, not only the end-to-end number). A mixed verdict: run unofficial_eval again or move on. Small gains
-  count; the official confirmation of the chain is the manager's (`official_eval` is
-  manager-only).
+  claim, not only the end-to-end number). Then keep working: don't wait for the manager's
+  answer (a promotion arrives as an announcement). Not clear? Measure more or move on. Small gains
+  count; the official confirmation of promoted records is the manager's (`official_eval` is
+  manager-only). Your workers can measure their own variants the same way before anything is a
+  record (`unofficial_eval --ws <workspace> --label <name> [--env K=V]`).
 - **Ask the manager** when the task definition doesn't settle whether something is allowed.
 - **Before closing,** write `reports/<team>-writeup.md` (what you learned) and a last map update.

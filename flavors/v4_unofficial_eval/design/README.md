@@ -31,8 +31,11 @@ difference 0.74%). So a cached reference is about as good as re-running it.
   culprit and everything built on it. Each confirmation bounds how far unofficial-eval errors can carry.
 - `official_eval` is manager-only. No `abba.sh` in v4 runs (removed from the run's task copy:
   `unofficial_eval` is the only comparison path). No `--ignore-eos` (tested: fixed output lengths don't
-  reduce start-to-start noise). Teams rebase onto HEAD themselves (as onto champions in v3);
-  an unofficial eval requires `builds_on:` to name the current HEAD.
+  reduce start-to-start noise).
+- **Patch after sweep-unofficial-eval** (see Decision log): `unofficial_eval` only measures any code
+  (records or workspaces; no cache, no verdict, no notion of the champion: agents compare numbers); no champion tool
+  (the manager keeps champion.md); HEAD/CONFIRMED renamed to unofficial/official champion; one opening grant of 30 per team (no separate seed/start), extensions 30 each; TASK.md's same-job A/B
+  protocol replaced in the run's copy.
 - Funding: a promotion to HEAD is a win; a later revert counts against the team.
 - Grants and pool as in v3 (pool 1000, seed 20), except the start grant: 60 (v3: 80).
 
@@ -53,3 +56,29 @@ difference 0.74%). So a cached reference is about as good as re-running it.
   teams rebase themselves; the manager announces promotions, confirmations and reverts; pool 1000,
   seed 20, start 60. No abba.sh, no --ignore-eos; one GPU harness (eval.sh) for both evals;
   "unofficial" (not "provisional"); the manager measures BASE's reference starts at run start.
+- 2026-11-15, human, after sweep-unofficial-eval. Result: v4 ~3.5% behind framework-eval at matched
+  GPU-min. Measurement fell 450 -> ~274 GPU-min, but workers' own inference-server jobs rose (checks,
+  debugging, ~66 GPU-min of home-made A/Bs written because the run's TASK.md still taught ABBA).
+  **Principle: simplicity. The agents are smart: give them simple tools and goals, not procedures,
+  formulas or step lists; don't script what they can judge.** Changes:
+  - `unofficial_eval` only measures: a record or a workspace (`--ws --label`, `--env`, `--args`),
+    2 starts x 200 prompts, optional `--gsm8k`/`--long`, optional `--stop-below <tok/s>` chosen by the
+    agent. No cache/fingerprints, no verdicts, no notion of the champion or a reference: agents
+    compare numbers themselves (the champion's are in its bank record; promotions are announced).
+    Anyone may run it, workers included. Records don't change once filed.
+  - No "built on the champion" rule: any code competes on its number (`builds_on:` says what a
+    record contains; a revert also removes records built on the reverted one).
+  - No `champion` tool: the manager keeps champion.md itself (unofficial champion, official
+    champion, history) and judges
+    promotions and confirmations; official evals at ~5% / 4 promotions / the end.
+  - Terms: "unofficial champion" and "official champion" (not HEAD / CONFIRMED).
+  - Budget: one opening grant of 30 per team (no separate seed/start), each extension 30 (last
+    chances included). Pool 1000.
+  - TASK.md's FP8-activation rule (GSM8K in the same job as a bf16 reference) removed from the
+    task: the normal GSM8K gate applies. The run's copy of TASK.md/lib.sh gets the noise facts
+    instead of the same-job A/B protocol (new_run).
+  - Stale prompts fixed (ABBA, chain, same-job A/B, "must build on HEAD"); a leader that sends a
+    candidate keeps working, it doesn't wait for the manager.
+  - Not done (overkill): a shared check-helper script; `gpu breakdown`; rules on what agents may
+    run locally. Considered and left as is for now: shortening manager.md/common.md, the funding
+    table, the manager's bookkeeping files.

@@ -9,18 +9,17 @@ The highest total speedup the run achieves from its fixed GPU pool.
 
 ## Teams
 Every team is a sweep team. CONFIG sets how many are open at all times; a closed team is
-replaced by a new one while the pool can fund it (seed + start).
+replaced by a new one while the pool can fund its opening grant.
 
 ## Grant sizes (GPU-minutes)
-- **Seed:** 20, granted automatically when a team opens (`gpu team open`).
-- **Start:** 60, granted when the team opens.
-- **Extensions and last-chance grants:** the manager decides the size. A last chance is smaller
-  than a normal extension.
+- **Opening grant:** 30, granted automatically when a team opens (`gpu team open`). No other
+  grant at opening.
+- **Extensions (last chances included):** 30 each.
 - **The manager's GPU jobs** (BASE reference starts, confirmation evals, ~12 GPU-min each) need no
   grant: MGR is always admitted, and its use is counted in the pool's total.
 
 ## What counts
-- **A result is a win:** a record promoted to HEAD (a unofficial PASS against HEAD). Small gains
+- **A result is a win:** a record promoted to unofficial champion (its unofficial starts beat the unofficial champion's). Small gains
   count. A promotion later reverted (its confirmation eval did not bear it out) counts against the
   team that made it.
 - **The team's sweep report** (reports/<team>-sweep.md and its six files) is its first
@@ -32,7 +31,7 @@ A team can request a resync at any time.
 | What the team shows | Decision |
 |---|---|
 | A win since the last grant (net of reverts) | Extend, possibly with a bigger grant |
-| No win, but a measured lead it can name (what it will test next and why the evidence points there) | Last chance: a smaller grant. The team says what it will measure with it |
+| No win, but a measured lead it can name (what it will test next and why the evidence points there) | Last chance: one extension. The team says what it will measure with it |
 | A second last chance in a row | Close the team and open a new one. The closing team writes up what it learned and adds a last map update first |
 | The team recommends closing itself, and its failure hit a hard limit or it already tried a variant aimed at the cause | Close it and open a new one, as above |
 | The team recommends closing itself after one failed attempt with a fixable cause | Encourage it to try a variant first. If it still wants to close, close it |

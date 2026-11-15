@@ -16,7 +16,7 @@ Roles:
   systematically with a framework (named in CONFIG), compares its map with other teams' maps,
   and turns the best untried opportunities into wins. Each team chooses its own direction.
   Leaders run experiments with their workers, file every experiment into the bank, review
-  validity, run unofficial evals of their candidates against HEAD, and report to the manager.
+  validity, run unofficial evals of their candidates against the unofficial champion, and report to the manager.
 - **workers**: implement and test what their leader asks, inside their own workspace.
 
 There are no rounds: teams work independently, and the manager reacts to proposals, resyncs and
@@ -38,10 +38,10 @@ CONFIG             # config.md: number of sweep teams, the framework folder, wor
                    # checkpoints, models.                                           owner: the human
 FUNDING_POLICY     # funding_policy.md: how the manager decides who gets GPU time (proposal
                    # checks, resync decisions, grant sizes).                        owner: the human
-CHAMPION           # champion.md (`champion show`): two tiers. HEAD = the unofficial champion,
-                   # the last record promoted on a unofficial PASS: build on it, run unofficial_eval against it.
-                   # CONFIRMED = the last record whose official eval bore out the unofficial evals.
-                   # Between them, the chain of promoted records with their unofficial gains.
+CHAMPION           # champion.md: two tiers. The unofficial champion =
+                   # the fastest record so far by its unofficial number: the number to beat.
+                   # The official champion = the last record whose official eval bore out its unofficial number.
+                   # Between them, the records promoted since the official champion.
                    #                                                                owner: manager
 BANK               # bank/<id>/: every experiment, pass or fail (format below).
                    # owner: the leader of that team; `unofficial_eval` appends unofficial results and
@@ -94,9 +94,9 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
     team:         T1
     builds_on:    T1-002   (the record(s) whose change this one starts from: BASE, one record, or
                   several, e.g. "T1-001 + T2-003" when it combines them)
-    performance:  "unofficial: ~+4% at c=16" / "unofficial: within noise" / "build failed" /
-                  "unofficial negative (1 pair, -2.3%)"  (an A/B stopped early: TASK's stop-loss rule)
-                  (`unofficial_eval` appends its verdict lines below, official_eval its official results;
+    performance:  "unofficial: ~+4% vs the unofficial champion" / "unofficial: within noise" / "build failed" /
+                  "unofficial: stopped after 1 start, -2.3%"
+                  (`unofficial_eval` appends its result lines below, official_eval its official results;
                   only those count. Once one lands, the owner may update this line to show it)
     summary:
       hypothesis:
@@ -106,7 +106,7 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
     validity:     the leader's review of the diff against TASK.definition
   change.diff             # `ws diff <workspace>`: against the task baseline, applies to it directly
   serve_args.txt          # optional: extra server flags the change needs (reviewed for validity)
-  unofficial/<n>/             # written by `unofficial_eval` only
+  unofficial/<n>/         # written by `unofficial_eval` only
   official/<n>/           # written by official_eval only (the manager's confirmation evals)
   (optional) profiles/, notes
 ```
@@ -140,11 +140,14 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   run: stop GPU work and tell the manager** (other people share these GPUs; we never compete).
   Exit 76 = your team's balance can't cover the job (or the team is closed): do GPU-free work; a
   leader may request a resync from the manager.
-- `unofficial_eval <record id>` (leaders): compare a record with HEAD: fresh starts of the record against
-  HEAD's cached starts (HEAD is not re-run), early stop on a clear loss, verdict line appended to
-  the record. A PASS is a champion candidate. `--gsm8k` / `--long` add the accuracy / 128K gates.
-- `champion show`: HEAD, CONFIRMED and the chain between them (the manager changes it).
-- `official_eval <record id>` (manager only): official numbers, to confirm the chain.
+- `unofficial_eval` (anyone): measures the speed of some code: 2 fresh inference-server starts of
+  200 prompts (the official harness, shorter). `unofficial_eval <record id>` for a record (result
+  saved in the record); `unofficial_eval --ws <workspace> --label L [--env K=V] [--args FILE]` for
+  your own variants before they are records. It only measures: compare with other numbers
+  yourself (the unofficial champion's are in its record). `--stop-below <tok/s>` skips the second
+  start on a clear loss; `--gsm8k` / `--long` add the GSM8K / 128K checks. Any code can compete:
+  it doesn't have to be built on the unofficial champion.
+- `official_eval <record id>` (manager only): official numbers, to confirm a promoted record.
 - `agent`: start, list and stop agents (the manager also uses `agent announce` and `agent remind`).
 - **Run these tools as commands on their own** (`gpu cancel 12`, not `cd … && gpu cancel 12 && …`).
   A tool command on its own is pre-approved. A chained command goes through the permission check,
@@ -167,20 +170,18 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   means, in records and reports. Others may read the same observation differently.
 - **Cheap before expensive** (guidance, not a gate): napkin math (Amdahl, roofline) →
   microbenchmark with real shapes → one forward pass + profile → short quick bench (scripts/lib.sh) →
-  screen. Skip steps that don't fit. **Write the estimate next to the measurement**: a
+  unofficial eval. Skip steps that don't fit. **Write the estimate next to the measurement**: a
   mismatch is itself a finding.
 - **Correctness is not negotiable**: what TASK.definition says (same math as the baseline up to
   floating-point reordering, the precision and serving constraints, no benchmark-specific
   tricks). When unsure whether something is allowed, ask your parent before building on it.
 - **Honest numbers.** Report failures, noise and doubts plainly. Quick numbers (short benches,
-  microbenchmarks) are for deciding what to do next; only unofficial_eval verdicts and official numbers count. Know the task's noise (TASK): a small
-  difference is neither a result nor noise until a same-job comparison, repeated, settles it.
-  "Below noise" means measure more carefully, not give up: small gains count, and they stack.
-  The reverse also holds: **don't spend GPU minutes on a comparison the first pair already
-  settled.** To compare a record with HEAD, use `unofficial_eval`: HEAD's numbers are cached, so only your
-  record runs (about half the GPU time of an A/B). It stops after the first start when the record
-  clearly loses (TASK's stop-loss rule); only losses stop early. A stopped unofficial eval is a
-  *negative (1 start)*: report and record it as that, not as "B is slower", so a later team can
+  microbenchmarks) are for deciding what to do next; only unofficial_eval results and official
+  numbers count. Know the task's noise (TASK): a small difference is neither a result nor noise
+  until fresh starts settle it. "Below noise" means measure more carefully, not give up: small
+  gains count, and they stack. The reverse also holds: **don't spend GPU minutes on a comparison
+  already settled:** numbers already in the bank don't need measuring again. Report an
+  unofficial eval stopped after one start as "stopped after 1 start", not as "B is slower", so a later team can
   revisit it (one start can be the outlier).
 - Keep logs, results and scratch files outside a workspace's code tree.
 

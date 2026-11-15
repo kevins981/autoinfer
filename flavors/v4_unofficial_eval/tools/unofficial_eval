@@ -170,6 +170,12 @@ def main():
                str(eval_sh), str(run / "workspaces" / ws), str(out)] + ([str(sa)] if sa.exists() else [])
         print(f"measuring {need} reference starts of {head} ({PROMPTS} prompts); queued on the GPUs", flush=True)
         r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode in (75, 76):   # not admitted: nothing ran, leave nothing behind
+            for f in out.iterdir():
+                f.unlink()
+            out.rmdir()
+            sys.stderr.write(r.stderr)
+            die("the GPU job was not run; nothing recorded", r.returncode)
         (out / "gpu_job.log").write_text(r.stdout + r.stderr)
         subprocess.run([sys.executable, str(harness / "summarize.py"), str(out)], capture_output=True)
         f = out / "results.json"

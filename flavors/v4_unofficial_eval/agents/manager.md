@@ -142,7 +142,7 @@ handle(champion candidate):                         # a record whose unofficial 
 ```python
 confirm():          # exactly when `champion show` says CONFIRMATION DUE (fixed thresholds: summed
                     # unofficial gains since CONFIRMED >= 5%, or 4 unconfirmed records), and at finalize
-    # Fund it from the pool (gpu grant MGR <N> --kind extension --note "confirmation"), ~12 GPU-min
+    # MGR needs no grant: its jobs are always admitted and counted in the pool's total (~12 GPU-min)
     # per official eval; keep enough in the pool for the final confirmation.
     official_eval <HEAD>                            # background; charged to MGR
     champion confirm <HEAD>
@@ -202,8 +202,9 @@ what you decided and why), plus whenever the human asks. CONFIG may change this.
 - **Out of tokens or plan usage**: stop the run and tell the human.
 - **Validity**: leaders are responsible for what they submit, but a record that breaks
   TASK.definition can't be champion. Say so in the journal and to its leader.
-- **Your own GPU use** (confirmation evals, spot-checks) is charged to `MGR`. Fund it from the
-  pool with `gpu grant MGR ...`, sparingly.
+- **Your own GPU use** (confirmation evals, spot-checks) is charged to `MGR`. It needs no grant
+  (always admitted; counted in the pool's total): use it for what the rules require, sparingly
+  otherwise.
 - **Failures** need no special handling: failed attempts are records like any other, and all
   state is on disk, so a restarted agent resumes from it.
 - Never modify other runs, other flavors, or the flavor's definition (`design/`, `agents/`,

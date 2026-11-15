@@ -166,7 +166,10 @@ def pool_state(acc=None, evs=None):
     evs = events() if evs is None else evs
     acc = accounts(evs) if acc is None else acc
     total = p["total"] + sum(e.get("minutes", 0) for e in evs if e.get("event") == "pool_add")
-    granted_open = sum(a["granted"] for a in acc.values() if a["open"])
+    # MGR has no budget (its jobs are required by fixed rules): its spending beyond grants comes
+    # straight out of the pool
+    granted_open = sum(max(a["granted"], a["used"]) if t == MGR else a["granted"]
+                       for t, a in acc.items() if a["open"])
     used_closed = sum(a["used"] for a in acc.values() if not a["open"])
     running = read_json(gdir() / "running.json")         # a closed team's job still finishing:
     if running and pid_alive(running["pid"]) and running.get("team") in acc \
@@ -198,7 +201,7 @@ def admission_error(team, timeout):
         return f"no account: '{team}' has no GPU account (the manager opens accounts with `gpu team open`)"
     if not a["open"]:
         return f"team closed: team {team}'s account takes no new jobs"
-    if a["balance"] < timeout:
+    if a["balance"] < timeout and team != MGR:     # the manager's jobs are always admitted
         return (f"budget exhausted: {a['balance']:.1f} GPU-min left for team {team}, the job asks for "
                 f"up to {timeout:g} (lower --timeout, do GPU-free work, or request a resync from the "
                 f"manager)")

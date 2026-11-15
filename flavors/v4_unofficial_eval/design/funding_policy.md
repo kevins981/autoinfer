@@ -16,7 +16,8 @@ replaced by a new one while the pool can fund it (seed + start).
 - **Start:** 60, granted when the team opens.
 - **Extensions and last-chance grants:** the manager decides the size. A last chance is smaller
   than a normal extension.
-- **Confirmation evals** (the manager's, ~12 GPU-min each) are funded from the pool to MGR.
+- **The manager's GPU jobs** (BASE reference starts, confirmation evals, ~12 GPU-min each) need no
+  grant: MGR is always admitted, and its use is counted in the pool's total.
 
 ## What counts
 - **A result is a win:** a record promoted to HEAD (a unofficial PASS against HEAD). Small gains

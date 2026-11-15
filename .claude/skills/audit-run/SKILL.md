@@ -4,7 +4,7 @@ description: Cheat audit of an AutoInfer run (any flavor): check every agent's t
 ---
 
 # Audit an AutoInfer run for cheating
-Input: a run folder `flavors/<flavor>/runs/<run>/`. Output: `evals/<flavor>/<run>/audit/audit.md`
+Input: a run folder `flavors/<flavor>/runs/<run>/`. Output: `evals/runs/<flavor>/<run>/audit/audit.md`
 (+ the scan and per-agent logs next to it). Run it before or alongside `eval-run-qwen38`: a run
 whose results used leaked information can't be graded at face value.
 
@@ -91,7 +91,7 @@ above, each with `<agent> #N` citations, and "nothing found" plus what it read w
 the criteria once to a scratch file and point each subagent to it. They report; you merge and
 decide.
 
-## 4. Report: `evals/<flavor>/<run>/audit/audit.md`
+## 4. Report: `evals/runs/<flavor>/<run>/audit/audit.md`
 - **Verdict for the run**: CLEAN / ATTEMPTS ONLY / EXPOSED (no evidence of use) / TAINTED (used,
   or carried over via the human), plus one line of why.
 - **Per agent**: verdict and the flags behind it (label, `#N`, one line each).

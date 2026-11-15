@@ -13,7 +13,7 @@ This file holds only what the human and the designer have agreed. Everything sti
 ## Why v2: what v1 showed
 
 v1 runs: test-3 → test-5 (qwen38-27b-fp8-2x4090, 14 rounds, 631 → 942 tok/s, +49%).
-Judge report: `evals/v1/test-5/judge-a.md`.
+Judge report: `evals/runs/v1/test-5/judge-a.md`.
 
 - **Progress came from many scattered near-term wins.** Teams grabbed whatever was cheapest to win
   next: comms, overlap, kernel tweaks, spec-decode tweaks. Every answer-key win was found, and

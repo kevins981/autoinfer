@@ -28,7 +28,7 @@ env/
 *.key
 *.pem
 # judge reports and overlays: temporary, kept locally only
-evals/
+evals/runs/
 
 # Run records: keep the text that shows what each experiment did (records, diffs, KBs, journal,
 # proposals, reports, official results.json); skip raw per-request outputs, binaries and the task copy

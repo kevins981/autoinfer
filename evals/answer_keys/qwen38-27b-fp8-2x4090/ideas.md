@@ -60,7 +60,7 @@ key nodes or other ideas here.
 - status: measured: combined in v2/test-6 (T1-016 stack, 805.7 official, additive); see the key
 - results: the two tied frontier stacks share only host-ar and fp8-draft-head; their other parts
   attack different costs (attention planning vs prefill graphs / GDN state), est. +5-7% if additive
-  (`evals/baseline/run-1/judge-a.md`).
+  (`evals/runs/baseline/run-1/judge-a.md`).
 
 ### `ba-proj-splitk`: better GEMM choice for GDN `in_proj_ba` at tiny M
 - builds_on: BASE

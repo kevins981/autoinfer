@@ -67,9 +67,12 @@ manager passes it on and makes it more specific.
 ```
 autoinfer/
   CLAUDE.md            # this file: for designer agents
-  EVAL.md              # how runs and flavors are evaluated (all flavors)
-  answer_keys/<task>/  # answer_key.md: the evolving map of each task's search space (for judges)
-  evals/<flavor>/<run>/  # judge reports and evaluations (outside runs: a continued run must not see them)
+  evals/               # everything about evaluating runs (agents are denied all of it)
+    EVAL.md            # how runs and flavors are evaluated (all flavors)
+    answer_keys/<task>/  # answer_key.md: the evolving map of each task's search space
+    failure_taxonomy.md  # why agents miss / kill / under-realize changes (types + cases)
+    failure_cases.md   # raw cited cases behind the taxonomy
+    runs/<flavor>/<run>/  # per-run judge reports and evaluations (gitignored)
   .claude/skills/eval-run-qwen38/  # skill: evaluate a run (judge / reconcile), resources.py
   .claude/skills/audit-run/        # skill: cheat audit of a run (audit_scan.py + judging)
   design/              # design notes, split by topic (index below)
@@ -91,7 +94,7 @@ autoinfer/
 ```
 
 ## Design notes
-- [EVAL.md](EVAL.md): how we evaluate runs and flavors (answer key overlaid on each run's graph,
+- [evals/EVAL.md](evals/EVAL.md): how we evaluate runs and flavors (answer key overlaid on each run's graph,
   LLM judges, resources used, single-agent control).
 - [design/principles.md](design/principles.md): agreed design principles. Respect them; propose
   changes to the human explicitly instead of silently deviating.

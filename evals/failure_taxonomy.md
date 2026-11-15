@@ -1,12 +1,12 @@
 # Failure taxonomy: why agents miss, kill or under-realize good changes
 
 Provisional. Built bottom-up from concrete cases (raw cases with full evidence:
-`evals/failure_cases.md`, local). Grading a run against the answer key (EVAL.md) surfaces candidates:
+`evals/failure_cases.md`). Grading a run against the answer key (`evals/EVAL.md`) surfaces candidates:
 missed wins, wrong causes, partial gains. Add a type only when a case doesn't fit the existing ones;
 merge or split types as cases accumulate. A case can have several types.
 
 Started 2026-11-15 from v4_unofficial_eval/sweep-simple-eval (graded in
-`evals/v4_unofficial_eval/sweep-simple-eval/eval.md`).
+`evals/runs/v4_unofficial_eval/sweep-simple-eval/eval.md`).
 
 ## 1. Measurement methodology
 The experiment itself is flawed, so the number can't support the conclusion: noise, wrong setup,

@@ -3,7 +3,7 @@
 A single-agent research loop, ported from karpathy/autoresearch: one agent edits the engine,
 measures each commit with the task's official harness (`tools/experiment`), keeps it if it's
 faster with all gates passing, and otherwise resets. No manager, teams, GPU queue or messaging.
-It is the control arm for the multi-agent flavors (see `EVAL.md`).
+It is the control arm for the multi-agent flavors (see `evals/EVAL.md`).
 
 A session started in this folder is the run's researcher: its instructions are
 [program.md](program.md); read it now and follow it. (`tools/new_run` starts it with program.md

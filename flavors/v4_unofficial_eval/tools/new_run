@@ -108,7 +108,7 @@ def confine(s, run):
     that name these paths) and an auto-mode classifier rule (catches python, git show, ...).
     "$defaults" keeps the classifier's built-in rules (a soft_deny list replaces them otherwise)."""
     own = run.resolve()
-    dirs = [ROOT / d for d in ("answer_keys", "evals", "design", ".claude", ".git")]
+    dirs = [ROOT / d for d in ("evals", "design", ".claude", ".git")]
     # flavor folders: everything but what agents use (design/, notes such as observations.md, ...)
     keep = {"agents", "tools", "runs", "config_default.md", "program.md", ".claude"}
     flav = sorted(e for f in (ROOT / "flavors").iterdir() if f.is_dir() for e in f.iterdir() if e.name not in keep)
@@ -121,7 +121,7 @@ def confine(s, run):
     # caches are per run since 2026-11-07; the shared ones hold older runs' generated kernels)
     shared_ok = {"tasks", "ccache", "huggingface", "pip", "uv", "conda-pkgs"}
     dirs += sorted(d for d in (ROOT / ".cache").iterdir() if d.is_dir() and d.name not in shared_ok)
-    files = [ROOT / "EVAL.md", ROOT / "CLAUDE.md"] + [e for e in flav if not e.is_dir()] + [QWEN38_OPT / f for f in ("FINDINGS.md", "TODO.md", "CLAUDE.md")]
+    files = [ROOT / "CLAUDE.md"] + [e for e in flav if not e.is_dir()] + [QWEN38_OPT / f for f in ("FINDINGS.md", "TODO.md", "CLAUDE.md")]
     # Claude Code's per-session folders (transcripts, memory, background-job output, scratchpads),
     # named after each session's working directory: deny all that exist at launch except this run's
     # own (its agents read their own job output there). Other runs, the designer and the judges.

@@ -3,7 +3,7 @@
 A map of this task's search space, as far as we know it: **measured** changes, grouped by family, each
 with what is known about it on each base, plus the facts that explain them. Untested ideas are not
 nodes: they are in `ideas.md` until a run measures them. Merged from all runs of all flavors; a lower
-bound that evolves. Format and grading rules: `EVAL.md`.
+bound that evolves. Format and grading rules: `evals/EVAL.md`.
 
 Metric: output tok/s at c=16 (TASK.md). BASE ≈ 631-636 official (varies ~1% between runs).
 Evidence ids: `<flavor>/<run>:<record | KBn | path:line>`. Runs: `v1/test-3`, `v1/test-4`,

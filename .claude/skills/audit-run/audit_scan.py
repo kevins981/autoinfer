@@ -2,7 +2,7 @@
 """audit_scan.py: the cheap, exhaustive pass of a run's cheat audit (skill audit-run).
 
 usage: python3 audit_scan.py <run dir> [--out DIR] [--transcripts DIR]
-  default --out: evals/<flavor>/<run>/audit/
+  default --out: evals/runs/<flavor>/<run>/audit/
 
 For every agent of the run (found like resources.py: agents/*/meta.json, the v1 manager, and
 unregistered transcripts in the run's project folders), reads its Claude Code transcript and writes:
@@ -265,7 +265,7 @@ def main():
     a = ap.parse_args()
     run = os.path.abspath(a.run)
     flavor, rname = Path(run).parent.parent.name, Path(run).name
-    out = Path(a.out or ROOT / "evals" / flavor / rname / "audit")
+    out = Path(a.out or ROOT / "evals" / "runs" / flavor / rname / "audit")
     (out / "logs").mkdir(parents=True, exist_ok=True)
 
     others = sorted({r.name for f in (ROOT / "flavors").iterdir() if (f / "runs").is_dir()

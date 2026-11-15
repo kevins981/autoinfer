@@ -12,7 +12,7 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
 ## The picture: the run's graph overlaid on an answer key
 - **Run graph.** Every run produces a DAG of records (`graph.md`; edges are each record's
   `builds_on`). This is what the run actually did.
-- **Answer key** (per task, `answer_keys/<task>/answer_key.md`). A map of the task's search
+- **Answer key** (per task, `evals/answer_keys/<task>/answer_key.md`). A map of the task's search
   space as far as we know it, merged from all runs of all flavors (and hand studies). Details in
   "The answer key" below. It is a lower bound on what's possible, and it evolves.
 - **Overlay.** Each key node graded against the run, by its type (win or dead end), as defined
@@ -29,8 +29,8 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
   - ran out of budget.
 
   We expect to build a **taxonomy of failure causes** from these notes once there are enough runs.
-  Collect cases as they turn up in `evals/failure_cases.md` (local); the types so far are in
-  `design/failure_taxonomy.md` (checked in).
+  Collect cases as they turn up in `evals/failure_cases.md`; the types so far are in
+  `evals/failure_taxonomy.md`.
   Don't fix the categories in advance.
 
 ## What every evaluation records
@@ -50,11 +50,11 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
    information.
 
 ## The answer key
-A DAG of the task's search space (`answer_keys/<task>/answer_key.md`), curated: not a copy of any
+A DAG of the task's search space (`evals/answer_keys/<task>/answer_key.md`), curated: not a copy of any
 run's graph (run graphs have intermediate and duplicate steps; key nodes are canonical changes). It
 holds what we know, not only what works, and **only what was measured**: a node needs a measured
 result of the change itself (official / abab / ab / component). Untested ideas and changes ruled
-out only by an estimate go to `answer_keys/<task>/ideas.md`, which is not graded and not drawn; an
+out only by an estimate go to `evals/answer_keys/<task>/ideas.md`, which is not graded and not drawn; an
 idea moves into the key once a run measures it.
 - **Node = one change**, with a status-neutral id (e.g. `host-ar`), because status can change and
   can differ per base.
@@ -153,7 +153,7 @@ base where the node pays). Record the base in key ids either way.
   re-measures, repeats) on the same task with the same resources. AutoInfer's claim is that more
   agents and tokens give better results, and this control is the reference for that claim.
 
-## LLM as judge (procedure: `.claude/skills/eval-run-qwen38/SKILL.md`; reports in `evals/<flavor>/<run>/`, outside the run folder
+## LLM as judge (procedure: `.claude/skills/eval-run-qwen38/SKILL.md`; reports in `evals/runs/<flavor>/<run>/`, outside the run folder
 so a continued run's agents never see its grades)
 Most of the grading (matching records to key nodes, judging reasons, "why missed") needs an LLM
 judge. Rules:
@@ -169,23 +169,23 @@ judge. Rules:
 ## TODO
 - [x] Single-agent control harness (`flavors/baseline/`): a very basic auto-research loop (one agent, the task's
       harness and GPU queue, same budget), and its run layout.
-- [x] Answer key for `qwen38-27b-fp8-2x4090`: `answer_keys/qwen38-27b-fp8-2x4090/answer_key.md`
+- [x] Answer key for `qwen38-27b-fp8-2x4090`: `evals/answer_keys/qwen38-27b-fp8-2x4090/answer_key.md`
       (from v1 test-3, test-4 and qwen38_opt).
 - [x] Judge and reconcile procedure: the `eval-run` skill (`.claude/skills/eval-run-qwen38/`), with
       `resources.py` (tokens per agent/role, wall clock, GPU-minutes from transcripts + ledger).
 - [x] The flavor should record the manager's session id: v1 `new_run` writes
       `manager_session.json`, read by `resources.py` and `activity.py` (test-3/4 predate it).
-- [x] Keep run agents away from `answer_keys/` and `evals/`: deny rules + a classifier rule, from
+- [x] Keep run agents away from `evals/answer_keys/` and `evals/`: deny rules + a classifier rule, from
       `new_run` (design/open_questions.md, "Keeping run agents in their run"). Extended 2026-11-07:
       other sessions' Claude folders, GitHub, a SendMessage guard hook, per-run runtime caches.
 - [x] **Cheat audit** (human, 2026-11-07; built as the `audit-run` skill + `audit_scan.py`; scan
-      tested on all runs, full audit incl. judging run on v1/test-4: `evals/v1/test-4/audit/audit.md`): a skill in the judging process that checks a
+      tested on all runs, full audit incl. judging run on v1/test-4: `evals/runs/v1/test-4/audit/audit.md`): a skill in the judging process that checks a
       run's transcripts for any access to answer keys, evals, design notes, other runs or
       qwen38_opt's findings (including attempts that were blocked), as a second check on top of the
       permissions.
 - [x] Evaluate test-3 and test-4 with the skill, as the first trial of the framework
-      (`evals/v1/test-3/`, `evals/v1/test-4/`: three judges + reconcile each). Also baseline/run-1
-      (one judge, `evals/baseline/run-1/`); the key was updated from all three.
+      (`evals/runs/v1/test-3/`, `evals/runs/v1/test-4/`: three judges + reconcile each). Also baseline/run-1
+      (one judge, `evals/runs/baseline/run-1/`); the key was updated from all three.
 - [ ] **Check in the next real run that the confinement and today's tooling fixes work** (human,
       2026-11-07). Tested only with Haiku probe agents so far (design/open_questions.md, "Keeping run
       agents in their run"), so fairly confident, not proven. After the run, check transcripts and files:

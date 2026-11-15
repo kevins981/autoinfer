@@ -3,7 +3,7 @@
 usage: python overlay_plot.py <answer_key.md> <overlay.json> <out.png>
 Needs matplotlib (autoinfer/.cache/venv; MPLCONFIGDIR under .cache, never $HOME).
 
-Win nodes are colored by the last stage the run passed (EVAL.md, "Grading a run against the key"):
+Win nodes are colored by the last stage the run passed (evals/EVAL.md, "Grading a run against the key"):
 none / idea / implementation / result. A win node that didn't pass `result` (and whose alternative
 didn't either) is a missed win (red ✗). Dead-end nodes have a dashed border and are graded by the
 run's reason: right / wrong / not considered. Novel nodes (measured changes not in the key) are

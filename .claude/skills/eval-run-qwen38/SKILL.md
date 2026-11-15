@@ -7,14 +7,14 @@ description: Evaluate a finished AutoInfer run (any flavor) of the qwen38-27b-fp
 Written for this task; most of it is general, and should be split from the task-specific parts
 (metric, noise tolerance, answer key) when a second task arrives.
 
-Read `EVAL.md` (repo root) first: it is the framework, and its "Grading a run against the key" is
+Read `evals/EVAL.md` first: it is the framework, and its "Grading a run against the key" is
 the contract for every label. Inputs: a run folder `flavors/<flavor>/runs/<run>/` and the task's
-answer key `answer_keys/<task>/answer_key.md` (`ideas.md` next to it is not graded). Two modes;
+answer key `evals/answer_keys/<task>/answer_key.md` (`ideas.md` next to it is not graded). Two modes;
 default is **judge**.
 
 ## Judge mode
 Work alone on this one run: don't read other judges' reports or other runs (the key already
-carries what other runs found). Write `evals/<flavor>/<run>/judge-<id>.md` (id given to you, else
+carries what other runs found). Write `evals/runs/<flavor>/<run>/judge-<id>.md` (id given to you, else
 a short random one), and the two pictures there (below).
 
 **What to find out**
@@ -25,7 +25,7 @@ a short random one), and the two pictures there (below).
 - **What the run did:** learn from the flavor's `CLAUDE.md` / docs where its runs keep their
   records, then read all of them (every experiment or record, its ideas, notes, reports), not just
   the summaries. Open diffs and logs when a label depends on them.
-- **The overlay:** grade every key node by `EVAL.md` (win nodes: idea / implementation / result;
+- **The overlay:** grade every key node by `evals/EVAL.md` (win nodes: idea / implementation / result;
   dead ends: the reason), and **when** each stage happened (wall clock, for the timeline). Then the
   **novel** nodes: measured changes that match no key node.
 - **Why missed:** for each missed win and wrong cause or reason: the stage where it stopped, the
@@ -41,12 +41,12 @@ a short random one), and the two pictures there (below).
 - Grade the agents by the run's own rules at the time (e.g. its promotion bar), and separate the
   human's decisions (stopping the run, rulings) from the agents' choices.
 
-**Pictures** (two per run, in `evals/<flavor>/<run>/`; look at each PNG and fix what misreads).
+**Pictures** (two per run, in `evals/runs/<flavor>/<run>/`; look at each PNG and fix what misreads).
 Run from the repo root with `PY="MPLCONFIGDIR=.cache/mpl .cache/venv/bin/python"` and
 `K=.claude/skills/eval-run-qwen38`.
 
 1. `overlay.png`: the answer key as a tree, colored by the stage each node reached.
-   `$PY $K/overlay_plot.py answer_keys/<task>/answer_key.md <eval dir>/overlay.json <eval dir>/overlay.png`
+   `$PY $K/overlay_plot.py evals/answer_keys/<task>/answer_key.md <eval dir>/overlay.json <eval dir>/overlay.png`
    ```
    {"run": "<flavor>/<run>", "source": "judge-<id>.md", "base": <BASE tok/s>,
     "champion": {"record": "...", "tok_s": 691.3, "pct": 8.7, "stack": [key ids]},
@@ -84,7 +84,7 @@ The report is yours to lay out; include both pictures, a table per node type, no
 missed, process notes and key updates.
 
 ## Reconcile mode (after the judges)
-Read the run's `judge-*.md` and write `evals/<flavor>/<run>/eval.md`: one label per node (where
+Read the run's `judge-*.md` and write `evals/runs/<flavor>/<run>/eval.md`: one label per node (where
 judges disagree, check the evidence yourself and say how you decided; drop claims whose citations
-don't hold), merged notes, and key updates checked against `EVAL.md` ("Updating the key"). Show the
+don't hold), merged notes, and key updates checked against `evals/EVAL.md` ("Updating the key"). Show the
 human the key updates; apply them only with their OK, and log them in the key's History.

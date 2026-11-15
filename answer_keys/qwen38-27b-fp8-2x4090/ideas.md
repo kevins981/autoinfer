@@ -48,17 +48,17 @@ key nodes or other ideas here.
 - builds_on: BASE
 - status: open
 - what: drafter passes, sampling and attention-metadata builds run eagerly between graphs.
-- results: on host-ar + draft-head-diet + sharded-sampling: ~1.6 ms/step of real CPU idle, est.
+- results: on host-ar + fp8-draft-head + sharded-sampling: ~1.6 ms/step of real CPU idle, est.
   +3-4% (`v1/test-4:KB12`). Sub-options, all estimates: skip no-op eager launches in decode
   (`_zero_kv_blocks`, `_apply_write` x5, mamba pre/post), 0.5-1.0 ms
   (`v1/test-4:agents/leader-2.w2/REPORT_job1.md:32`); pure launch fusion bounded at 0.1-0.2 ms
   (`v1/test-4:T2-007`); in-place FlashInfer draft-metadata update, ~1 ms (`v1/test-3` idea R1-H).
 - caution: part of the step-start gap in node-level nsys is an artifact (F8).
 
-### `combine-frontiers`: triton-attn (+ draft-vocab-subset) on test-3's frontier
-- builds_on: triton-attn + prefill-graphs + gdn-replay
-- status: open
-- results: the two tied frontier stacks share only host-ar and draft-head-diet; their other parts
+### `combine-frontiers`: attn-host-plan (+ draft-vocab-subset) on test-3's frontier
+- builds_on: attn-host-plan + prefill-graphs + gdn-replay
+- status: measured: combined in v2/test-6 (T1-016 stack, 805.7 official, additive); see the key
+- results: the two tied frontier stacks share only host-ar and fp8-draft-head; their other parts
   attack different costs (attention planning vs prefill graphs / GDN state), est. +5-7% if additive
   (`evals/baseline/run-1/judge-a.md`).
 

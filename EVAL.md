@@ -29,6 +29,7 @@ The final speedup is the metric that ultimately matters, but it isn't enough on 
   - ran out of budget.
 
   We expect to build a **taxonomy of failure causes** from these notes once there are enough runs.
+  Collect cases as they turn up in `evals/failure_cases.md`.
   Don't fix the categories in advance.
 
 ## What every evaluation records

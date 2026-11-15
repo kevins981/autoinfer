@@ -34,9 +34,9 @@ Common forms:
 What a judge checks: Would repeating the measurement give the same answer? Does it measure what runs
 in the engine? Is the sample big enough for the effect claimed?
 
-## 2. Interpretation: good numbers, wrong conclusion
-The measurement is fine, but the agent compares it with the wrong thing, prices the wrong cost, or
-treats noise as signal.
+## 2. Interpretation: the numbers were read incorrectly
+The experiment was valid, but the agent drew the wrong conclusion from it: it compared the number
+with the wrong thing, priced the wrong cost, or treated noise as signal.
 
 Common forms:
 - **Wrong reference point.** The number is compared with the wrong baseline, or with a "floor" or
@@ -65,9 +65,10 @@ What a judge checks: Compared with what, and is that what the engine actually ru
 derived or assumed? Is the effect bigger than the noise? Does the cost counted match where time
 actually goes (including GPU idle)?
 
-## 3. Path dependence: not revisiting an earlier choice
-The diagnosis is right, but the fix stays local. The agent works around a constraint that an
-earlier choice created, instead of asking whether that earlier choice should change.
+## 3. Not revisiting an earlier choice
+The agent finds the right problem, but only looks for fixes in the new change. The problem was
+created by an earlier decision (often its own, often already kept as a win), and the agent treats
+that decision as fixed instead of asking whether to change it.
 
 - Example: a cheaper draft head needs ~0.6 GB of extra GPU memory. With it, only 15 of 16 requests
   fit, and throughput drops. The agent diagnoses this correctly, then tries smaller heads. It never

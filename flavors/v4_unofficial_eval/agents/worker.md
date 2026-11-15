@@ -41,8 +41,8 @@ worker.run(task) -> report:
 - Quick numbers (smoke tests, microbenchmarks, short benches, profiles) are for deciding
   what to do next; they never count. Say how sure a measurement is (the task's noise notes) or
   when it is shaky. Don't oversell. To compare variants of your change, run the harness on
-  each (`task/harness/eval.sh`, `TRIALS=2 PROMPTS=300`; see Tools in the common instructions):
-  2 fresh inference-server starts each. The unofficial champion's numbers
+  each (`task/harness/eval.sh`; see Tools in the common instructions): 2 fresh
+  inference-server starts each. The champion's numbers
   are in its bank record: no need to measure it again.
 - **Don't edit a workspace while a GPU job uses it.** Each inference server loads the workspace's
   code when it starts (Python reads the files then), not when you submitted the job: an edit made

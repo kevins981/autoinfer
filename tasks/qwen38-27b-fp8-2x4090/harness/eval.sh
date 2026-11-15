@@ -1,20 +1,21 @@
 #!/bin/bash
-# Official eval of one workspace: TRIALS (default 2) trials, each on a freshly started server
-# (start, bench c=16 ShareGPT 400 prompts, stop), so restart-to-restart drift averages out.
-# GSM8K-250 and the long-request check (one 128K-token request) run once, on the last trial's
-# server. The bench client starts with the server (it waits for it), so its ~13 s of setup
-# overlaps the server's startup. Score = mean over trials (summarize.py).
-# Run inside a GPU job (`gpu run`; official_eval and agents both use it). Frozen: agents must not modify.
-# Optional settings (env), defaults = the official eval: PROMPTS=400 per trial; GATES=gsm8k,long
-# (or a subset, or none); STOP_BELOW=0 (>0: stop after trial 1 if it is below this tok/s; writes
-# <out>/stopped_early). Comparable unofficial numbers: TRIALS=2 PROMPTS=300.
+# The task's benchmark for one workspace, the only measurement that counts: TRIALS (default 2)
+# trials, each on a freshly started server (start, bench c=16 ShareGPT 400 prompts, stop), so
+# restart-to-restart drift averages out. Then the checks, once, on the last trial's server: the
+# long-request check (one 128K-token request, always by default) and GSM8K-250 (on request). The
+# bench client starts with the server (it waits for it), so its ~13 s of setup overlaps the
+# server's startup. Score = mean over trials (summarize.py).
+# Run inside a GPU job (`gpu run`). Frozen: agents must not modify.
+# Optional settings (env): GATES=long (default) | long,gsm8k | none; STOP_BELOW=0 (>0: stop after
+# trial 1 if it is below this tok/s, skipping the checks; writes <out>/stopped_early); TRIALS and
+# PROMPTS exist for quick looks, but only the defaults (2 x 400) are comparable.
 # usage: eval.sh <workspace dir> <output dir> [extra serve args file]
 # output: <out>/trial<t>/{server.log,startup.txt,bench_c16.json,bench.log,metrics_*.txt,gpu_clocks.csv},
 #         <out>/server_cmd.txt, <out>/gsm8k.{json,log}, <out>/long_request.{json,log}
 WS=$1; OUT=$2; EXTRA=${3:-}
 TRIALS=${TRIALS:-2}
 PROMPTS=${PROMPTS:-400}
-GATES=${GATES:-gsm8k,long}
+GATES=${GATES:-long}
 STOP_BELOW=${STOP_BELOW:-0}
 HARNESS=$(cd "$(dirname "$0")" && pwd)
 TASK=$(basename "$(dirname "$HARNESS")")

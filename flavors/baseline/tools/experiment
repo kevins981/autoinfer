@@ -81,7 +81,7 @@ def main():
 
     t = run / "task"                     # the original task folder, never the run's copy
     task = t.resolve() if t.is_symlink() else ROOT / "tasks" / json.loads((run / "task_source.json").read_text())["task"]
-    cmd = ["bash", str(task / "harness" / "eval.sh"), str(ws), str(out)]
+    cmd = ["env", "GATES=gsm8k,long", "bash", str(task / "harness" / "eval.sh"), str(ws), str(out)]
     sa = tree / "serve_args.txt"
     if sa.exists() and sa.read_text().strip():
         cmd.append(str(sa))

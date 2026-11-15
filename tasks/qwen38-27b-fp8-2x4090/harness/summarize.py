@@ -79,7 +79,7 @@ def main():
         lj = json.loads(lr.read_text())
         res["long_request"] = {k: lj.get(k) for k in ("pass", "prompt_tokens", "status", "completion_tokens", "seconds", "error")}
         res["gate_long_request"] = "pass" if lj.get("pass") else "FAIL"
-    elif res["ok"] and (d / "gsm8k.json").exists():
+    elif res["ok"] and (d / "long_request.log").exists():
         res["gate_long_request"] = "FAIL"           # the check ran but left no result (crash)
     # Gates (TASK.md): GSM8K >= 89.6%; TTFT p99 and TPOT p99 at most 20% worse than BASE.
     if "gsm8k_accuracy" in res:

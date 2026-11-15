@@ -32,9 +32,9 @@ NOISE = """- **Noise**: repeat runs on the same inference server vary ~0.5% (CV)
   the less repetition it needs to be convincing. A single start that looks worse can be the
   outlier: record it as a screen negative, not a measured fact (weak negatives recorded as facts
   deter later work wrongly). How codes are measured and compared in this run: the run's
-  instructions (the harness, 2 starts x 300 prompts)."""
+  instructions (the harness: 2 starts x 400 prompts + the 128K request)."""
 LIB_NOTE = """# compare against another code measured the same way. To measure a record or a workspace (with
-# extra serve args or env) at the unofficial settings, run harness/eval.sh with TRIALS=2 PROMPTS=300.
+# extra serve args or env), run harness/eval.sh (the task's benchmark).
 """
 
 
@@ -73,7 +73,7 @@ def copy_framework(run, src):
 
 def copy_task(run, task):
     """The run's own copy of the task, for agents to read (they stay in their run folder). Trusted
-    tools (ws, the official eval) read the original in tasks/, found by task_source.json."""
+    tools (ws) read the original in tasks/, found by task_source.json."""
     shutil.copytree(task, run / "task", symlinks=True)
     # v4: agents measure any code with the harness; agents compare the numbers. The task's own
     # comparison protocol (same-job interleaved A/B, abba.sh) is for flavors without it: replace it
@@ -189,32 +189,32 @@ def write_settings(run, flavor):
 
 def seed_base(run, task):
     """bank/BASE from the task's shipped official result (task/baseline/official/), so runs don't
-    re-measure the baseline. Without one, the manager runs `official_eval BASE` itself."""
+    re-measure the baseline. Without one, the manager has a team measure BASE with the harness."""
     src = task / "baseline" / "official"
     base = run / "bank" / "BASE"
     base.mkdir(parents=True)
     (base / "change.diff").write_text("")
-    line = "(none shipped with the task: run `official_eval BASE`)"
+    line = "(none shipped with the task: measure it with the harness)"
     if (src / "results.json").exists():
-        shutil.copytree(src, base / "official" / "1")
+        shutil.copytree(src, base / "eval" / "1")
         r = json.loads((src / "results.json").read_text())
-        line = (f"official #1 (shipped with the task, task/baseline/official/): "
+        line = (f"eval #1 (the harness, shipped with the task, task/baseline/official/): "
                 f"{r['output_throughput']:.1f} tok/s at c=16, GSM8K {100 * r['gsm8k_accuracy']:.1f}%, "
                 f"MTP acceptance {r.get('mtp_acceptance_length')}, TTFT p50/p99 "
                 f"{r['median_ttft_ms']:.0f}/{r['p99_ttft_ms']:.0f} ms, TPOT p50/p99 "
-                f"{r['median_tpot_ms']:.1f}/{r['p99_tpot_ms']:.1f} ms (official/1/results.json)")
+                f"{r['median_tpot_ms']:.1f}/{r['p99_tpot_ms']:.1f} ms (eval/1/results.json)")
         (run / "champion.md").write_text(
             "# Champion (the manager keeps this file)\n\n"
-            f"unofficial champion: BASE\nofficial champion: BASE {r['output_throughput']:.1f} tok/s\n\n"
-            f"## History\n- start: BASE is both champions: {line}\n")
+            f"champion: BASE {r['output_throughput']:.1f} tok/s\n\n"
+            f"## History\n- start: BASE: {line}\n")
     (base / "record.md").write_text(
         "team:         -\n"
         "builds_on:    -\n"
-        "performance:  official results below\n"
+        "performance:  measured results below\n"
         "summary:\n"
         "  hypothesis: none: the task baseline\n"
         "  change:     none (empty change.diff); serve args = task/harness/serve_args.sh\n"
-        "  results:    see official/\n"
+        "  results:    see eval/\n"
         "  conclusion: the reference for every comparison and for the latency gates\n"
         "validity:     the task baseline by definition\n\n" + line + "\n")
 

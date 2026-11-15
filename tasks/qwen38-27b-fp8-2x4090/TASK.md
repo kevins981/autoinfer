@@ -39,10 +39,10 @@ the model computes.
   changes are forbidden anyway (below).
   Quick unofficial check: `gsm8k 50` (`scripts/lib.sh`) = the first 50 of the same 250
   questions; BASE scores **88.0%** (44/50) on it, SE ±4.6. A smoke test, not the gate.
-- **Long-request gate**: one 128,000-token request (`harness/long_request.py`, after GSM8K on the
-  last trial's server) must return generated tokens, and the server must still answer afterwards.
+- **Long-request gate**: one 128,000-token request (`harness/long_request.py`, on the last trial's
+  server) must return generated tokens, and the server must still answer afterwards.
   Changes to memory (CUDA graphs, KV budget, buffers) can break it while the benchmark passes.
-  Run it yourself before an official eval when a change affects memory: `long_request 128000`.
+  To check it before a full measurement: `long_request 128000` (`scripts/lib.sh`).
 
 ## Hardware and software
 2x RTX 4090 (sm_89, 24 GB each, FP8 tensor cores), **no GPU peer-to-peer** (PCIe through the
@@ -108,8 +108,8 @@ eval gives up after 15 min per server start).
   calls and reasoning parsing keep working).
 
 ## Files
-- `harness/`: the frozen official eval (`eval.sh`, `serve_args.sh`, `gsm8k.py`, `summarize.py`,
-  GSM8K data). Only `official_eval` runs it.
+- `harness/`: the frozen official benchmark (`eval.sh`, `serve_args.sh`, `gsm8k.py`, `summarize.py`,
+  GSM8K data). Who runs it depends on the run's instructions.
 - `scripts/`: helpers for agents' GPU jobs (read-only, use as is or copy): `lib.sh`
   (`start_server`, `bench`, `start_server_bench`, `gsm8k`, `stop_server`), `example_job.sh`, `profile_nsys.sh` (nsys +
   kernel-time breakdown), `kernel_breakdown.py`, `profile_ncu.sh` (ncu on chosen kernels of a

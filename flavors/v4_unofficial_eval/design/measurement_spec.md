@@ -1,42 +1,23 @@
-# v4 measurement spec: expected behavior
+# v4 measurement spec (since 2026-11-15, after sweep-simple-eval)
 
-How a change gets measured and becomes champion in v4. Tool: `tools/official_eval`; GPU harness: the task's `harness/eval.sh` (one script for both kinds
-of measurement; agents run it themselves through `gpu run` for unofficial numbers). If the tools disagree with this file, that is a bug.
+One measurement for everyone: the task's harness (`harness/eval.sh`), run by the teams themselves
+through `gpu run`. There is no separate unofficial or official eval, and the manager runs no GPU jobs.
 
-## Two kinds of measurement
-
-| | Unofficial eval | Official eval |
-|---|---|---|
-| Who runs it | anyone (the harness via `gpu run`, TRIALS=2 PROMPTS=300) | the manager only (`official_eval <record>`) |
-| GPU harness | `eval.sh` with `TRIALS=2 PROMPTS=300`, optional GSM8K/128K, stop-loss | `eval.sh` defaults: 2 trials x 400 prompts, GSM8K-250 + 128K request |
-| What runs | the code asked for, nothing else | the record |
-| Cost | ~5 GPU-min (~3 if stopped early), charged to the caller's team | ~8-11 GPU-min, charged to MGR |
-| Result | the code's tok/s per start (+ p99s, MTP acceptance, checks) | an official tok/s number |
-
-Every start is a freshly started inference server; the bench client runs the baseline code.
-
-## Unofficial eval
-1. Any agent runs the harness itself: `gpu run -- env TRIALS=2 PROMPTS=300 GATES=... STOP_BELOW=...
-   $AUTOINFER_RUN/task/harness/eval.sh <workspace> <out> [serve args file]`. A record is measured on
-   a workspace made from it (`ws create --from <id>`), output in `bank/<id>/unofficial/<n>/`.
-2. The output is the harness's raw folders (vLLM's bench report and JSON, the inference server log,
-   Prometheus snapshots, GPU clocks). No wrapper, no summary line: agents read and compare.
-3. The manager measures BASE at run start, so teams have a reference.
-4. (Until 2026-11-15 a wrapper, `tools/unofficial_eval`, did this and printed one summary line;
-   dropped because the line hid what the raw files show, e.g. the inference server's
-   running/waiting requests.)
-
-## Champion (two tiers; the manager keeps champion.md, no tool)
-- **Unofficial champion**: the manager promotes a valid record whose unofficial starts
-  beat the unofficial champion's (it need not be built on the unofficial champion).
-- **Official champion** (an official eval backs it). The manager runs
-  `official_eval <unofficial champion>` when the unofficial champion is ~5% above the official champion or 4 records were promoted since, and at
-  the end; if the official number bears out the unofficial one, the unofficial champion becomes the official champion, otherwise
-  the manager finds out why and reverts what doesn't hold up. Judgment, not a formula.
-- Funding: a promotion counts as a win; a later revert counts against the team.
-
-## Not in v4
-- No `abba.sh` and no same-job A/B protocol in the run's task copy (new_run replaces TASK.md's
-  protocol with the noise facts): agents measure any code with the harness and compare.
-- No `--ignore-eos`: tested, fixed output lengths don't reduce start-to-start noise.
-- No startup overlap: shelved.
+- **What it runs:** 2 fresh inference-server starts x 400 ShareGPT prompts (the scored benchmark),
+  then the 128K-token request on the last start (always: it guards against memory trades that
+  break long contexts). GSM8K-250 with `GATES=long,gsm8k`, when a change could alter the math.
+  `STOP_BELOW` ends a clear loss after one start. ~7 GPU-min (+2 for GSM8K), charged to the team.
+- **Output:** the raw folders (vLLM bench report and JSON, inference server log with its stats
+  lines, Prometheus snapshots, GPU clocks, check results); `summarize.py` writes results.json. A
+  record's measurements live in `bank/<id>/eval/<n>/`.
+- **Champion (one tier):** a team sends a record that beats the champion's measurement and passes
+  the checks; the manager reviews validity and the raw outputs, promotes it, and alone writes
+  champion.md. BASE's measurement ships with the task (task/baseline/official/).
+- **Why:** 200-prompt unofficial numbers understated gains of fast configs ~2x (e.g. T1-006 +6.1%
+  at 200 vs +11.9% at 400; BASE equal), so teams could drop real wins; 400 prompts costs ~+1.5
+  GPU-min per measurement (startup ~1 min per start dominates), and confirmation evals go away.
+- **Still true:** jobs drift up to ~1.6% (BASE 641.4 / 631.4 / 635.9 in three jobs), so a gain
+  under ~2% measured against another job's number stays uncertain.
+- History: until 2026-11-15, `tools/unofficial_eval` (2 x 200 prompts) for teams and
+  `tools/official_eval` (2 x 400 + GSM8K + 128K) for the manager's confirmations, with a two-tier
+  champion. Both tools are removed.

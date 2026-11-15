@@ -117,7 +117,7 @@ def main():
 
     # 2. measure: one GPU job with the frozen harness
     cmd = [str(TOOLS / "gpu"), "run", "--timeout", str(a.timeout), "--label", f"official:{a.record}",
-           "--", str(harness / "eval.sh"), str(run / "workspaces" / ws_name), str(out)]
+           "--", "env", "GATES=gsm8k,long", str(harness / "eval.sh"), str(run / "workspaces" / ws_name), str(out)]
     if serve_args.exists():
         cmd.append(str(serve_args))
     print(f"official eval #{n} of {a.record}: queued on the GPUs", flush=True)

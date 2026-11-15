@@ -162,7 +162,7 @@ def performance(rec):
 
 def official(rec):
     best = None
-    for p in glob.glob(str(rec / "official" / "*" / "results.json")):
+    for p in glob.glob(str(rec / "official" / "*" / "results.json")) + glob.glob(str(rec / "eval" / "*" / "results.json")):
         try:
             r = json.loads(open(p).read())
             if r.get("output_throughput"):

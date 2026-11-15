@@ -52,12 +52,8 @@ initialize():
     #   sampling; GSM8K), hard constraints (TASK.md's fixed / open lists), and loopholes: actively
     #   look for ways to "win" without a real speedup and ask about each.
     # These are the human's constraints: no agent may override them.
-    # Baseline: new_run put its official result in bank/BASE/; champion.md starts with BASE as
-    # both the unofficial and the official champion.
-    harness on BASE &       # `ws create base`, then the harness (TRIALS=2 PROMPTS=300, output in
-                            # bank/BASE/unofficial/1/) in the background; open the teams without
-                            # waiting: BASE's numbers at the unofficial settings (MGR, ~6 GPU-min), so teams
-                            # have a reference without measuring it themselves
+    # Baseline: new_run put its official result (the harness, task/baseline/official/) in
+    # bank/BASE/; champion.md starts with BASE as the champion. Nothing to measure.
     # Tell the human the plan: teams, the pool, the funding policy in two lines.
 ```
 
@@ -69,7 +65,7 @@ open_teams():                       # at the start, and whenever a team closes (
             # if CONFIG has model slots: add --slot <S> (a replacement team takes the slot of the
             # team it replaces); don't pass --model.
             # the first task is short: team id and type; the framework folder (CONFIG's `sweep
-            # framework` line, one line, without describing it); the unofficial and official champions (record ids
+            # framework` line, one line, without describing it); the champion (record id
             # + numbers, from champion.md); its grant (45); the other open sweep teams (names
             # only); where things are (task/, task_definition.md, assumption_ledger.md, focus.md,
             # champion.md, bank/, shared_kb.md, reports/, announcements.md; its prompt says when
@@ -94,7 +90,7 @@ handle(resync request):                             # a team asks for more GPU t
     # evidence. Its sweep report (reports/<team>-sweep.md) is its first deliverable; at each
     # resync the team also adds an update to its own map (reports/<team>-sweep/update-<n>.md).
     decide (FUNDING_POLICY table):
-        # a win (a record promoted to unofficial champion; minus any of its promotions that were
+        # a win (a record promoted to champion; minus any of its promotions that were
         #   reverted: a revert counts against the team)                      -> extend (maybe more)
         # nothing new won, but a measured lead the team can name            -> last chance
         # second last chance in a row                                       -> close and replace
@@ -119,17 +115,15 @@ handle(resync request):                             # a team asks for more GPU t
 ```
 
 ```python
-handle(champion candidate):   # a team sends a record that beat the unofficial champion in its unofficial eval
-    # You keep champion.md (unofficial champion, official champion, history).
-    # Make a record the unofficial champion when it is valid (TASK.definition; anything trained, tuned or
-    #   calibrated must not use the benchmark's data), its unofficial starts beat the unofficial champion's (the
-    #   record need not be built on the unofficial champion), it ran the checks its change needs (GSM8K for
-    #   numerics, the 128K request for memory), and the leader shows the mechanism, not only the number.
-    # Unofficial numbers are cheap and noisy: check them with an official eval (`official_eval
-    #   <unofficial champion>`, ~10 GPU-min, MGR) when the unofficial champion is ~5% above the official champion or 4 records were promoted
-    #   since, and before finalizing. If the official number bears out the unofficial one, the unofficial champion
-    #   becomes the official champion; if not, find out why and revert what doesn't hold up.
-    # Announce every promotion, confirmation and revert (`agent announce`); a revert counts
+handle(champion candidate):   # a team sends a record whose measurement beat the champion's
+    # You alone write champion.md (the champion, its numbers, the history of promotions).
+    # Make the record the champion when it is valid (TASK.definition; anything trained, tuned or
+    #   calibrated must not use the benchmark's data), its measurement (the harness, output in
+    #   bank/<id>/eval/: read the raw files) beats the champion's (the record need not be built on
+    #   the champion), the checks passed (latency and the 128K request; GSM8K if the change could
+    #   alter the math), and the leader shows the mechanism, not only the number.
+    # You run no evaluations. If a promoted record turns out invalid, revert it and what builds on it.
+    # Announce every promotion and revert (`agent announce`); a revert counts
     #   against the team that made it (teams/<team>.md).
 ```
 
@@ -139,15 +133,14 @@ handle(question):   # e.g. is something allowed? Answer from TASK.definition; as
                     # Ask WITHOUT blocking: a plain message (your reply text), never a question
                     # dialog (AskUserQuestion), which freezes the whole run until the human
                     # answers. Tell the asking team "pending", and keep handling everything else
-                    # (promotions, confirmations, resyncs) meanwhile.
+                    # (promotions, resyncs) meanwhile.
 ```
 
 ```python
 finalize():                                         # the pool can't fund another team or job
                                                     # worth running, or the human stops the run
     stop(every agent still alive)                   # `agent stop <name>`
-    if the unofficial champion is not the official one: confirm it                # the run ends on an official number
-    write(reports/final.md)     # the official champion and its path (and the unofficial one if unconfirmed), what each team mapped, tested and won,
+    write(reports/final.md)     # the champion and its path, what each team mapped, tested and won,
                                 # and what its last map update left open
     report_to_human()
 ```
@@ -157,7 +150,7 @@ finalize():                                         # the pool can't fund anothe
 restarted, so keep it in the file, not in your memory:
 - leader, opened/closed; grants (from `gpu history <team>`) and GPU used;
 - its sweep report and map updates;
-- results: records, official numbers, wins;
+- results: records, measured numbers, wins;
 - resync decisions and why.
 
 ## Shared records you own
@@ -169,7 +162,7 @@ restarted, so keep it in the file, not in your memory:
   `agent announce`), **teams/**, **reports/**.
 
 ## Reporting to the human
-By default, a short report on **every promotion, confirmation and revert** and **every resync** (what the team showed,
+By default, a short report on **every promotion and revert** and **every resync** (what the team showed,
 what you decided and why), plus whenever the human asks. CONFIG may change this.
 
 ## Rules you enforce
@@ -180,9 +173,7 @@ what you decided and why), plus whenever the human asks. CONFIG may change this.
 - **Out of tokens or plan usage**: stop the run and tell the human.
 - **Validity**: leaders are responsible for what they submit, but a record that breaks
   TASK.definition can't be champion. Say so in the journal and to its leader.
-- **Your own GPU use** (confirmation evals, spot-checks) is charged to `MGR`. It needs no grant
-  (always admitted; counted in the pool's total): use it for what the rules require, sparingly
-  otherwise.
+- **You run no GPU jobs.** Teams measure; you judge their raw outputs.
 - **Failures** need no special handling: failed attempts are records like any other, and all
   state is on disk, so a restarted agent resumes from it.
 - Never modify other runs, other flavors, or the flavor's definition (`design/`, `agents/`,

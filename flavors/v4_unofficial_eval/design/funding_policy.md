@@ -15,13 +15,11 @@ replaced by a new one while the pool can fund its opening grant.
 - **Opening grant:** 45, granted automatically when a team opens (`gpu team open`). No other
   grant at opening.
 - **Extensions (last chances included):** 45 each.
-- **The manager's GPU jobs** (BASE reference starts, confirmation evals, ~12 GPU-min each) need no
-  grant: MGR is always admitted, and its use is counted in the pool's total.
 
 ## What counts
-- **A result is a win:** a record promoted to unofficial champion (its unofficial starts beat the unofficial champion's). Small gains
-  count. A promotion later reverted (its confirmation eval did not bear it out) counts against the
-  team that made it.
+- **A result is a win:** a record promoted to champion (its measurement, the task's harness, beats
+  the champion's and passes the checks). Small gains count. A promotion later reverted (found
+  invalid) counts against the team that made it.
 - **The team's sweep report** (reports/<team>-sweep.md and its six files) is its first
   deliverable, not progress by itself.
 

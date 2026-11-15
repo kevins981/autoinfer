@@ -9,14 +9,14 @@ details it leaves open.
 
 Roles:
 - **manager**: the run's investor. It hands out the run's fixed pool of GPU time as grants to
-  teams, decides on extensions at resyncs, promotes champions (unofficially on unofficial evals, then
-  confirms them with official evals), announces grants and champions,
+  teams, decides on extensions at resyncs, promotes champions (on the teams' measurements; it runs
+  no evaluations itself), announces grants and champions,
   owns the shared records and talks to the human. It funds and advises; it doesn't direct.
 - **leaders**: each leads one **sweep team** (`leader_sweep`): it maps the engine's search space
   systematically with a framework (named in CONFIG), compares its map with other teams' maps,
   and turns the best untried opportunities into wins. Each team chooses its own direction.
   Leaders run experiments with their workers, file every experiment into the bank, review
-  validity, run unofficial evals of their candidates against the unofficial champion, and report to the manager.
+  validity, measure their candidates against the champion, and report to the manager.
 - **workers**: implement and test what their leader asks, inside their own workspace.
 
 There are no rounds: teams work independently, and the manager reacts to proposals, resyncs and
@@ -27,7 +27,7 @@ Global variables of the pseudocode: available to every agent that needs them (re
 demand), never copied into assignments. Only the owner writes each one.
 ```python
 TASK               # task/ (read-only): TASK.md (objective, metric, constraints), harness/ (the
-                   # frozen official eval), scripts/ (helpers for GPU jobs), baseline/
+                   # benchmark: eval.sh, the only measurement that counts), scripts/ (helpers for GPU jobs), baseline/
                    # (official/: the baseline's official result; raw nsys/ncu profiles;
                    # PROFILING.md: what exists and how to query it). The engine's baseline code, to read: $CACHE_ROOT/tasks/<task>/baseline/vllm (`$CACHE_ROOT` is set by `source task/env.sh`)
 TASK.definition    # task_definition.md: the agreed correctness criteria, hard constraints and
@@ -38,13 +38,11 @@ CONFIG             # config.md: number of sweep teams, the framework folder, wor
                    # checkpoints, models.                                           owner: the human
 FUNDING_POLICY     # funding_policy.md: how the manager decides who gets GPU time (proposal
                    # checks, resync decisions, grant sizes).                        owner: the human
-CHAMPION           # champion.md: two tiers. The unofficial champion =
-                   # the fastest record so far by its unofficial number: the number to beat.
-                   # The official champion = the last record whose official eval bore out its unofficial number.
-                   # Between them, the records promoted since the official champion.
+CHAMPION           # champion.md: the fastest valid record so far, by its measured number (the
+                   # harness, see Tools): the number to beat, plus the history of promotions.
                    #                                                                owner: manager
 BANK               # bank/<id>/: every experiment, pass or fail (format below).
-                   # owner: the leader of that team; official_eval (manager) adds official results
+                   # owner: the leader of that team
 SHARED_KB          # shared_kb.md: confirmed understanding of the system, each entry citing
                    # its records.                                                   owner: manager
 MAPS               # reports/<team>-sweep/: each team's own map of the search space (what the space
@@ -52,7 +50,7 @@ MAPS               # reports/<team>-sweep/: each team's own map of the search sp
                    # and its updates. No shared map.                           owner: that team's leader
 TEAMS              # teams/<team>.md: each team's track record (grants, GPU used, proposals and
                    # forecasts, results, resync decisions).                         owner: manager
-ANNOUNCEMENTS      # announcements.md: every grant, promotion, confirmation, revert and team closure.
+ANNOUNCEMENTS      # announcements.md: every grant, promotion, revert and team closure.
                    #                                                                owner: manager
 JOURNAL            # journal.md: decisions and why.                                 owner: manager
 LOCAL_KB[leader]   # local_kb/<leader>.md: a leader's working notes.                owner: that leader
@@ -75,7 +73,8 @@ resolves to the local copy).
 
 **Accuracy checks cost GPU time.** Skip them when a change is shown to be exact (outputs bitwise
 equal to the baseline's, or a flag that doesn't touch the math); run one when you're unsure. The
-confirmation eval (official) runs the full accuracy gate anyway; an unofficial eval runs it with `--gsm8k`.
+harness runs GSM8K-250 with `GATES=long,gsm8k`; a change that could alter the math needs it before
+it can be promoted.
 
 ## Interface
 ```python
@@ -93,10 +92,9 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
     team:         T1
     builds_on:    T1-002   (the record(s) whose change this one starts from: BASE, one record, or
                   several, e.g. "T1-001 + T2-003" when it combines them)
-    performance:  "unofficial: ~+4% vs the unofficial champion" / "unofficial: within noise" / "build failed" /
-                  "unofficial: stopped after 1 start, -2.3%"
-                  (unofficial numbers: the harness, 2 starts x 300 prompts, see Tools; official_eval adds
-                  official results below; only those count)
+    performance:  "+4.1% vs the champion (T1-002)" / "within noise" / "build failed" /
+                  "stopped after 1 start, -2.3%"
+                  (harness measurements only, see Tools; quick numbers don't go here)
     summary:
       hypothesis:
       change:     what was done
@@ -105,8 +103,7 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
     validity:     the leader's review of the diff against TASK.definition
   change.diff             # `ws diff <workspace>`: against the task baseline, applies to it directly
   serve_args.txt          # optional: extra server flags the change needs (reviewed for validity)
-  unofficial/<n>/         # the record's unofficial measurements (harness output folders)
-  official/<n>/           # written by official_eval only (the manager's confirmation evals)
+  eval/<n>/               # the record's measurements (harness output folders)
   (optional) profiles/, notes
 ```
 
@@ -133,34 +130,32 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   a loop, don't `sleep` (sleeps are blocked; foreground commands are cut off after ~10 min).
   Meanwhile, do other work. To wait on a job you didn't start this way: `gpu wait <id>`, also as
   a background command.
-  Compile before the GPU job, not in it: code JIT-compiled at server start (e.g. `torch.utils.cpp_extension.load`) builds inside your GPU job, and again in each new workspace (official evals use a fresh copy), ~40 s of GPU time each. Build it with the engine (`ws build`) or trigger the compile from a plain shell first.
+  Compile before the GPU job, not in it: code JIT-compiled at server start (e.g. `torch.utils.cpp_extension.load`) builds inside your GPU job, and again in each new workspace, ~40 s of GPU time each. Build it with the engine (`ws build`) or trigger the compile from a plain shell first.
   `gpu status` shows the queue, the pool and every team's balance. Every job prints your team's
   balance when it starts and ends. **Exit 75 = the GPUs are used by someone outside the
   run: stop GPU work and tell the manager** (other people share these GPUs; we never compete).
   Exit 76 = your team's balance can't cover the job (or the team is closed): do GPU-free work; a
   leader may request a resync from the manager.
-- **The benchmark harness** (`task/harness/eval.sh`, anyone may run it; never modify it): measures
-  a workspace's speed, each trial on a freshly started inference server. Unofficial numbers, the
-  ones teams compare, use `TRIALS=2 PROMPTS=300` (the official eval uses 2 x 400 + checks):
-  `gpu run --timeout 14 --label unofficial:<name> -- env TRIALS=2 PROMPTS=300 GATES=none
-  STOP_BELOW=0 $AUTOINFER_RUN/task/harness/eval.sh <workspace dir> <output dir> [serve args file]`
-  (absolute paths).
-  `GATES=gsm8k,long` adds the GSM8K / 128K checks; `STOP_BELOW=<tok/s>` skips the second start
-  below that number; extra env vars before the script reach the inference server. The script's
-  header lists everything. Output, per trial (`<out>/trial<t>/`): `bench.log` (vLLM's benchmark
+- **The benchmark harness** (`task/harness/eval.sh`, anyone may run it; never modify it): the
+  task's benchmark, the only measurement that counts. Two fresh inference-server starts of 400
+  prompts each, then the 128K-token request (~7 GPU-min):
+  `gpu run --timeout 16 --label eval:<name> -- $AUTOINFER_RUN/task/harness/eval.sh <workspace dir>
+  <output dir> [serve args file]` (absolute paths). Prefix `env GATES=long,gsm8k` to add GSM8K-250
+  (~2 GPU-min) when the change could alter the math; `env STOP_BELOW=<tok/s>` skips the second
+  start (and the 128K request) below that number; other env vars before the script reach the
+  inference server. The script's header lists everything. Output, per trial (`<out>/trial<t>/`): `bench.log` (vLLM's benchmark
   report: throughput, TTFT/TPOT/ITL/E2E percentiles, speculative-decoding acceptance per
   position), `bench_c16.json` (the same + per-request data), `server.log` (the full inference
   server log, incl. its startup memory/KV lines and a stats line every 10 s: running/waiting
   requests, KV cache usage), `metrics_{before,after}.txt` (Prometheus), `gpu_clocks.csv`; plus
   `<out>/server_cmd.txt`, and `gsm8k.*` / `long_request.*` when asked. `python
-  task/harness/summarize.py <out>` writes `<out>/results.json`. A record's measurements go in
-  `bank/<id>/unofficial/<n>/` (run on a workspace made with `ws create --from <id>`); the
-  unofficial champion's are in its record. Any code can compete: it doesn't have to be built on
-  the unofficial champion.
+  task/harness/summarize.py <out>` writes `<out>/results.json` (mean tok/s and the checks: latency, 128K, GSM8K if run). A record's
+  measurements go in `bank/<id>/eval/<n>/` (run on a workspace made with `ws create --from <id>`);
+  the champion's are in its record (BASE: `task/baseline/official/`). Any code can compete: it
+  doesn't have to be built on the champion.
 - `review` (leaders): a reviewer, a fresh agent that reads the run and the code and runs CPU
   commands (no GPUs), to look at an experiment or a claim like a colleague reviewing a pull
   request. Transcripts in `reviews/`; the leader instructions say more.
-- `official_eval <record id>` (manager only): official numbers, to confirm a promoted record.
 - `agent`: start, list and stop agents (the manager also uses `agent announce` and `agent remind`).
 - **Run these tools as commands on their own** (`gpu cancel 12`, not `cd … && gpu cancel 12 && …`).
   A tool command on its own is pre-approved. A chained command goes through the permission check,
@@ -170,11 +165,11 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
 - GPUs are the scarce resource. A **GPU-minute** = one minute of a job holding the GPUs (all of
   them; one job at a time for the whole run). Waiting in the queue is free.
 - **The run has a fixed pool of GPU-minutes.** The manager grants it to teams. Each team has an
-  account (`gpu status`, `gpu history <team>`): every job of the team, unofficial evals included, is
+  account (`gpu status`, `gpu history <team>`): every job of the team, measurements included, is
   charged to it, and jobs are refused when the balance can't cover them.
 - **More GPU time goes to teams that turn it into results** (wins). A leader asks for more at a resync, citing evidence.
 - Inside a team, the **leader** decides how to use its balance: how many minutes each worker may
-  use, what is kept for unofficial evals, shifting minutes as results come in. A worker's
+  use, what is kept for measurements, shifting minutes as results come in. A worker's
   allowance is an agreement with its leader (the queue only enforces the team's balance), so stay
   within it. Need more? A worker asks its leader, saying what for and what it expects to learn.
 
@@ -183,18 +178,17 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   means, in records and reports. Others may read the same observation differently.
 - **Cheap before expensive** (guidance, not a gate): napkin math (Amdahl, roofline) →
   microbenchmark with real shapes → one forward pass + profile → short quick bench (scripts/lib.sh) →
-  unofficial eval. Skip steps that don't fit. **Write the estimate next to the measurement**: a
+  the harness. Skip steps that don't fit. **Write the estimate next to the measurement**: a
   mismatch is itself a finding.
 - **Correctness is not negotiable**: what TASK.definition says (same math as the baseline up to
   floating-point reordering, the precision and serving constraints, no benchmark-specific
   tricks). When unsure whether something is allowed, ask your parent before building on it.
 - **Honest numbers.** Report failures, noise and doubts plainly. Quick numbers (short benches,
-  microbenchmarks) are for deciding what to do next; only harness results (2 starts x 300 prompts) and
-  official numbers count. Know the task's noise (TASK): a small difference is neither a result nor noise
+  microbenchmarks) are for deciding what to do next; only harness results count. Know the task's noise (TASK): a small difference is neither a result nor noise
   until fresh starts settle it. "Below noise" means measure more carefully, not give up: small
   gains count, and they stack. The reverse also holds: **don't spend GPU minutes on a comparison
-  already settled:** numbers already in the bank don't need measuring again. Report an
-  unofficial eval stopped after one start as "stopped after 1 start", not as "B is slower", so a later team can
+  already settled:** numbers already in the bank don't need measuring again. Report a
+  measurement stopped after one start as "stopped after 1 start", not as "B is slower", so a later team can
   revisit it (one start can be the outlier).
 - Keep logs, results and scratch files outside a workspace's code tree.
 

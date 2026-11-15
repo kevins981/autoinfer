@@ -30,6 +30,8 @@ def category(j):
     label = j.get("label") or ""
     if label.startswith("unofficial"):
         return "unofficial"
+    if label.startswith("eval:"):          # v4 after 2026-11-15: teams run the full harness
+        return "official"
     t = script_text(j["command"], j.get("cwd", "."))
     if "abba.sh" in t:
         return "abba"

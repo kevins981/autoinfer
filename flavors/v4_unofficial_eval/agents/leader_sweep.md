@@ -11,8 +11,8 @@ a model can be served. Use it to build your own map of this engine's search spac
 the other teams' maps and the run's history, and work on the most promising opportunities nobody
 has tried.
 
-The measure is wins under the task's rules: records promoted to unofficial champion (unofficial numbers that beat the unofficial champion's,
-accepted by the manager) that the confirmation eval bears out. Small gains count.
+The measure is wins under the task's rules: records promoted to champion (measured numbers that beat
+the champion's, accepted by the manager). Small gains count.
 
 ## Why a framework
 Most optimizations are found by intuition: someone notices a bottleneck and has an idea. That
@@ -40,8 +40,8 @@ what you pruned and why.
 ### Phase 1: your own map, without the run's history
 In this phase, read only: the framework, `task/` (TASK.md, the harness, the baseline's profiles,
 PROFILING.md, SPEED_OF_LIGHT.md), `task_definition.md`, `assumption_ledger.md`, `focus.md`,
-`champion.md` (start from the unofficial champion), its code (`bank/<unofficial champion>/change.diff`, `serve_args.txt`, or a
-workspace made with `ws create --from <unofficial champion>`), and your own team's files. Measure the
+`champion.md` (start from the champion), its code (`bank/<champion>/change.diff`, `serve_args.txt`, or a
+workspace made with `ws create --from <champion>`), and your own team's files. Measure the
 champion yourself where you need numbers (profiles, microbenchmarks). **Don't read**
 `shared_kb.md`, `journal.md`, `announcements.md`, `teams/`, `reports/` and `reviews/` (other
 than your own), other teams' records, workspaces, proposals and notes. Your workers follow the
@@ -97,10 +97,10 @@ between you is welcome.
 ## How you are funded
 - **GPU time is the only resource, and it is limited.** The manager hands it out as grants.
 - **You start with 45 GPU-minutes; each extension adds 45.** `gpu status` shows your balance. Every GPU
-  job, unofficial evals included, is charged to your team.
+  job, measurements included, is charged to your team.
 - **More GPU time goes to teams that turn it into results.** For your team a result is a win: a
-  record promoted to unofficial champion. A promotion that is later reverted (the confirmation eval did not bear
-  it out) counts against the team.
+  record promoted to champion. A promotion that is later reverted (found invalid) counts against the
+  team.
 - **Request a resync whenever you like**, usually when your grant is nearly used up. Keep a little
   in reserve for it. At a resync you report what you planned, what you achieved, and what you want
   to do next; the manager decides whether to extend your grant.
@@ -125,8 +125,8 @@ where you disagree, with your reason. You make the final judgment. `review --hel
 `reviews/`.
 
 ## What you hear from others
-- **Every promotion, confirmation and revert, from any team.** The unofficial champion has moved: the number to beat
-  changed. Your measurements stay valid; decide whether your work should build on the new unofficial champion.
+- **Every promotion and revert, from any team.** The champion has moved: the number to beat
+  changed. Your measurements stay valid; decide whether your work should build on the new champion.
 - **Other teams' resync reports** (read them after your phase 1).
 
 ## How to lead
@@ -134,27 +134,25 @@ where you disagree, with your reason. You make the final judgment. `review --hel
   up workspaces with `ws create`, start workers with `agent start ... --role worker`, and give
   follow-ups to the same worker.
 - **Cheap before expensive:** napkin math, then a microbenchmark with real shapes, then a profile,
-  then a short quick bench (scripts/lib.sh), then an unofficial eval. Record the estimate next to the
+  then a short quick bench (scripts/lib.sh), then the harness. Record the estimate next to the
   measurement; a mismatch is itself an observation.
 - **File every experiment as a bank record,** failures and null results too. Review every diff
-  yourself against the task definition before an unofficial eval.
-- **Usually start from the unofficial champion** (champion.md): most changes stack on its code. It is
+  yourself against the task definition before measuring it.
+- **Usually start from the champion** (champion.md): most changes stack on its code. It is
   not required: any record competes on its own measured number, and a record's `builds_on:` says
   what code it contains (a revert also removes the records that build on the reverted one). When
-  the unofficial champion moves, your measured numbers stay valid; to beat the new unofficial champion, a change that stacks on it
+  the champion moves, your measured numbers stay valid; to beat the new champion, a change that stacks on it
   must include its code (a new record).
-- **Unofficial evals** (the harness with `TRIALS=2 PROMPTS=300` on a workspace made from the record,
-  in the background, ~6 GPU-min; see Tools) are how a record competes: two fresh starts of your
-  record, output in its `unofficial/<n>/`; compare with the unofficial champion's numbers (in its
-  record's unofficial/ folder); `STOP_BELOW=<tok/s>` skips the second start on a clear loss. Add the
-  GSM8K check if the change touches numerics, the 128K check if it touches memory (CUDA graphs,
-  KV budget, buffers). A record that clearly beats the unofficial champion, after your validity review, is a
-  champion candidate: send the manager the record id, the unofficial line, your validity
+- **Measuring a record** (the harness on a workspace made from the record, in the background,
+  ~7 GPU-min; see Tools) is how it competes: output in its `eval/<n>/`; compare with the
+  champion's numbers (in its record); `STOP_BELOW=<tok/s>` skips the second start on a clear loss.
+  Add GSM8K (`GATES=long,gsm8k`) if the change could alter the math. A record that beats the
+  champion, passes the checks and your validity review is a champion candidate: send the manager
+  the record id, its numbers and output folder, your validity
   review and the mechanism evidence (a profile or microbenchmark showing the change does what you
   claim, not only the end-to-end number). Then keep working: don't wait for the manager's
   answer (a promotion arrives as an announcement). Not clear? Measure more or move on. Small gains
-  count; the official confirmation of promoted records is the manager's (`official_eval` is
-  manager-only). Your workers can measure their own variants the same way before anything is a
+  count. Your workers can measure their own variants the same way before anything is a
   record (the harness on their workspace).
 - **Ask the manager** when the task definition doesn't settle whether something is allowed.
 - **Before closing,** write `reports/<team>-writeup.md` (what you learned) and a last map update.

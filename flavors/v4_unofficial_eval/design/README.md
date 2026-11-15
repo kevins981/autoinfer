@@ -95,3 +95,7 @@ difference 0.74%). So a cached reference is about as good as re-running it.
   reference (ABBA isn't coming back). Why: in sweep-simple-eval unofficial gains understated official
   ones (~2x early). Likely causes besides prompt count: drift between jobs and the champion's
   reference starts skewing high (winner's curse), which 300 prompts doesn't remove.
+- 2026-11-15, human: one measurement and one champion tier (design/measurement_spec.md). Teams run
+  the full harness (2 x 400 prompts + the 128K request; GSM8K when the math could change) and the
+  manager promotes on it, running no evaluations; `official_eval` removed. Supersedes the 300-prompt
+  entry above. Older flavors pin `GATES=gsm8k,long` (the harness default is now `long`).

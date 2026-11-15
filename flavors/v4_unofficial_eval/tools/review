@@ -111,7 +111,9 @@ def ask(run, c, text):
             cmds.append(str(item.get("command", "")))
     if r.returncode != 0 or not last.exists():
         die(f"backend error (rc {r.returncode}): {r.stderr[-800:]}")
-    return last.read_text(), cmds
+    reply = last.read_text()
+    last.unlink()
+    return reply, cmds
 
 
 def main():

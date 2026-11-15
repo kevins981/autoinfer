@@ -38,6 +38,7 @@ export VLLM_CACHE_ROOT=$RUN_CACHE/vllm
 export FLASHINFER_WORKSPACE_BASE=$RUN_CACHE/flashinfer
 export CUDA_CACHE_PATH=$RUN_CACHE/nv-compute
 export XDG_CACHE_HOME=$RUN_CACHE/xdg
+export HUMMING_TMP_DIR=$RUN_CACHE/humming/tmp HUMMING_CACHE_DIR=$RUN_CACHE/humming/cache   # default ~/.humming (vLLM imports humming at server start)
 export TORCH_EXTENSIONS_DIR=$RUN_CACHE/torch_extensions   # torch cpp_extension load()/load_inline JIT builds
 # JIT extension compiles go through ccache via nvcc_jit.sh (sources copied to a content-addressed
 # path first, so a new workspace path does not recompile a known source: see that script)

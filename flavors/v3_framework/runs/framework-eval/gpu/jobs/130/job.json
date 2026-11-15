@@ -1,0 +1,18 @@
+{
+  "id": 130,
+  "pid": 1474571,
+  "team": "T3",
+  "agent": "leader-3.w1",
+  "label": null,
+  "timeout_min": 13.0,
+  "command": [
+    "agents/leader-3.w1/abba6.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-15T01:09:25+00:00",
+  "state": "done",
+  "started": "2026-11-15T01:24:27+00:00",
+  "ended": "2026-11-15T01:28:39+00:00",
+  "exit_code": 3,
+  "gpu_minutes": 4.188
+}

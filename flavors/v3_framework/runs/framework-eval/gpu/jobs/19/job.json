@@ -1,0 +1,19 @@
+{
+  "id": 19,
+  "pid": 1045811,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "t1-bss",
+  "timeout_min": 16.0,
+  "command": [
+    "bash",
+    "agents/leader-1/job_bss.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T16:54:23+00:00",
+  "state": "done",
+  "started": "2026-11-14T17:14:48+00:00",
+  "ended": "2026-11-14T17:23:25+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 8.619
+}

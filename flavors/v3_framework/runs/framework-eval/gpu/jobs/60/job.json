@@ -1,0 +1,20 @@
+{
+  "id": 60,
+  "pid": 1204010,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "deltalog-fix",
+  "timeout_min": 10.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/run12.sh",
+    "agents/leader-2.w1/out/deltalog_fix"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T20:15:45+00:00",
+  "state": "done",
+  "started": "2026-11-14T20:29:08+00:00",
+  "ended": "2026-11-14T20:32:22+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.236
+}

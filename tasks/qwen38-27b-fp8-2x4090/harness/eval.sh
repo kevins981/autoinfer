@@ -5,11 +5,17 @@
 # server. The bench client starts with the server (it waits for it), so its ~13 s of setup
 # overlaps the server's startup. Score = mean over trials (summarize.py).
 # Run inside a GPU job (official_eval does this). Frozen: agents must not modify.
+# Optional settings (env), defaults = the official eval: PROMPTS=400 per trial; GATES=gsm8k,long
+# (or a subset, or none); STOP_BELOW=0 (>0: stop after trial 1 if it is below this tok/s; writes
+# <out>/stopped_early). The `screen` tool uses PROMPTS=200, its own gates and a stop-loss.
 # usage: eval.sh <workspace dir> <output dir> [extra serve args file]
 # output: <out>/trial<t>/{server.log,startup.txt,bench_c16.json,bench.log,metrics_*.txt,gpu_clocks.csv},
 #         <out>/server_cmd.txt, <out>/gsm8k.{json,log}, <out>/long_request.{json,log}
 WS=$1; OUT=$2; EXTRA=${3:-}
 TRIALS=${TRIALS:-2}
+PROMPTS=${PROMPTS:-400}
+GATES=${GATES:-gsm8k,long}
+STOP_BELOW=${STOP_BELOW:-0}
 HARNESS=$(cd "$(dirname "$0")" && pwd)
 TASK=$(basename "$(dirname "$HARNESS")")
 PORT=8100
@@ -58,7 +64,7 @@ for t in $(seq 1 $TRIALS); do
   PYTHONPATH=$BASELINE_TREE vllm bench serve --port $PORT \
     --backend openai-chat --endpoint /v1/chat/completions --model "$MODEL" \
     --dataset-name sharegpt --dataset-path "$DATA" \
-    --num-prompts 400 --max-concurrency 16 --request-rate inf \
+    --num-prompts $PROMPTS --max-concurrency 16 --request-rate inf \
     --seed 0 --temperature 0 --num-warmups 2 --ready-check-timeout-sec 1000 \
     --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,99 \
     --save-result --result-dir "$D" --result-filename bench_c16.json \
@@ -73,10 +79,17 @@ for t in $(seq 1 $TRIALS); do
   kill $CLK 2>/dev/null; CLK=
   curl -s localhost:$PORT/metrics > "$D/metrics_after.txt"
   grep "Output token throughput" "$D/bench.log"
-  if [ "$t" -eq "$TRIALS" ]; then
+  if [ "$t" -eq 1 ] && [ "$TRIALS" -gt 1 ] && python -c 'import json,sys; s=float(sys.argv[2]); sys.exit(0 if s > 0 and json.load(open(sys.argv[1]))["output_throughput"] < s else 1)' "$D/bench_c16.json" "$STOP_BELOW"; then
+    echo "stopped after trial 1: below $STOP_BELOW tok/s" | tee "$OUT/stopped_early"
+    stop_server
+    break
+  fi
+  if [ "$t" -eq "$TRIALS" ] && [[ ,$GATES, == *,gsm8k,* ]]; then
     PYTHONPATH=$BASELINE_TREE python "$HARNESS/gsm8k.py" --n 250 --url http://localhost:$PORT --out "$OUT/gsm8k.json" \
       > "$OUT/gsm8k.log" 2>&1 || fail gsm8k
     tail -1 "$OUT/gsm8k.log"
+  fi
+  if [ "$t" -eq "$TRIALS" ] && [[ ,$GATES, == *,long,* ]]; then
     PYTHONPATH=$BASELINE_TREE python "$HARNESS/long_request.py" --tokens 128000 --url http://localhost:$PORT \
       --model "$MODEL" --out "$OUT/long_request.json" > "$OUT/long_request.log" 2>&1
     tail -1 "$OUT/long_request.log"      # a FAIL is a gate result, not an eval failure (summarize.py)

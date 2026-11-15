@@ -1,0 +1,150 @@
+diff --git a/vllm/model_executor/layers/quantization/online/lm_head.py b/vllm/model_executor/layers/quantization/online/lm_head.py
+index 26728ed388..b4929d6b78 100644
+--- a/vllm/model_executor/layers/quantization/online/lm_head.py
++++ b/vllm/model_executor/layers/quantization/online/lm_head.py
+@@ -123,6 +123,77 @@ def _quantize_copy(lm_head: ParallelLMHead, quantization: str) -> ParallelLMHead
+     return head
+ 
+ 
++@torch.no_grad()
++def subset_lm_head_copy(
++    lm_head: ParallelLMHead,
++    quantization: str,
++    topk: int,
++    special_from: int,
++    special_to: int,
++) -> ParallelLMHead:
++    """Quantized copy of this rank's shard of `lm_head` restricted to the rows with
++    global id < topk or in [special_from, special_to). The copy is a
++    non-vocab-parallel head over the kept rows; `subset_ids` maps its rows back to
++    full-vocabulary token ids. Used only for drafting (argmax over a subset)."""
++    si = lm_head.shard_indices
++    start = si.org_vocab_start_index
++    n = si.org_vocab_end_index - start
++    ids = start + torch.arange(n, device=lm_head.weight.device)
++    keep = (ids < topk) | ((ids >= special_from) & (ids < special_to))
++    rows = torch.nonzero(keep).squeeze(-1)
++    # Rebalance: the kept ids are skewed toward the low-id shard, so spread the kept
++    # rows evenly over the TP ranks (gather them all once, keep this rank's slice).
++    from vllm.distributed import get_tensor_model_parallel_rank as _rk
++    from vllm.distributed import get_tensor_model_parallel_world_size as _ws
++    from vllm.distributed import tensor_model_parallel_all_gather as _ag
++
++    tp, rk = _ws(), _rk()
++    cnt = torch.tensor([rows.numel()], device=ids.device, dtype=torch.int64)
++    cnts = _ag(cnt, dim=0).tolist()
++    mx = max(cnts)
++    w_loc = torch.zeros(mx, lm_head.embedding_dim, dtype=lm_head.weight.dtype,
++                        device=ids.device)
++    i_loc = torch.full((mx,), -1, dtype=torch.int64, device=ids.device)
++    w_loc[: rows.numel()] = lm_head.weight.data[rows]
++    i_loc[: rows.numel()] = ids[rows]
++    w_all = _ag(w_loc, dim=0).view(tp, mx, -1)
++    i_all = _ag(i_loc, dim=0).view(tp, mx)
++    w_cat = torch.cat([w_all[r, : cnts[r]] for r in range(tp)], dim=0)
++    i_cat = torch.cat([i_all[r, : cnts[r]] for r in range(tp)], dim=0)
++    del w_all, i_all, w_loc
++    tot = w_cat.shape[0]
++    lo, hi = rk * tot // tp, (rk + 1) * tot // tp
++    w_mine, i_mine = w_cat[lo:hi].clone(), i_cat[lo:hi].clone()
++    del w_cat
++    m = int(w_mine.shape[0])
++    dtype = lm_head.weight.dtype
++    with set_default_torch_dtype(dtype):
++        head = ParallelLMHead(
++            m,
++            lm_head.embedding_dim,
++            params_dtype=dtype,
++            org_num_embeddings=m,
++            padding_size=lm_head.padding_size,
++            prefix=lm_head.prefix,
++            disable_tp=True,
++            quant_method=_LM_HEAD_METHODS[quantization](),
++        )
++    w = torch.zeros(
++        head.num_embeddings_padded, lm_head.embedding_dim, dtype=dtype,
++        device=lm_head.weight.device,
++    )
++    w[:m] = w_mine
++    head.weight = torch.nn.Parameter(w, requires_grad=False)
++    head.quant_method.process_weights_after_loading(head)
++    for param in head.parameters(recurse=False):
++        if hasattr(param, "weight_loader"):
++            del param.weight_loader
++    head.subset_ids = i_mine
++    head.subset_n = m
++    logger.info("Draft lm_head subset: %d rows on this rank, %d total (topk=%d).", m, tot, topk)
++    return head
++
++
+ # Each quantized copy maps to the head it is derived from. Weak keys, and no
+ # module attribute, so the copy never owns the source as a submodule.
+ _SOURCES: WeakKeyDictionary[Module, tuple[ParallelLMHead, str]] = WeakKeyDictionary()
+diff --git a/vllm/models/qwen3_5/nvidia/mtp.py b/vllm/models/qwen3_5/nvidia/mtp.py
+index dfdee2d90b..08319a70b5 100644
+--- a/vllm/models/qwen3_5/nvidia/mtp.py
++++ b/vllm/models/qwen3_5/nvidia/mtp.py
+@@ -280,8 +280,31 @@ class Qwen3_5MTP(LocalArgmaxMixin, nn.Module, SupportsMultiModal, SupportsPP):
+         spec_step_idx: int = 0,
+     ) -> torch.Tensor:
+         # One lm_head is shared by all MTP modules, as in compute_logits.
++        head = self.lm_head
++        if getattr(head, "subset_ids", None) is not None:
++            return self._get_top_tokens_subset(head, hidden_states)
+         return super().get_top_tokens(hidden_states)
+ 
++    def _get_top_tokens_subset(self, head, hidden_states):
++        # Argmax over this rank's kept rows only; ids mapped back to the full vocab.
++        from vllm.distributed import tensor_model_parallel_all_gather
++        from vllm.distributed.parallel_state import get_tensor_model_parallel_world_size
++
++        logits = self.logits_processor._apply_head(head, hidden_states, None)
++        if logits.shape[-1] > head.subset_n:
++            logits[..., head.subset_n :] = -float("inf")
++        vals, idx = logits.max(dim=-1)
++        gid = head.subset_ids[idx]
++        tp = get_tensor_model_parallel_world_size()
++        if tp == 1:
++            return gid
++        pair = torch.stack([vals.float(), gid.float()], dim=-1)
++        gathered = tensor_model_parallel_all_gather(pair, dim=-1).view(
++            hidden_states.shape[0], tp, 2
++        )
++        r = gathered[:, :, 0].argmax(dim=-1, keepdim=True)
++        return gathered[:, :, 1].gather(dim=-1, index=r).squeeze(-1).to(torch.int64)
++
+     def is_unused_checkpoint_weight(self, name: str) -> bool:
+         return not name.startswith("mtp.") and not any(
+             key in name for key in ["embed_tokens", "lm_head"]
+diff --git a/vllm/v1/worker/gpu/spec_decode/eagle/utils.py b/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
+index 8cba9af864..d5a7d1707e 100644
+--- a/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
++++ b/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
+@@ -2,6 +2,7 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ from typing import Literal
+ 
++import os
+ import torch
+ import torch.nn as nn
+ 
+@@ -65,7 +66,18 @@ def share_target_lm_head(
+         return None
+     head = target_lm_head
+     if quantization is not None:
+-        head = quantized_lm_head_copy(target_lm_head, quantization)
++        _topk = int(os.environ.get("VLLM_DRAFT_VOCAB_TOPK", "0"))
++        if _topk > 0:
++            from vllm.model_executor.layers.quantization.online.lm_head import (
++                subset_lm_head_copy,
++            )
++
++            # Qwen special/added tokens occupy ids 248044..248076.
++            head = subset_lm_head_copy(
++                target_lm_head, quantization, _topk, 248044, 248077
++            )
++        else:
++            head = quantized_lm_head_copy(target_lm_head, quantization)
+     if draft_lm_head is not None:
+         del draft_model.lm_head
+     draft_model.lm_head = head

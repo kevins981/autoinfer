@@ -1,0 +1,3367 @@
+diff --git a/csrc/gdn/fused_gdn_decode_kernel.cu b/csrc/gdn/fused_gdn_decode_kernel.cu
+index 5e606ffd7f..3a7a0c229a 100644
+--- a/csrc/gdn/fused_gdn_decode_kernel.cu
++++ b/csrc/gdn/fused_gdn_decode_kernel.cu
+@@ -12,366 +12,10 @@
+ #include "../torch_utils.h"
+ #include "core/cuda_compat.h"
+ 
+-namespace {
+-
+-template <typename StateT>
+-__device__ __forceinline__ void cp_async_16b(StateT* smem_ptr,
+-                                             const StateT* gmem_ptr) {
+-  const uint32_t smem_addr =
+-      static_cast<uint32_t>(__cvta_generic_to_shared(smem_ptr));
+-  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n"
+-               :
+-               : "r"(smem_addr), "l"(gmem_ptr));
+-}
+-
+-__device__ __forceinline__ void cp_async_commit() {
+-  asm volatile("cp.async.commit_group;\n" ::);
+-}
+-
+-__device__ __forceinline__ void cp_async_wait_all() {
+-  asm volatile("cp.async.wait_all;\n" ::: "memory");
+-}
+-
+-template <typename StateT, int ChunkV, int DimK, int Stages>
+-__device__ __forceinline__ void copy_state_chunk(StateT* shared_state,
+-                                                 const StateT* state, int chunk,
+-                                                 int thread, int threads) {
+-  constexpr int kElementsPerCopy = 16 / sizeof(StateT);
+-  constexpr int kCopiesPerChunk = ChunkV * DimK / kElementsPerCopy;
+-  const int stage = chunk % Stages;
+-  for (int copy = thread; copy < kCopiesPerChunk; copy += threads) {
+-    const int element = copy * kElementsPerCopy;
+-    cp_async_16b(shared_state + stage * ChunkV * DimK + element,
+-                 state + chunk * ChunkV * DimK + element);
+-  }
+-  cp_async_commit();
+-}
+-
+-template <typename StateT>
+-__device__ __forceinline__ float4 load_state4(const StateT* state);
+-
+-template <>
+-__device__ __forceinline__ float4 load_state4<float>(const float* state) {
+-  return *reinterpret_cast<const float4*>(state);
+-}
+-
+-template <>
+-__device__ __forceinline__ float4
+-load_state4<__nv_bfloat16>(const __nv_bfloat16* state) {
+-  const __nv_bfloat162 lo = *reinterpret_cast<const __nv_bfloat162*>(state);
+-  const __nv_bfloat162 hi = *reinterpret_cast<const __nv_bfloat162*>(state + 2);
+-  return make_float4(__bfloat162float(lo.x), __bfloat162float(lo.y),
+-                     __bfloat162float(hi.x), __bfloat162float(hi.y));
+-}
+-
+-template <typename StateT>
+-__device__ __forceinline__ void store_state4(StateT* state, float4 value);
+-
+-template <>
+-__device__ __forceinline__ void store_state4<float>(float* state,
+-                                                    float4 value) {
+-  *reinterpret_cast<float4*>(state) = value;
+-}
+-
+-template <>
+-__device__ __forceinline__ void store_state4<__nv_bfloat16>(
+-    __nv_bfloat16* state, float4 value) {
+-  *reinterpret_cast<__nv_bfloat162*>(state) =
+-      __floats2bfloat162_rn(value.x, value.y);
+-  *reinterpret_cast<__nv_bfloat162*>(state + 2) =
+-      __floats2bfloat162_rn(value.z, value.w);
+-}
+-
+-constexpr int kDimK = 128;
+-constexpr int kDimV = 128;
+-constexpr int kThreads = 256;
+-constexpr int kWarps = kThreads / 32;
+-constexpr int kChunkV = 32;
+-constexpr int kNumChunks = kDimV / kChunkV;
+-constexpr int kRowsPerWarp = kChunkV / kWarps;
+-constexpr int kMaxMtpTokens = 8;
+-constexpr int kDtBiasFloat32 = 0;
+-constexpr int kDtBiasBFloat16 = 1;
+-constexpr int kDtBiasFloat16 = 2;
+-
+-struct GdnDecodeStrides {
+-  int64_t mixed_row;
+-  int64_t a_row;
+-  int64_t b_row;
+-  int64_t gate_row;
+-  int64_t state_slot;
+-};
+-
+-__device__ __forceinline__ float sigmoid_fast(float x) {
+-  return 1.0f / (1.0f + __expf(-x));
+-}
+-
+-__device__ __forceinline__ float silu_fast(float x) {
+-  return x * sigmoid_fast(x);
+-}
++#include "gdn_decode_kernels.cuh"
+ 
+-__device__ __forceinline__ float softplus_fast(float x) {
+-  return x > 20.0f ? x : log1pf(__expf(x));
+-}
+-
+-__device__ __forceinline__ float load_dt_bias(const void* dt_bias, int head,
+-                                              int dt_bias_type) {
+-  if (dt_bias_type == kDtBiasBFloat16) {
+-    return __bfloat162float(static_cast<const __nv_bfloat16*>(dt_bias)[head]);
+-  }
+-  if (dt_bias_type == kDtBiasFloat16) {
+-    return __half2float(static_cast<const __half*>(dt_bias)[head]);
+-  }
+-  return static_cast<const float*>(dt_bias)[head];
+-}
+-
+-__device__ __forceinline__ float warp_reduce_sum(float value) {
+-#pragma unroll
+-  for (int offset = 16; offset > 0; offset >>= 1) {
+-    value += __shfl_xor_sync(0xffffffffu, value, offset);
+-  }
+-  return value;
+-}
+-
+-struct Sum2 {
+-  float x;
+-  float y;
+-};
+-
+-__device__ __forceinline__ Sum2 warp_reduce_sum_pair(float x, float y) {
+-#pragma unroll
+-  for (int offset = 16; offset > 0; offset >>= 1) {
+-    x += __shfl_xor_sync(0xffffffffu, x, offset);
+-    y += __shfl_xor_sync(0xffffffffu, y, offset);
+-  }
+-  return {x, y};
+-}
+-
+-template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate>
+-__global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+-    const __nv_bfloat16* __restrict__ mixed_qkv,
+-    const __nv_bfloat16* __restrict__ a, const __nv_bfloat16* __restrict__ b,
+-    const float* __restrict__ a_log, const void* __restrict__ dt_bias,
+-    const int* __restrict__ state_indices, const int* __restrict__ cu_seqlens,
+-    const int* __restrict__ num_accepted_tokens, StateT* __restrict__ state,
+-    const __nv_bfloat16* __restrict__ output_gate,
+-    const void* __restrict__ norm_weight, __nv_bfloat16* __restrict__ out,
+-    int H, int HV, int state_indices_width, int dt_bias_type,
+-    bool norm_weight_is_bf16, float scale, float norm_eps,
+-    GdnDecodeStrides strides) {
+-  const int request = blockIdx.x;
+-  const int value_head = blockIdx.y;
+-  const int tid = threadIdx.x;
+-  const int lane = tid & 31;
+-  const int warp = tid >> 5;
+-  const int bos = cu_seqlens[request];
+-  const int eos = cu_seqlens[request + 1];
+-  const int num_tokens = eos - bos;
+-  if (num_tokens <= 0) {
+-    return;
+-  }
+-
+-  const int accepted = num_accepted_tokens[request];
+-  const int source_slot =
+-      accepted > 0 && accepted <= state_indices_width
+-          ? state_indices[request * state_indices_width + accepted - 1]
+-          : 0;
+-  if (source_slot <= 0 || num_tokens > kMaxMtpTokens) {
+-    for (int linear = tid; linear < num_tokens * kDimV; linear += kThreads) {
+-      const int token = bos + linear / kDimV;
+-      const int value = linear % kDimV;
+-      const int64_t out_offset =
+-          (static_cast<int64_t>(token) * HV + value_head) * kDimV + value;
+-      out[out_offset] = __float2bfloat16(0.0f);
+-    }
+-    return;
+-  }
+-
+-  const int key_head = value_head / ValueHeadsPerKeyHead;
+-  __shared__ StateT shared_state[2][kChunkV][kDimK];
+-  __shared__ float shared_q[kMaxMtpTokens][kDimK];
+-  __shared__ float shared_k[kMaxMtpTokens][kDimK];
+-  __shared__ __nv_bfloat16 shared_v[kMaxMtpTokens][kDimV];
+-  __shared__ __nv_bfloat16 shared_out[kMaxMtpTokens][kDimV];
+-  __shared__ float shared_decay[kMaxMtpTokens];
+-  __shared__ float shared_beta[kMaxMtpTokens];
+-
+-  StateT* source_state =
+-      state + static_cast<int64_t>(source_slot) * strides.state_slot +
+-      value_head * kDimV * kDimK;
+-  copy_state_chunk<StateT, kChunkV, kDimK, 2>(&shared_state[0][0][0],
+-                                              source_state, 0, tid, kThreads);
+-
+-  if (warp < num_tokens) {
+-    const int t = warp;
+-    const int token = bos + t;
+-    const int64_t mixed_base = static_cast<int64_t>(token) * strides.mixed_row;
+-    float q_values[4];
+-    float k_values[4];
+-    float q_square = 0.0f;
+-    float k_square = 0.0f;
+-#pragma unroll
+-    for (int i = 0; i < 4; ++i) {
+-      const int dim = lane + i * 32;
+-      q_values[i] =
+-          __bfloat162float(mixed_qkv[mixed_base + key_head * kDimK + dim]);
+-      k_values[i] = __bfloat162float(
+-          mixed_qkv[mixed_base + H * kDimK + key_head * kDimK + dim]);
+-      shared_v[t][dim] =
+-          mixed_qkv[mixed_base + 2 * H * kDimK + value_head * kDimV + dim];
+-      q_square += q_values[i] * q_values[i];
+-      k_square += k_values[i] * k_values[i];
+-    }
+-    const Sum2 qk_sums = warp_reduce_sum_pair(q_square, k_square);
+-    const float q_scale = __shfl_sync(
+-        0xffffffffu, lane == 0 ? rsqrtf(qk_sums.x + 1.0e-6f) * scale : 0.0f, 0);
+-    const float k_scale = __shfl_sync(
+-        0xffffffffu, lane == 0 ? rsqrtf(qk_sums.y + 1.0e-6f) : 0.0f, 0);
+-#pragma unroll
+-    for (int i = 0; i < 4; ++i) {
+-      const int dim = lane + i * 32;
+-      shared_q[t][dim] = q_values[i] * q_scale;
+-      shared_k[t][dim] = k_values[i] * k_scale;
+-    }
+-    if (lane == 0) {
+-      const float a_value = __bfloat162float(
+-          a[static_cast<int64_t>(token) * strides.a_row + value_head]);
+-      const float b_value = __bfloat162float(
+-          b[static_cast<int64_t>(token) * strides.b_row + value_head]);
+-      const float g = -__expf(a_log[value_head]) *
+-                      softplus_fast(a_value + load_dt_bias(dt_bias, value_head,
+-                                                           dt_bias_type));
+-      shared_decay[t] = __expf(g);
+-      shared_beta[t] = sigmoid_fast(b_value);
+-    }
+-  }
+-  __syncthreads();
+-
+-  const int k_base = lane * 4;
+-  int rows[kRowsPerWarp];
+-#pragma unroll
+-  for (int row = 0; row < kRowsPerWarp; ++row) {
+-    rows[row] = warp + row * kWarps;
+-  }
+-
+-#pragma unroll
+-  for (int chunk = 0; chunk < kNumChunks; ++chunk) {
+-    cp_async_wait_all();
+-    __syncthreads();
+-    if (chunk + 1 < kNumChunks) {
+-      copy_state_chunk<StateT, kChunkV, kDimK, 2>(
+-          &shared_state[0][0][0], source_state, chunk + 1, tid, kThreads);
+-    }
+-
+-    float h[kRowsPerWarp][4];
+-#pragma unroll
+-    for (int row = 0; row < kRowsPerWarp; ++row) {
+-      const float4 state_value =
+-          load_state4(&shared_state[chunk & 1][rows[row]][k_base]);
+-      h[row][0] = state_value.x;
+-      h[row][1] = state_value.y;
+-      h[row][2] = state_value.z;
+-      h[row][3] = state_value.w;
+-    }
+-
+-    for (int t = 0; t < num_tokens; ++t) {
+-      const float4 q4 = *reinterpret_cast<const float4*>(&shared_q[t][k_base]);
+-      const float4 k4 = *reinterpret_cast<const float4*>(&shared_k[t][k_base]);
+-      const float q_values[4] = {q4.x, q4.y, q4.z, q4.w};
+-      const float k_values[4] = {k4.x, k4.y, k4.z, k4.w};
+-
+-      float dot_hk[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
+-#pragma unroll
+-      for (int row = 0; row < kRowsPerWarp; ++row) {
+-#pragma unroll
+-        for (int i = 0; i < 4; ++i) {
+-          h[row][i] *= shared_decay[t];
+-          dot_hk[row] += h[row][i] * k_values[i];
+-        }
+-      }
+-      const Sum2 dot_hk_01 = warp_reduce_sum_pair(dot_hk[0], dot_hk[1]);
+-      const Sum2 dot_hk_23 = warp_reduce_sum_pair(dot_hk[2], dot_hk[3]);
+-      const float reduced_hk[kRowsPerWarp] = {dot_hk_01.x, dot_hk_01.y,
+-                                              dot_hk_23.x, dot_hk_23.y};
+-
+-      float dot_hq[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
+-#pragma unroll
+-      for (int row = 0; row < kRowsPerWarp; ++row) {
+-        const int value = chunk * kChunkV + rows[row];
+-        const float delta =
+-            (__bfloat162float(shared_v[t][value]) - reduced_hk[row]) *
+-            shared_beta[t];
+-#pragma unroll
+-        for (int i = 0; i < 4; ++i) {
+-          h[row][i] += k_values[i] * delta;
+-          dot_hq[row] += h[row][i] * q_values[i];
+-        }
+-      }
+-      const Sum2 dot_hq_01 = warp_reduce_sum_pair(dot_hq[0], dot_hq[1]);
+-      const Sum2 dot_hq_23 = warp_reduce_sum_pair(dot_hq[2], dot_hq[3]);
+-      if (lane == 0) {
+-        shared_out[t][chunk * kChunkV + rows[0]] =
+-            __float2bfloat16(dot_hq_01.x);
+-        shared_out[t][chunk * kChunkV + rows[1]] =
+-            __float2bfloat16(dot_hq_01.y);
+-        shared_out[t][chunk * kChunkV + rows[2]] =
+-            __float2bfloat16(dot_hq_23.x);
+-        shared_out[t][chunk * kChunkV + rows[3]] =
+-            __float2bfloat16(dot_hq_23.y);
+-      }
+-
+-      const int destination_slot =
+-          state_indices[request * state_indices_width + t];
+-      if (destination_slot > 0) {
+-        StateT* destination_state =
+-            state +
+-            static_cast<int64_t>(destination_slot) * strides.state_slot +
+-            value_head * kDimV * kDimK;
+-#pragma unroll
+-        for (int row = 0; row < kRowsPerWarp; ++row) {
+-          const int value = chunk * kChunkV + rows[row];
+-          store_state4(destination_state + value * kDimK + k_base,
+-                       make_float4(h[row][0], h[row][1], h[row][2], h[row][3]));
+-        }
+-      }
+-    }
+-  }
+-  __syncthreads();
+-
+-  if (warp < num_tokens) {
+-    const int t = warp;
+-    float output_values[4];
+-    float sum_square = 0.0f;
+-#pragma unroll
+-    for (int i = 0; i < 4; ++i) {
+-      const int value = lane + i * 32;
+-      output_values[i] = __bfloat162float(shared_out[t][value]);
+-      sum_square += output_values[i] * output_values[i];
+-    }
+-    sum_square = warp_reduce_sum(sum_square);
+-    const float rstd =
+-        rsqrtf(sum_square / static_cast<float>(kDimV) + norm_eps);
+-    const int token = bos + t;
+-#pragma unroll
+-    for (int i = 0; i < 4; ++i) {
+-      const int value = lane + i * 32;
+-      const float gate_input = __bfloat162float(
+-          output_gate[static_cast<int64_t>(token) * strides.gate_row +
+-                      value_head * kDimV + value]);
+-      const float gate =
+-          SigmoidGate ? sigmoid_fast(gate_input) : silu_fast(gate_input);
+-      const float weight =
+-          norm_weight_is_bf16
+-              ? __bfloat162float(
+-                    static_cast<const __nv_bfloat16*>(norm_weight)[value])
+-              : static_cast<const float*>(norm_weight)[value];
+-      const int64_t out_offset =
+-          (static_cast<int64_t>(token) * HV + value_head) * kDimV + value;
+-      out[out_offset] =
+-          __float2bfloat16(output_values[i] * rstd * weight * gate);
+-    }
+-  }
+-}
++namespace {
++using namespace gdn_decode;
+ 
+ template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate>
+ void launch_gdn_decode_post_conv_mtp(
+@@ -383,7 +27,7 @@ void launch_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor& state, torch::stable::Tensor const& norm_weight,
+     torch::stable::Tensor& out, const __nv_bfloat16* a, const __nv_bfloat16* b,
+     const __nv_bfloat16* output_gate, int num_key_heads, int num_value_heads,
+-    double scale, double norm_eps, GdnDecodeStrides strides) {
++    double scale, double norm_eps, GdnDecodeStrides strides, int log_mode) {
+   using torch::headeronly::ScalarType;
+ 
+   const auto dt_bias_scalar_type = dt_bias.scalar_type();
+@@ -410,7 +54,8 @@ void launch_gdn_decode_post_conv_mtp(
+           num_key_heads, num_value_heads,
+           static_cast<int>(state_indices.size(1)), dt_bias_type,
+           norm_weight.scalar_type() == ScalarType::BFloat16,
+-          static_cast<float>(scale), static_cast<float>(norm_eps), strides);
++          static_cast<float>(scale), static_cast<float>(norm_eps), strides,
++          log_mode);
+   const cudaError_t error = cudaGetLastError();
+   STD_TORCH_CHECK(error == cudaSuccess,
+                   "GDN decode MTP post-conv kernel launch failed: ",
+@@ -428,7 +73,8 @@ void fused_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor const& num_accepted_tokens,
+     torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
+     torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
+-    double scale, double norm_eps, const std::string& output_gate_activation) {
++    double scale, double norm_eps, const std::string& output_gate_activation,
++    int64_t log_mode) {
+   using torch::headeronly::ScalarType;
+ 
+   STD_TORCH_CHECK(
+@@ -559,7 +205,7 @@ void fused_gdn_decode_post_conv_mtp(
+         mixed_qkv, a_log, dt_bias, state_indices, cu_seqlens,
+         num_accepted_tokens, state, norm_weight, out, a_ptr, b_ptr,
+         output_gate_ptr, num_key_heads, num_value_heads, scale, norm_eps,
+-        strides);
++        strides, static_cast<int>(log_mode));
+   };
+   const auto dispatch_state_type = [&]<int ValueHeadsPerKeyHead>() {
+     if (state_scalar_type == ScalarType::Float) {
+@@ -595,3 +241,96 @@ void fused_gdn_decode_post_conv_mtp(
+       break;
+   }
+ }
++
++
++// Replays DeltaLog rows onto slot idx[0] and writes the full state into slot
++// idx[accepted-1], for every (request, value head) whose destination slot
++// still carries the log marker. No-op otherwise.
++void gdn_deltalog_materialize(torch::stable::Tensor const& state_indices,
++                              torch::stable::Tensor const& num_accepted_tokens,
++                              torch::stable::Tensor& state) {
++  using torch::headeronly::ScalarType;
++  STD_TORCH_CHECK(
++      state_indices.is_cuda() && state_indices.scalar_type() == ScalarType::Int &&
++          state_indices.dim() == 2 && state_indices.is_contiguous(),
++      "state_indices must be a contiguous CUDA int32 [N, W] tensor");
++  STD_TORCH_CHECK(num_accepted_tokens.is_cuda() &&
++                      num_accepted_tokens.scalar_type() == ScalarType::Int &&
++                      num_accepted_tokens.is_contiguous() &&
++                      num_accepted_tokens.numel() >= state_indices.size(0),
++                  "num_accepted_tokens must be a contiguous CUDA int32 tensor");
++  const auto state_scalar_type = state.scalar_type();
++  STD_TORCH_CHECK(
++      state.is_cuda() && state.dim() == 4 && state.size(2) == kDimV &&
++          state.size(3) == kDimK &&
++          (state_scalar_type == ScalarType::Float ||
++           state_scalar_type == ScalarType::BFloat16),
++      "state must be a CUDA float32/bfloat16 [slots, HV, 128, 128] tensor");
++  const int num_requests = static_cast<int>(state_indices.size(0));
++  if (num_requests == 0) {
++    return;
++  }
++  const int num_value_heads = static_cast<int>(state.size(1));
++  torch::stable::accelerator::DeviceGuard const device_guard(
++      state.get_device_index());
++  const cudaStream_t stream = get_current_cuda_stream(state.get_device_index());
++  const dim3 grid(num_requests, num_value_heads);
++  if (state_scalar_type == ScalarType::Float) {
++    gdn_deltalog_materialize_kernel<float><<<grid, kThreads, 0, stream>>>(
++        static_cast<const int*>(state_indices.data_ptr()),
++        static_cast<const int*>(num_accepted_tokens.data_ptr()),
++        static_cast<float*>(state.data_ptr()),
++        static_cast<int>(state_indices.size(1)), state.stride(0));
++  } else {
++    gdn_deltalog_materialize_kernel<__nv_bfloat16><<<grid, kThreads, 0, stream>>>(
++        static_cast<const int*>(state_indices.data_ptr()),
++        static_cast<const int*>(num_accepted_tokens.data_ptr()),
++        static_cast<__nv_bfloat16*>(state.data_ptr()),
++        static_cast<int>(state_indices.size(1)), state.stride(0));
++  }
++  const cudaError_t error = cudaGetLastError();
++  STD_TORCH_CHECK(error == cudaSuccess, "GDN DeltaLog materialize failed: ",
++                  cudaGetErrorString(error));
++}
++
++
++// Block-boundary variant over all layers' temporal states (fp32 only).
++void gdn_deltalog_materialize_all(
++    torch::stable::Tensor const& block_table_ptrs, int64_t bt_stride_req,
++    torch::stable::Tensor const& state_base_addrs,
++    torch::stable::Tensor const& state_block_strides,
++    torch::stable::Tensor const& state_conv_widths,
++    torch::stable::Tensor const& state_group_indices,
++    torch::stable::Tensor const& idx_mapping, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& c,
++    int64_t mode, int64_t block_size, int64_t num_reqs_in,
++    int64_t num_value_heads) {
++  using torch::headeronly::ScalarType;
++  STD_TORCH_CHECK(block_table_ptrs.is_cuda() && state_base_addrs.is_cuda() &&
++                      idx_mapping.is_cuda() && a.is_cuda() && b.is_cuda() && c.is_cuda(),
++                  "all tensors must be CUDA tensors");
++  const int num_reqs = static_cast<int>(num_reqs_in);
++  const int num_states = static_cast<int>(state_base_addrs.numel());
++  if (num_reqs == 0 || num_states == 0) {
++    return;
++  }
++  STD_TORCH_CHECK(idx_mapping.numel() >= num_reqs, "idx_mapping too short");
++  torch::stable::accelerator::DeviceGuard const device_guard(
++      a.get_device_index());
++  const cudaStream_t stream = get_current_cuda_stream(a.get_device_index());
++  const dim3 grid(num_reqs, num_states, static_cast<unsigned>(num_value_heads));
++  gdn_deltalog_materialize_all_kernel<<<grid, kThreads, 0, stream>>>(
++      static_cast<const int64_t*>(block_table_ptrs.data_ptr()), bt_stride_req,
++      static_cast<const int64_t*>(state_base_addrs.data_ptr()),
++      static_cast<const int64_t*>(state_block_strides.data_ptr()),
++      static_cast<const int*>(state_conv_widths.data_ptr()),
++      static_cast<const int*>(state_group_indices.data_ptr()),
++      static_cast<const int*>(idx_mapping.data_ptr()),
++      static_cast<const int*>(a.data_ptr()),
++      static_cast<const int*>(b.data_ptr()),
++      static_cast<const int*>(c.data_ptr()), static_cast<int>(mode),
++      static_cast<int>(block_size), num_reqs);
++  const cudaError_t error = cudaGetLastError();
++  STD_TORCH_CHECK(error == cudaSuccess, "GDN DeltaLog materialize_all failed: ",
++                  cudaGetErrorString(error));
++}
+diff --git a/csrc/gdn/gdn_decode_kernels.cuh b/csrc/gdn/gdn_decode_kernels.cuh
+new file mode 100644
+index 0000000000..0b7d94f62d
+--- /dev/null
++++ b/csrc/gdn/gdn_decode_kernels.cuh
+@@ -0,0 +1,709 @@
++#pragma once
++#include <cstdint>
++#include <cuda_bf16.h>
++#include <cuda_fp16.h>
++#include <cuda_runtime.h>
++
++namespace gdn_decode {
++
++
++template <typename StateT>
++__device__ __forceinline__ void cp_async_16b(StateT* smem_ptr,
++                                             const StateT* gmem_ptr) {
++  const uint32_t smem_addr =
++      static_cast<uint32_t>(__cvta_generic_to_shared(smem_ptr));
++  asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n"
++               :
++               : "r"(smem_addr), "l"(gmem_ptr));
++}
++
++__device__ __forceinline__ void cp_async_commit() {
++  asm volatile("cp.async.commit_group;\n" ::);
++}
++
++__device__ __forceinline__ void cp_async_wait_all() {
++  asm volatile("cp.async.wait_all;\n" ::: "memory");
++}
++
++template <typename StateT, int ChunkV, int DimK, int Stages>
++__device__ __forceinline__ void copy_state_chunk(StateT* shared_state,
++                                                 const StateT* state, int chunk,
++                                                 int thread, int threads) {
++  constexpr int kElementsPerCopy = 16 / sizeof(StateT);
++  constexpr int kCopiesPerChunk = ChunkV * DimK / kElementsPerCopy;
++  const int stage = chunk % Stages;
++  for (int copy = thread; copy < kCopiesPerChunk; copy += threads) {
++    const int element = copy * kElementsPerCopy;
++    cp_async_16b(shared_state + stage * ChunkV * DimK + element,
++                 state + chunk * ChunkV * DimK + element);
++  }
++  cp_async_commit();
++}
++
++template <typename StateT>
++__device__ __forceinline__ float4 load_state4(const StateT* state);
++
++template <>
++__device__ __forceinline__ float4 load_state4<float>(const float* state) {
++  return *reinterpret_cast<const float4*>(state);
++}
++
++template <>
++__device__ __forceinline__ float4
++load_state4<__nv_bfloat16>(const __nv_bfloat16* state) {
++  const __nv_bfloat162 lo = *reinterpret_cast<const __nv_bfloat162*>(state);
++  const __nv_bfloat162 hi = *reinterpret_cast<const __nv_bfloat162*>(state + 2);
++  return make_float4(__bfloat162float(lo.x), __bfloat162float(lo.y),
++                     __bfloat162float(hi.x), __bfloat162float(hi.y));
++}
++
++template <typename StateT>
++__device__ __forceinline__ void store_state4(StateT* state, float4 value);
++
++template <>
++__device__ __forceinline__ void store_state4<float>(float* state,
++                                                    float4 value) {
++  *reinterpret_cast<float4*>(state) = value;
++}
++
++template <>
++__device__ __forceinline__ void store_state4<__nv_bfloat16>(
++    __nv_bfloat16* state, float4 value) {
++  *reinterpret_cast<__nv_bfloat162*>(state) =
++      __floats2bfloat162_rn(value.x, value.y);
++  *reinterpret_cast<__nv_bfloat162*>(state + 2) =
++      __floats2bfloat162_rn(value.z, value.w);
++}
++
++constexpr int kDimK = 128;
++constexpr int kDimV = 128;
++constexpr int kThreads = 256;
++constexpr int kWarps = kThreads / 32;
++constexpr int kChunkV = 32;
++constexpr int kNumChunks = kDimV / kChunkV;
++constexpr int kRowsPerWarp = kChunkV / kWarps;
++constexpr int kMaxMtpTokens = 8;
++// DeltaLog: rows t>=1 of a step store a small log (instead of a full state)
++// in the head region of slot idx[t]:
++//   [0,4) magic0  [4,8) magic1  [8,520) k fp32[128] (normalized)
++//   [520,776) v bf16[128]  [776,780) decay fp32  [780,784) beta fp32
++// Both magics are fp32 NaN payloads; no arithmetic result of the update
++// produces them, and any full-state write over the region destroys them.
++constexpr int kMaxLogRows = 2;
++constexpr uint32_t kLogMagic0 = 0x7FC0D1A7u;
++constexpr uint32_t kLogMagic1 = 0x7F8BEEF3u;
++constexpr int kLogKOffset = 8;
++constexpr int kLogVOffset = 520;
++constexpr int kLogDecayOffset = 776;
++constexpr int kLogBetaOffset = 780;
++constexpr int kDtBiasFloat32 = 0;
++constexpr int kDtBiasBFloat16 = 1;
++constexpr int kDtBiasFloat16 = 2;
++
++struct GdnDecodeStrides {
++  int64_t mixed_row;
++  int64_t a_row;
++  int64_t b_row;
++  int64_t gate_row;
++  int64_t state_slot;
++};
++
++__device__ __forceinline__ float sigmoid_fast(float x) {
++  return 1.0f / (1.0f + __expf(-x));
++}
++
++__device__ __forceinline__ float silu_fast(float x) {
++  return x * sigmoid_fast(x);
++}
++
++__device__ __forceinline__ float softplus_fast(float x) {
++  return x > 20.0f ? x : log1pf(__expf(x));
++}
++
++__device__ __forceinline__ float load_dt_bias(const void* dt_bias, int head,
++                                              int dt_bias_type) {
++  if (dt_bias_type == kDtBiasBFloat16) {
++    return __bfloat162float(static_cast<const __nv_bfloat16*>(dt_bias)[head]);
++  }
++  if (dt_bias_type == kDtBiasFloat16) {
++    return __half2float(static_cast<const __half*>(dt_bias)[head]);
++  }
++  return static_cast<const float*>(dt_bias)[head];
++}
++
++__device__ __forceinline__ float warp_reduce_sum(float value) {
++#pragma unroll
++  for (int offset = 16; offset > 0; offset >>= 1) {
++    value += __shfl_xor_sync(0xffffffffu, value, offset);
++  }
++  return value;
++}
++
++struct Sum2 {
++  float x;
++  float y;
++};
++
++__device__ __forceinline__ Sum2 warp_reduce_sum_pair(float x, float y) {
++#pragma unroll
++  for (int offset = 16; offset > 0; offset >>= 1) {
++    x += __shfl_xor_sync(0xffffffffu, x, offset);
++    y += __shfl_xor_sync(0xffffffffu, y, offset);
++  }
++  return {x, y};
++}
++
++template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate>
++__global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
++    const __nv_bfloat16* __restrict__ mixed_qkv,
++    const __nv_bfloat16* __restrict__ a, const __nv_bfloat16* __restrict__ b,
++    const float* __restrict__ a_log, const void* __restrict__ dt_bias,
++    const int* __restrict__ state_indices, const int* __restrict__ cu_seqlens,
++    const int* __restrict__ num_accepted_tokens, StateT* __restrict__ state,
++    const __nv_bfloat16* __restrict__ output_gate,
++    const void* __restrict__ norm_weight, __nv_bfloat16* __restrict__ out,
++    int H, int HV, int state_indices_width, int dt_bias_type,
++    bool norm_weight_is_bf16, float scale, float norm_eps,
++    GdnDecodeStrides strides, int log_mode) {
++  const int request = blockIdx.x;
++  const int value_head = blockIdx.y;
++  const int tid = threadIdx.x;
++  const int lane = tid & 31;
++  const int warp = tid >> 5;
++  const int bos = cu_seqlens[request];
++  const int eos = cu_seqlens[request + 1];
++  const int num_tokens = eos - bos;
++  if (num_tokens <= 0) {
++    return;
++  }
++
++  const int accepted = num_accepted_tokens[request];
++  int source_slot =
++      accepted > 0 && accepted <= state_indices_width
++          ? state_indices[request * state_indices_width + accepted - 1]
++          : 0;
++  int num_replay = 0;
++  if (log_mode != 0 && source_slot > 0 && accepted >= 2 &&
++      accepted <= kMaxLogRows + 1) {
++    const uint32_t* marker = reinterpret_cast<const uint32_t*>(
++        state + static_cast<int64_t>(source_slot) * strides.state_slot +
++        value_head * kDimV * kDimK);
++    if (marker[0] == kLogMagic0 && marker[1] == kLogMagic1) {
++      const int base_slot = state_indices[request * state_indices_width];
++      if (base_slot > 0) {
++        num_replay = accepted - 1;
++        source_slot = base_slot;
++      }
++    }
++  }
++  const bool use_log = log_mode != 0 && num_tokens <= kMaxLogRows + 1;
++  if (source_slot <= 0 || num_tokens > kMaxMtpTokens) {
++    for (int linear = tid; linear < num_tokens * kDimV; linear += kThreads) {
++      const int token = bos + linear / kDimV;
++      const int value = linear % kDimV;
++      const int64_t out_offset =
++          (static_cast<int64_t>(token) * HV + value_head) * kDimV + value;
++      out[out_offset] = __float2bfloat16(0.0f);
++    }
++    return;
++  }
++
++  const int key_head = value_head / ValueHeadsPerKeyHead;
++  __shared__ StateT shared_state[2][kChunkV][kDimK];
++  __shared__ float shared_q[kMaxMtpTokens][kDimK];
++  __shared__ float shared_k[kMaxMtpTokens][kDimK];
++  __shared__ __nv_bfloat16 shared_v[kMaxMtpTokens][kDimV];
++  __shared__ __nv_bfloat16 shared_out[kMaxMtpTokens][kDimV];
++  __shared__ float shared_decay[kMaxMtpTokens];
++  __shared__ float shared_beta[kMaxMtpTokens];
++  __shared__ float old_k[kMaxLogRows][kDimK];
++  __shared__ __nv_bfloat16 old_v[kMaxLogRows][kDimV];
++  __shared__ float old_decay[kMaxLogRows];
++  __shared__ float old_beta[kMaxLogRows];
++
++  StateT* source_state =
++      state + static_cast<int64_t>(source_slot) * strides.state_slot +
++      value_head * kDimV * kDimK;
++  copy_state_chunk<StateT, kChunkV, kDimK, 2>(&shared_state[0][0][0],
++                                              source_state, 0, tid, kThreads);
++
++  if (warp < num_tokens) {
++    const int t = warp;
++    const int token = bos + t;
++    const int64_t mixed_base = static_cast<int64_t>(token) * strides.mixed_row;
++    float q_values[4];
++    float k_values[4];
++    float q_square = 0.0f;
++    float k_square = 0.0f;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int dim = lane + i * 32;
++      q_values[i] =
++          __bfloat162float(mixed_qkv[mixed_base + key_head * kDimK + dim]);
++      k_values[i] = __bfloat162float(
++          mixed_qkv[mixed_base + H * kDimK + key_head * kDimK + dim]);
++      shared_v[t][dim] =
++          mixed_qkv[mixed_base + 2 * H * kDimK + value_head * kDimV + dim];
++      q_square += q_values[i] * q_values[i];
++      k_square += k_values[i] * k_values[i];
++    }
++    const Sum2 qk_sums = warp_reduce_sum_pair(q_square, k_square);
++    const float q_scale = __shfl_sync(
++        0xffffffffu, lane == 0 ? rsqrtf(qk_sums.x + 1.0e-6f) * scale : 0.0f, 0);
++    const float k_scale = __shfl_sync(
++        0xffffffffu, lane == 0 ? rsqrtf(qk_sums.y + 1.0e-6f) : 0.0f, 0);
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int dim = lane + i * 32;
++      shared_q[t][dim] = q_values[i] * q_scale;
++      shared_k[t][dim] = k_values[i] * k_scale;
++    }
++    if (lane == 0) {
++      const float a_value = __bfloat162float(
++          a[static_cast<int64_t>(token) * strides.a_row + value_head]);
++      const float b_value = __bfloat162float(
++          b[static_cast<int64_t>(token) * strides.b_row + value_head]);
++      const float g = -__expf(a_log[value_head]) *
++                      softplus_fast(a_value + load_dt_bias(dt_bias, value_head,
++                                                           dt_bias_type));
++      shared_decay[t] = __expf(g);
++      shared_beta[t] = sigmoid_fast(b_value);
++    }
++  }
++  for (int j = 0; j < num_replay; ++j) {
++    const int log_slot = state_indices[request * state_indices_width + j + 1];
++    const char* region = reinterpret_cast<const char*>(
++        state + static_cast<int64_t>(log_slot) * strides.state_slot +
++        value_head * kDimV * kDimK);
++    if (tid < kDimK) {
++      old_k[j][tid] =
++          reinterpret_cast<const float*>(region + kLogKOffset)[tid];
++      old_v[j][tid] =
++          reinterpret_cast<const __nv_bfloat16*>(region + kLogVOffset)[tid];
++    }
++    if (tid == 0) {
++      old_decay[j] = *reinterpret_cast<const float*>(region + kLogDecayOffset);
++      old_beta[j] = *reinterpret_cast<const float*>(region + kLogBetaOffset);
++    }
++  }
++  __syncthreads();
++
++  const int k_base = lane * 4;
++  int rows[kRowsPerWarp];
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++    rows[row] = warp + row * kWarps;
++  }
++
++#pragma unroll
++  for (int chunk = 0; chunk < kNumChunks; ++chunk) {
++    cp_async_wait_all();
++    __syncthreads();
++    if (chunk + 1 < kNumChunks) {
++      copy_state_chunk<StateT, kChunkV, kDimK, 2>(
++          &shared_state[0][0][0], source_state, chunk + 1, tid, kThreads);
++    }
++    if (chunk == 0 && use_log) {
++      // Chunk 0 of the source is in smem, old logs are in smem: the head
++      // regions of the destination slots (first 784 bytes) may be rewritten.
++      for (int t = 1; t < num_tokens; ++t) {
++        const int log_slot = state_indices[request * state_indices_width + t];
++        if (log_slot <= 0) {
++          continue;
++        }
++        char* region = reinterpret_cast<char*>(
++            state + static_cast<int64_t>(log_slot) * strides.state_slot +
++            value_head * kDimV * kDimK);
++        if (tid < kDimK) {
++          reinterpret_cast<float*>(region + kLogKOffset)[tid] = shared_k[t][tid];
++          reinterpret_cast<__nv_bfloat16*>(region + kLogVOffset)[tid] =
++              shared_v[t][tid];
++        }
++        if (tid == 0) {
++          *reinterpret_cast<float*>(region + kLogDecayOffset) = shared_decay[t];
++          *reinterpret_cast<float*>(region + kLogBetaOffset) = shared_beta[t];
++        }
++      }
++      __threadfence_block();
++      __syncthreads();
++      if (tid == 0) {
++        for (int t = 1; t < num_tokens; ++t) {
++          const int log_slot = state_indices[request * state_indices_width + t];
++          if (log_slot <= 0) {
++            continue;
++          }
++          uint32_t* marker = reinterpret_cast<uint32_t*>(
++              state + static_cast<int64_t>(log_slot) * strides.state_slot +
++              value_head * kDimV * kDimK);
++          marker[0] = kLogMagic0;
++          marker[1] = kLogMagic1;
++        }
++      }
++    }
++
++    float h[kRowsPerWarp][4];
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) {
++      const float4 state_value =
++          load_state4(&shared_state[chunk & 1][rows[row]][k_base]);
++      h[row][0] = state_value.x;
++      h[row][1] = state_value.y;
++      h[row][2] = state_value.z;
++      h[row][3] = state_value.w;
++    }
++
++    for (int r = 0; r < num_replay; ++r) {
++      const float4 k4 = *reinterpret_cast<const float4*>(&old_k[r][k_base]);
++      const float k_values[4] = {k4.x, k4.y, k4.z, k4.w};
++      float dot_hk[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++#pragma unroll
++        for (int i = 0; i < 4; ++i) {
++          h[row][i] *= old_decay[r];
++          dot_hk[row] += h[row][i] * k_values[i];
++        }
++      }
++      const Sum2 dot_hk_01 = warp_reduce_sum_pair(dot_hk[0], dot_hk[1]);
++      const Sum2 dot_hk_23 = warp_reduce_sum_pair(dot_hk[2], dot_hk[3]);
++      const float reduced_hk[kRowsPerWarp] = {dot_hk_01.x, dot_hk_01.y,
++                                              dot_hk_23.x, dot_hk_23.y};
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        const int value = chunk * kChunkV + rows[row];
++        const float delta =
++            (__bfloat162float(old_v[r][value]) - reduced_hk[row]) *
++            old_beta[r];
++#pragma unroll
++        for (int i = 0; i < 4; ++i) {
++          h[row][i] += k_values[i] * delta;
++        }
++      }
++    }
++
++    for (int t = 0; t < num_tokens; ++t) {
++      const float4 q4 = *reinterpret_cast<const float4*>(&shared_q[t][k_base]);
++      const float4 k4 = *reinterpret_cast<const float4*>(&shared_k[t][k_base]);
++      const float q_values[4] = {q4.x, q4.y, q4.z, q4.w};
++      const float k_values[4] = {k4.x, k4.y, k4.z, k4.w};
++
++      float dot_hk[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++#pragma unroll
++        for (int i = 0; i < 4; ++i) {
++          h[row][i] *= shared_decay[t];
++          dot_hk[row] += h[row][i] * k_values[i];
++        }
++      }
++      const Sum2 dot_hk_01 = warp_reduce_sum_pair(dot_hk[0], dot_hk[1]);
++      const Sum2 dot_hk_23 = warp_reduce_sum_pair(dot_hk[2], dot_hk[3]);
++      const float reduced_hk[kRowsPerWarp] = {dot_hk_01.x, dot_hk_01.y,
++                                              dot_hk_23.x, dot_hk_23.y};
++
++      float dot_hq[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        const int value = chunk * kChunkV + rows[row];
++        const float delta =
++            (__bfloat162float(shared_v[t][value]) - reduced_hk[row]) *
++            shared_beta[t];
++#pragma unroll
++        for (int i = 0; i < 4; ++i) {
++          h[row][i] += k_values[i] * delta;
++          dot_hq[row] += h[row][i] * q_values[i];
++        }
++      }
++      const Sum2 dot_hq_01 = warp_reduce_sum_pair(dot_hq[0], dot_hq[1]);
++      const Sum2 dot_hq_23 = warp_reduce_sum_pair(dot_hq[2], dot_hq[3]);
++      if (lane == 0) {
++        shared_out[t][chunk * kChunkV + rows[0]] =
++            __float2bfloat16(dot_hq_01.x);
++        shared_out[t][chunk * kChunkV + rows[1]] =
++            __float2bfloat16(dot_hq_01.y);
++        shared_out[t][chunk * kChunkV + rows[2]] =
++            __float2bfloat16(dot_hq_23.x);
++        shared_out[t][chunk * kChunkV + rows[3]] =
++            __float2bfloat16(dot_hq_23.y);
++      }
++
++      const int destination_slot =
++          state_indices[request * state_indices_width + t];
++      if (destination_slot > 0 && (!use_log || t == 0)) {
++        StateT* destination_state =
++            state +
++            static_cast<int64_t>(destination_slot) * strides.state_slot +
++            value_head * kDimV * kDimK;
++#pragma unroll
++        for (int row = 0; row < kRowsPerWarp; ++row) {
++          const int value = chunk * kChunkV + rows[row];
++          store_state4(destination_state + value * kDimK + k_base,
++                       make_float4(h[row][0], h[row][1], h[row][2], h[row][3]));
++        }
++      }
++    }
++  }
++  __syncthreads();
++
++  if (warp < num_tokens) {
++    const int t = warp;
++    float output_values[4];
++    float sum_square = 0.0f;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int value = lane + i * 32;
++      output_values[i] = __bfloat162float(shared_out[t][value]);
++      sum_square += output_values[i] * output_values[i];
++    }
++    sum_square = warp_reduce_sum(sum_square);
++    const float rstd =
++        rsqrtf(sum_square / static_cast<float>(kDimV) + norm_eps);
++    const int token = bos + t;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      const int value = lane + i * 32;
++      const float gate_input = __bfloat162float(
++          output_gate[static_cast<int64_t>(token) * strides.gate_row +
++                      value_head * kDimV + value]);
++      const float gate =
++          SigmoidGate ? sigmoid_fast(gate_input) : silu_fast(gate_input);
++      const float weight =
++          norm_weight_is_bf16
++              ? __bfloat162float(
++                    static_cast<const __nv_bfloat16*>(norm_weight)[value])
++              : static_cast<const float*>(norm_weight)[value];
++      const int64_t out_offset =
++          (static_cast<int64_t>(token) * HV + value_head) * kDimV + value;
++      out[out_offset] =
++          __float2bfloat16(output_values[i] * rstd * weight * gate);
++    }
++  }
++}
++
++
++// Replays the logged rows (log0 = row 1, log1 = row 2, num_replay of them)
++// onto the full state `src` and writes the resulting full state to `dst`
++// (destroying the log/marker that lives in dst's head region). Same fp32
++// operations, same order as the token loop in the decode kernel, so the result
++// is bitwise what the full-write kernel would have stored. One (request, head)
++// per block of kThreads threads.
++template <typename StateT>
++__device__ __forceinline__ void deltalog_replay_core(const StateT* src,
++                                                    StateT* dst,
++                                                    const char* log0,
++                                                    const char* log1,
++                                                    int num_replay) {
++  const int tid = threadIdx.x;
++  const int lane = tid & 31;
++  const int warp = tid >> 5;
++  __shared__ float old_k[kMaxLogRows][kDimK];
++  __shared__ __nv_bfloat16 old_v[kMaxLogRows][kDimV];
++  __shared__ float old_decay[kMaxLogRows];
++  __shared__ float old_beta[kMaxLogRows];
++  for (int j = 0; j < num_replay; ++j) {
++    const char* region = j == 0 ? log0 : log1;
++    if (tid < kDimK) {
++      old_k[j][tid] = reinterpret_cast<const float*>(region + kLogKOffset)[tid];
++      old_v[j][tid] =
++          reinterpret_cast<const __nv_bfloat16*>(region + kLogVOffset)[tid];
++    }
++    if (tid == 0) {
++      old_decay[j] = *reinterpret_cast<const float*>(region + kLogDecayOffset);
++      old_beta[j] = *reinterpret_cast<const float*>(region + kLogBetaOffset);
++    }
++  }
++  __syncthreads();
++  const int k_base = lane * 4;
++  int rows[kRowsPerWarp];
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++    rows[row] = warp + row * kWarps;
++  }
++  float h_all[kNumChunks][kRowsPerWarp][4];
++#pragma unroll
++  for (int chunk = 0; chunk < kNumChunks; ++chunk) {
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) {
++      const int value = chunk * kChunkV + rows[row];
++      const float4 sv = load_state4(src + value * kDimK + k_base);
++      h_all[chunk][row][0] = sv.x;
++      h_all[chunk][row][1] = sv.y;
++      h_all[chunk][row][2] = sv.z;
++      h_all[chunk][row][3] = sv.w;
++    }
++  }
++  // All reads of the source (and of the logs, which share the destination
++  // region) are done before anything is written.
++  __syncthreads();
++#pragma unroll
++  for (int chunk = 0; chunk < kNumChunks; ++chunk) {
++    float (&h)[kRowsPerWarp][4] = h_all[chunk];
++    for (int r = 0; r < num_replay; ++r) {
++      const float4 k4 = *reinterpret_cast<const float4*>(&old_k[r][k_base]);
++      const float k_values[4] = {k4.x, k4.y, k4.z, k4.w};
++      float dot_hk[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++#pragma unroll
++        for (int i = 0; i < 4; ++i) {
++          h[row][i] *= old_decay[r];
++          dot_hk[row] += h[row][i] * k_values[i];
++        }
++      }
++      const Sum2 dot_hk_01 = warp_reduce_sum_pair(dot_hk[0], dot_hk[1]);
++      const Sum2 dot_hk_23 = warp_reduce_sum_pair(dot_hk[2], dot_hk[3]);
++      const float reduced_hk[kRowsPerWarp] = {dot_hk_01.x, dot_hk_01.y,
++                                              dot_hk_23.x, dot_hk_23.y};
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        const int value = chunk * kChunkV + rows[row];
++        const float delta =
++            (__bfloat162float(old_v[r][value]) - reduced_hk[row]) * old_beta[r];
++#pragma unroll
++        for (int i = 0; i < 4; ++i) {
++          h[row][i] += k_values[i] * delta;
++        }
++      }
++    }
++  }
++#pragma unroll
++  for (int chunk = 0; chunk < kNumChunks; ++chunk) {
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) {
++      const int value = chunk * kChunkV + rows[row];
++      store_state4(dst + value * kDimK + k_base,
++                   make_float4(h_all[chunk][row][0], h_all[chunk][row][1],
++                               h_all[chunk][row][2], h_all[chunk][row][3]));
++    }
++  }
++}
++
++// Per-step slots idx[0..W): materialize slot idx[accepted-1] if it carries a log.
++template <typename StateT>
++__global__ __launch_bounds__(kThreads, 2) void gdn_deltalog_materialize_kernel(
++    const int* __restrict__ state_indices,
++    const int* __restrict__ num_accepted_tokens, StateT* __restrict__ state,
++    int state_indices_width, int64_t state_slot_stride) {
++  const int request = blockIdx.x;
++  const int value_head = blockIdx.y;
++  const int accepted = num_accepted_tokens[request];
++  if (accepted < 2 || accepted > kMaxLogRows + 1 ||
++      accepted > state_indices_width) {
++    return;
++  }
++  const int* idx = state_indices + request * state_indices_width;
++  const int dst_slot = idx[accepted - 1];
++  const int src_slot = idx[0];
++  if (dst_slot <= 0 || src_slot <= 0) {
++    return;
++  }
++  const int64_t head_off = static_cast<int64_t>(value_head) * kDimV * kDimK;
++  StateT* dst_state =
++      state + static_cast<int64_t>(dst_slot) * state_slot_stride + head_off;
++  const uint32_t* marker = reinterpret_cast<const uint32_t*>(dst_state);
++  if (marker[0] != kLogMagic0 || marker[1] != kLogMagic1) {
++    return;
++  }
++  const StateT* src_state =
++      state + static_cast<int64_t>(src_slot) * state_slot_stride + head_off;
++  const char* log0 = reinterpret_cast<const char*>(
++      state + static_cast<int64_t>(idx[1]) * state_slot_stride + head_off);
++  const char* log1 =
++      accepted >= 3
++          ? reinterpret_cast<const char*>(
++                state + static_cast<int64_t>(idx[2]) * state_slot_stride +
++                head_off)
++          : log0;
++  deltalog_replay_core<StateT>(src_state, dst_state, log0, log1, accepted - 1);
++}
++
++// All-layer variant for the block-boundary state copies. Decides per request
++// exactly like the copy kernels it precedes (mode 0: precopy, mode 1:
++// postprocess align), then materializes the logged temporal state at
++// bt[col + bias] for every layer so the generic byte copy reads a full state.
++// mode 0: a = src_col, b = dst_col, c = token_bias (num_accepted - 1)
++// mode 1: a = num_accepted snapshot, b = state_idx, c = new_num_computed
++// Float32 temporal states only. grid = (num_reqs, num_states, HV).
++__global__ __launch_bounds__(kThreads, 2) void gdn_deltalog_materialize_all_kernel(
++    const int64_t* __restrict__ block_table_ptrs, int64_t bt_stride_req,
++    const int64_t* __restrict__ state_base_addrs,
++    const int64_t* __restrict__ state_block_strides,
++    const int* __restrict__ state_conv_widths,
++    const int* __restrict__ state_group_indices,
++    const int* __restrict__ idx_mapping, const int* __restrict__ a_arr,
++    const int* __restrict__ b_arr, const int* __restrict__ c_arr, int mode,
++    int block_size, int num_reqs) {
++  const int b = blockIdx.x;
++  const int state_idx = blockIdx.y;
++  const int value_head = blockIdx.z;
++  if (b >= num_reqs || state_conv_widths[state_idx] != 0) {
++    return;
++  }
++  const int row = idx_mapping[b];
++  if (row < 0) {
++    return;
++  }
++  int col, bias;
++  if (mode == 0) {
++    const int src_col = a_arr[row];
++    const int dst_col = b_arr[row];
++    if (src_col < 0 || src_col == dst_col) {
++      return;
++    }
++    col = src_col;
++    bias = c_arr[row];
++  } else {
++    const int accepted = a_arr[row];
++    const int src_block_idx = b_arr[row];
++    const int new_computed = c_arr[row];
++    const int running = new_computed - accepted + 1;
++    // floor division (values are non-negative token counts)
++    const int aligned = (new_computed / block_size) * block_size;
++    if (aligned < running) {
++      return;
++    }
++    col = src_block_idx;
++    bias = aligned - running;
++  }
++  // Slots lo..hi must be full states afterwards: the copy reads slot `bias`,
++  // and (mode 1) a later slot up to accepted-1 may still be a log that needs
++  // the logs of the lower slots. So materialize from the highest slot down.
++  const int hi = mode == 0 ? bias : a_arr[row] - 1;
++  const int lo = bias < 1 ? 1 : bias;
++  if (hi < lo || hi > kMaxLogRows) {
++    return;
++  }
++  const int* bt = reinterpret_cast<const int*>(
++                      block_table_ptrs[state_group_indices[state_idx]]) +
++                  static_cast<int64_t>(row) * bt_stride_req + col;
++  char* base = reinterpret_cast<char*>(state_base_addrs[state_idx]);
++  const int64_t block_stride = state_block_strides[state_idx];
++  const int64_t head_bytes =
++      static_cast<int64_t>(value_head) * kDimV * kDimK * sizeof(float);
++  const int src_block = bt[0];
++  if (src_block <= 0) {
++    return;
++  }
++  const float* src = reinterpret_cast<const float*>(
++      base + static_cast<int64_t>(src_block) * block_stride + head_bytes);
++  const char* log0 = base + static_cast<int64_t>(bt[1]) * block_stride + head_bytes;
++  const char* log1 =
++      hi >= 2 ? base + static_cast<int64_t>(bt[2]) * block_stride + head_bytes
++              : log0;
++  for (int t = hi; t >= lo; --t) {
++    const int dst_block = bt[t];
++    if (dst_block <= 0) {
++      return;
++    }
++    float* dst = reinterpret_cast<float*>(
++        base + static_cast<int64_t>(dst_block) * block_stride + head_bytes);
++    const uint32_t* marker = reinterpret_cast<const uint32_t*>(dst);
++    if (marker[0] == kLogMagic0 && marker[1] == kLogMagic1) {
++      deltalog_replay_core<float>(src, dst, log0, log1, t);
++    }
++    __threadfence_block();
++    __syncthreads();
++  }
++}
++
++}  // namespace gdn_decode
+diff --git a/csrc/ops.h b/csrc/ops.h
+index 81a0065c98..a6e63a94cf 100644
+--- a/csrc/ops.h
++++ b/csrc/ops.h
+@@ -450,7 +450,20 @@ void fused_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor const& num_accepted_tokens,
+     torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
+     torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
+-    double scale, double norm_eps, const std::string& output_gate_activation);
++    double scale, double norm_eps, const std::string& output_gate_activation,
++    int64_t log_mode);
++void gdn_deltalog_materialize(torch::stable::Tensor const& state_indices,
++                              torch::stable::Tensor const& num_accepted_tokens,
++                              torch::stable::Tensor& state);
++void gdn_deltalog_materialize_all(
++    torch::stable::Tensor const& block_table_ptrs, int64_t bt_stride_req,
++    torch::stable::Tensor const& state_base_addrs,
++    torch::stable::Tensor const& state_block_strides,
++    torch::stable::Tensor const& state_conv_widths,
++    torch::stable::Tensor const& state_group_indices,
++    torch::stable::Tensor const& idx_mapping, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& c,
++    int64_t mode, int64_t block_size, int64_t num_reqs, int64_t num_value_heads);
+ 
+ #endif
+ 
+diff --git a/csrc/torch_bindings.cpp b/csrc/torch_bindings.cpp
+index 78ae89a646..1d9ba9ad46 100644
+--- a/csrc/torch_bindings.cpp
++++ b/csrc/torch_bindings.cpp
+@@ -572,7 +572,17 @@ STABLE_TORCH_LIBRARY_FRAGMENT(_C, ops) {
+       "Tensor state_indices, Tensor cu_seqlens, Tensor num_accepted_tokens, "
+       "Tensor! state, Tensor output_gate, Tensor norm_weight, Tensor! out, "
+       "float scale, float norm_eps=1e-5, "
+-      "str output_gate_activation='silu') -> ()");
++      "str output_gate_activation='silu', int log_mode=0) -> ()");
++  ops.def(
++      "gdn_deltalog_materialize("
++      "Tensor state_indices, Tensor num_accepted_tokens, Tensor! state) -> ()");
++  ops.def(
++      "gdn_deltalog_materialize_all("
++      "Tensor block_table_ptrs, int bt_stride_req, Tensor state_base_addrs, "
++      "Tensor state_block_strides, Tensor state_conv_widths, "
++      "Tensor state_group_indices, Tensor idx_mapping, Tensor a, Tensor b, "
++      "Tensor c, int mode, int block_size, int num_reqs, "
++      "int num_value_heads) -> ()");
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+@@ -907,6 +917,9 @@ STABLE_TORCH_LIBRARY_IMPL(_C, CUDA, ops) {
+ #ifdef VLLM_ENABLE_FUSED_GDN_DECODE
+   ops.impl("fused_gdn_decode_post_conv_mtp",
+            TORCH_BOX(&fused_gdn_decode_post_conv_mtp));
++  ops.impl("gdn_deltalog_materialize", TORCH_BOX(&gdn_deltalog_materialize));
++  ops.impl("gdn_deltalog_materialize_all",
++           TORCH_BOX(&gdn_deltalog_materialize_all));
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+diff --git a/vllm/_custom_ops.py b/vllm/_custom_ops.py
+index 00fe25c0f4..5f6786f501 100644
+--- a/vllm/_custom_ops.py
++++ b/vllm/_custom_ops.py
+@@ -3187,6 +3187,7 @@ def fused_gdn_decode_post_conv_mtp(
+     scale: float = 128**-0.5,
+     norm_eps: float = 1e-5,
+     output_gate_activation: str = "silu",
++    log_mode: int = 0,
+ ) -> torch.Tensor:
+     if out is None:
+         out = torch.empty_like(output_gate)
+@@ -3206,10 +3207,53 @@ def fused_gdn_decode_post_conv_mtp(
+         scale,
+         norm_eps,
+         output_gate_activation,
++        log_mode,
+     )
+     return out
+ 
+ 
++def gdn_deltalog_materialize(
++    state_indices: torch.Tensor,
++    num_accepted_tokens: torch.Tensor,
++    state: torch.Tensor,
++) -> None:
++    torch.ops._C.gdn_deltalog_materialize(state_indices, num_accepted_tokens, state)
++
++
++def gdn_deltalog_materialize_all(
++    block_table_ptrs: torch.Tensor,
++    bt_stride_req: int,
++    state_base_addrs: torch.Tensor,
++    state_block_strides: torch.Tensor,
++    state_conv_widths: torch.Tensor,
++    state_group_indices: torch.Tensor,
++    idx_mapping: torch.Tensor,
++    a: torch.Tensor,
++    b: torch.Tensor,
++    c: torch.Tensor,
++    mode: int,
++    block_size: int,
++    num_reqs: int,
++    num_value_heads: int,
++) -> None:
++    torch.ops._C.gdn_deltalog_materialize_all(
++        block_table_ptrs,
++        bt_stride_req,
++        state_base_addrs,
++        state_block_strides,
++        state_conv_widths,
++        state_group_indices,
++        idx_mapping,
++        a,
++        b,
++        c,
++        mode,
++        block_size,
++        num_reqs,
++        num_value_heads,
++    )
++
++
+ def concat_and_cache_mla(
+     kv_c: torch.Tensor,
+     k_pe: torch.Tensor,
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..da2d982564 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -2,6 +2,8 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ 
++import os
++
+ import torch
+ from torch.distributed import ProcessGroup
+ 
+@@ -119,6 +121,24 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         self.fi_pcie_ipc_ar_comm: FlashInferPcieIpcAllReduce | None = None
+         self.aiter_ar_comm: AiterCustomAllreduce | None = None
+         self.use_aiter_ag_rs: bool = False
++        self.hostmem_ar_comm = None
++        _hm_bytes = int(os.environ.get("VLLM_HOSTMEM_AR_MAX_BYTES", "1310720"))
++        if (
++            _hm_bytes > 0
++            and self.world_size == 2
++            and unique_name.split(":")[0] == "tp"
++            and current_platform.is_cuda()
++            and not (
++                torch.cuda.device_count() >= 2 and torch.cuda.can_device_access_peer(0, 1)
++            )
++        ):
++            from vllm.distributed.device_communicators.hostmem_all_reduce import (
++                HostMemAllReduce,
++            )
++
++            self.hostmem_ar_comm = HostMemAllReduce(
++                self.cpu_group, self.device, _hm_bytes
++            )
+ 
+         # cuMem graph buffers cannot be IPC-registered; capture copies them instead.
+         config = get_current_vllm_config_or_none()
+@@ -369,6 +389,8 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             enabled_ar_backends.append("CUSTOM")
+         if self.symm_mem_comm is not None and not self.symm_mem_comm.disabled:
+             enabled_ar_backends.append("SYMM_MEM")
++        if self.hostmem_ar_comm is not None and not self.hostmem_ar_comm.disabled:
++            enabled_ar_backends.insert(0, "HOSTMEM")
+         if self.pynccl_comm is not None and not self.pynccl_comm.disabled:
+             enabled_ar_backends.append("PYNCCL")
+ 
+@@ -399,6 +421,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             out = torch.ops.vllm.all_reduce_symmetric_with_copy(input_)
+             if out is not None:
+                 return out
++        hm = self.hostmem_ar_comm
++        if hm is not None and hm.should_use(input_):
++            return hm.all_reduce(input_)
+         qr_comm = self.qr_comm
+         if (
+             qr_comm is not None
+diff --git a/vllm/distributed/device_communicators/hostmem_all_reduce.py b/vllm/distributed/device_communicators/hostmem_all_reduce.py
+new file mode 100644
+index 0000000000..97aa8a54e2
+--- /dev/null
++++ b/vllm/distributed/device_communicators/hostmem_all_reduce.py
+@@ -0,0 +1,116 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Small-message 2-rank all-reduce through mapped pinned host memory (no P2P).
++
++Each rank writes its partial into its own slot of a POSIX shm segment that is
++cudaHostRegister-ed (mapped) in both processes, flags it, polls the peer flag,
++reads the peer slot and sums rank0 + rank1 (same order on both ranks, so the
++result is bitwise identical on both). CUDA-graph capturable: epochs are kept in
++device memory.
++"""
++import os
++import uuid
++from pathlib import Path
++
++import torch
++import torch.distributed as dist
++from torch.distributed import ProcessGroup
++
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++_MAXB = 128
++_NBLOCKS = 32
++_NTHREADS = 256
++_PF_BLOCKS = int(os.environ.get("VLLM_AR_PREFETCH_BLOCKS", "64"))
++_PF_MODE = int(os.environ.get("VLLM_AR_PREFETCH_MODE", "0"))  # 0: prefetch.L2, 1: ld with evict_last policy
++_PF_MAX_ROWS = int(os.environ.get("VLLM_AR_PREFETCH_MAX_ROWS", "128"))
++_ext = None
++_dbg = 0
++_hint = None  # (weight tensor, nbytes): consumed by the next hostmem all-reduce
++
++
++def set_prefetch_hint(t, max_bytes: int) -> None:
++    global _hint
++    _hint = None if t is None or max_bytes <= 0 else (t, max_bytes)
++
++
++def _load_ext():
++    global _ext
++    if _ext is None:
++        from torch.utils.cpp_extension import load
++
++        _ext = load(
++            "vllm_hostmem_ar",
++            [str(Path(__file__).with_name("hostmem_ar.cu"))],
++            verbose=False,
++        )
++    return _ext
++
++
++class HostMemAllReduce:
++    def __init__(self, group: ProcessGroup, device, max_bytes: int, hidden_hint=None):
++        self.disabled = True
++        self.group = group
++        self.device = torch.device(device)
++        self.rank = dist.get_rank(group)
++        self.world_size = dist.get_world_size(group)
++        if self.world_size != 2 or max_bytes <= 0:
++            return
++        self.max_bytes = max_bytes
++        self.slot = (max_bytes + 4095) // 4096 * 4096
++        total = 4 * self.slot + 2 * _MAXB * 128
++        ext = _load_ext()
++        ranks = dist.get_process_group_ranks(group)
++        name = [f"/dev/shm/vllm_hostmem_ar_{os.getpid()}_{uuid.uuid4().hex[:8]}"]
++        dist.broadcast_object_list(name, src=ranks[0], group=group)
++        path = name[0]
++        if self.rank == 0:
++            _, dp = ext.map_shm(path, total, True)
++        dist.barrier(group)
++        if self.rank == 1:
++            _, dp = ext.map_shm(path, total, False)
++        dist.barrier(group)
++        if self.rank == 0:
++            os.unlink(path)  # mappings stay valid
++        self.dp = dp
++        self.flags = dp + 4 * self.slot
++        self.ctr = torch.zeros(_MAXB, dtype=torch.int32, device=self.device)
++        self.ext = ext
++        self.disabled = False
++        logger.info("HostMem all-reduce enabled (max %d bytes)", max_bytes)
++
++    def should_use(self, inp: torch.Tensor) -> bool:
++        return (
++            not self.disabled
++            and inp.dtype == torch.bfloat16
++            and inp.is_cuda
++            and inp.is_contiguous()
++            and 0 < inp.numel() * 2 <= self.max_bytes
++            and (inp.numel() * 2) % 16 == 0
++        )
++
++    def all_reduce(self, inp: torch.Tensor, pf: torch.Tensor | None = None,
++                   pf_bytes: int = 0) -> torch.Tensor:
++        global _hint
++        if pf is None and _hint is not None and inp.shape[0] <= _PF_MAX_ROWS:
++            pf, pf_bytes = _hint
++            logger.info_once("hostmem AR consuming L2 prefetch hint (%d bytes)", pf_bytes)
++        if os.environ.get("VLLM_AR_PF_DEBUG") and self.rank == 0:
++            global _dbg
++            if inp.shape[0] == 48:
++                _dbg += 1
++            if _dbg <= 140 and inp.shape[0] == 48:
++                logger.info("PFDBG #%d pf=%s", _dbg, None if pf is None else (tuple(pf.shape), pf.data_ptr()))
++        _hint = None
++        out = torch.empty_like(inp)
++        pf_ptr = 0
++        if pf is not None and pf_bytes > 0:
++            pf_bytes = min(pf_bytes, pf.numel() * pf.element_size()) // 128 * 128
++            pf_ptr = pf.data_ptr()
++        else:
++            pf_bytes = 0
++        self.ext.allreduce(inp, out, self.dp, self.flags, self.ctr.data_ptr(),
++                           self.rank, _NBLOCKS, _NTHREADS, self.slot, 1,
++                           pf_ptr, pf_bytes, _PF_BLOCKS, _PF_MODE)
++        return out
+diff --git a/vllm/distributed/device_communicators/hostmem_ar.cu b/vllm/distributed/device_communicators/hostmem_ar.cu
+new file mode 100644
+index 0000000000..5021d0c1be
+--- /dev/null
++++ b/vllm/distributed/device_communicators/hostmem_ar.cu
+@@ -0,0 +1,135 @@
++#include <torch/extension.h>
++#include <c10/cuda/CUDAStream.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <unistd.h>
++#include <stdexcept>
++#include <string>
++
++// returns {host_ptr, dev_ptr}
++std::vector<int64_t> map_shm(std::string path, int64_t size, bool create) {
++  int fd = open(path.c_str(), create ? (O_CREAT | O_RDWR | O_TRUNC) : O_RDWR, 0600);
++  if (fd < 0) throw std::runtime_error("open failed");
++  if (create && ftruncate(fd, size) != 0) throw std::runtime_error("ftruncate");
++  void* p = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++  if (p == MAP_FAILED) throw std::runtime_error("mmap");
++  if (create) memset(p, 0, size);
++  close(fd);
++  auto e = cudaHostRegister(p, size, cudaHostRegisterMapped | cudaHostRegisterPortable);
++  if (e != cudaSuccess) throw std::runtime_error(std::string("hostregister: ") + cudaGetErrorString(e));
++  void* d;
++  e = cudaHostGetDevicePointer(&d, p, 0);
++  if (e != cudaSuccess) throw std::runtime_error("getdevptr");
++  return {(int64_t)p, (int64_t)d};
++}
++
++__device__ __forceinline__ uint4 ldv(const uint4* p) {
++  uint4 r;
++  asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(r.x), "=r"(r.y), "=r"(r.z), "=r"(r.w) : "l"(p));
++  return r;
++}
++__device__ __forceinline__ __nv_bfloat162 add2(uint32_t a, uint32_t b) {
++  __nv_bfloat162 x = *reinterpret_cast<__nv_bfloat162*>(&a), y = *reinterpret_cast<__nv_bfloat162*>(&b);
++  float2 fx = __bfloat1622float2(x), fy = __bfloat1622float2(y);
++  return __floats2bfloat162_rn(fx.x + fy.x, fx.y + fy.y);
++}
++__device__ __forceinline__ uint32_t addp(uint32_t a, uint32_t b) {
++  __nv_bfloat162 r = add2(a, b);
++  return *reinterpret_cast<uint32_t*>(&r);
++}
++
++__device__ __forceinline__ void rd_sum(const uint4* in, uint4* out, const uint4* peer, int lo, int hi, int rank) {
++  int i = lo + threadIdx.x;
++  for (; i + 3 * (int)blockDim.x < hi; i += 4 * blockDim.x) {
++    uint4 v[4];
++#pragma unroll
++    for (int k = 0; k < 4; k++) v[k] = ldv(peer + i + k * blockDim.x);
++#pragma unroll
++    for (int k = 0; k < 4; k++) {
++      uint4 m = in[i + k * blockDim.x], r;
++      uint4 a = rank == 0 ? m : v[k], c = rank == 0 ? v[k] : m;
++      r.x = addp(a.x, c.x); r.y = addp(a.y, c.y); r.z = addp(a.z, c.z); r.w = addp(a.w, c.w);
++      out[i + k * blockDim.x] = r;
++    }
++  }
++  for (; i < hi; i += blockDim.x) {
++    uint4 v = ldv(peer + i), m = in[i], r;
++    uint4 a = rank == 0 ? m : v, c = rank == 0 ? v : m;
++    r.x = addp(a.x, c.x); r.y = addp(a.y, c.y); r.z = addp(a.z, c.z); r.w = addp(a.w, c.w);
++    out[i] = r;
++  }
++}
++__global__ void ar_kernel(const uint4* __restrict__ in, uint4* __restrict__ out, uint4* buf,
++                          volatile uint32_t* flags, int* ctr, int rank, int nvec, int chunk, size_t slot_stride, int S,
++                          int nblocks, const char* pf_ptr, long long pf_bytes, int pf_mode) {
++  int b = blockIdx.x;
++  if (b >= nblocks) {
++    // L2 prefetch blocks: touch [pf_ptr, pf_ptr+pf_bytes) with evict_last priority; no AR work.
++    long long nlines = pf_bytes >> 7;
++    long long stride = (long long)(gridDim.x - nblocks) * blockDim.x;
++    long long l = (long long)(b - nblocks) * blockDim.x + threadIdx.x;
++    if (pf_mode == 0) {
++      for (; l < nlines; l += stride) {
++        const char* a = pf_ptr + (l << 7);
++        asm volatile("prefetch.global.L2::evict_last [%0];" :: "l"(a));
++      }
++    } else {
++      uint64_t pol;
++      asm volatile("createpolicy.fractional.L2::evict_last.b64 %0, 1.0;" : "=l"(pol));
++      uint32_t acc = 0;
++      for (; l < nlines; l += stride) {
++        const char* a = pf_ptr + (l << 7);
++        uint32_t v;
++        asm volatile("ld.global.L1::no_allocate.L2::cache_hint.u32 %0, [%1], %2;" : "=r"(v) : "l"(a), "l"(pol));
++        acc ^= v;
++      }
++      if (acc == 0x9e3779b9u && pf_bytes < 0) ((uint32_t*)out)[0] = acc;  // never true; keeps loads alive
++    }
++    return;
++  }
++  int nb_ = nblocks;
++  int epoch = ctr[b] + 1;
++  int par = epoch & 1;
++  uint4* mine = buf + (size_t)(rank * 2 + par) * slot_stride;
++  const uint4* peer = buf + (size_t)((1 - rank) * 2 + par) * slot_stride;
++  int lo = b * chunk, hi = min(nvec, lo + chunk);
++  int sub = (chunk + S - 1) / S;
++  volatile uint32_t* myf = flags + (rank * nb_ + b) * 32;
++  volatile uint32_t* pf = flags + ((1 - rank) * nb_ + b) * 32;
++  uint32_t base = (uint32_t)(epoch - 1) * S;
++  for (int j = 0; j <= S; j++) {
++    if (j < S) {
++      int l = min(hi, lo + j * sub), h = min(hi, l + sub);
++      for (int i = l + threadIdx.x; i < h; i += blockDim.x) mine[i] = in[i];
++    }
++    if (j >= 1) {
++      if (threadIdx.x == 0) { while ((int)(*pf - (base + j)) < 0) {} __threadfence_system(); }
++      __syncthreads();
++      int l = min(hi, lo + (j - 1) * sub), h = min(hi, l + sub);
++      rd_sum(in, out, peer, l, h, rank);
++    }
++    if (j < S) {
++      __threadfence_system();
++      __syncthreads();
++      if (threadIdx.x == 0) *myf = base + j + 1;
++    }
++  }
++  if (threadIdx.x == 0) ctr[b] = epoch;
++}
++
++void allreduce(torch::Tensor in, torch::Tensor out, int64_t buf, int64_t flags, int64_t ctr, int64_t rank,
++               int64_t nblocks, int64_t nthreads, int64_t slot_bytes, int64_t S,
++               int64_t pf_ptr, int64_t pf_bytes, int64_t pf_blocks, int64_t pf_mode) {
++  int nvec = in.numel() * 2 / 16;
++  int chunk = (nvec + nblocks - 1) / nblocks;
++  ar_kernel<<<(unsigned)(nblocks + (pf_bytes > 0 ? pf_blocks : 0)), nthreads, 0, c10::cuda::getCurrentCUDAStream()>>>(
++      (const uint4*)in.data_ptr(), (uint4*)out.data_ptr(), (uint4*)buf, (volatile uint32_t*)flags, (int*)ctr,
++      (int)rank, nvec, chunk, (size_t)(slot_bytes / 16), (int)S, (int)nblocks, (const char*)pf_ptr,
++      (long long)(pf_bytes > 0 ? pf_bytes : 0), (int)pf_mode);
++}
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("map_shm", &map_shm);
++  m.def("allreduce", &allreduce);
++}
+diff --git a/vllm/model_executor/kernels/linear/__init__.py b/vllm/model_executor/kernels/linear/__init__.py
+index 122c13aa55..f6ad4b8c10 100644
+--- a/vllm/model_executor/kernels/linear/__init__.py
++++ b/vllm/model_executor/kernels/linear/__init__.py
+@@ -744,6 +744,18 @@ def choose_scaled_mm_linear_kernel(
+     )
+ 
+ 
++def _prefer_triton_fp8_block() -> bool:
++    """VLLM_FP8_BLOCK_PREFER_TRITON: 1/0 forces; default on for sm89 (no
++    native block-scaled FP8 kernel there except Triton)."""
++    import os
++
++    v = os.environ.get("VLLM_FP8_BLOCK_PREFER_TRITON")
++    if v is not None:
++        return v == "1"
++    cap = current_platform.get_device_capability()
++    return cap is not None and cap.to_int() == 89
++
++
+ def init_fp8_linear_kernel(
+     activation_quant_key: QuantKey,
+     weight_quant_key: QuantKey,
+@@ -769,6 +781,11 @@ def init_fp8_linear_kernel(
+                 "fp8_block_w8a8",
+             )
+ 
++        if force_kernel is None and _prefer_triton_fp8_block():
++            # W8A8 block-FP8 via Triton (dynamic per-token-group-128 activation
++            # quant, 128x128 block-scaled weights) instead of weight-only Marlin.
++            force_kernel = TritonFp8BlockScaledMMKernel
++
+         kernel_type = choose_scaled_mm_linear_kernel(
+             config=scaled_mm_linear_kernel_config,
+             possible_kernels=_POSSIBLE_FP8_BLOCK_KERNELS,  # type: ignore[misc]
+diff --git a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+index bdea28e11a..851ca8bd06 100644
+--- a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
++++ b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+@@ -124,6 +124,9 @@ _BA_PROJ_OVERLAP_MAX_TOKENS = 256
+ FUSED_GDN_STATE_DTYPES = (torch.float32, torch.bfloat16)
+ 
+ 
++_DELTALOG = os.environ.get("VLLM_GDN_DELTALOG", "1") == "1"
++
++
+ def supports_fused_mtp_decode() -> bool:
+     """ROCm runs the Triton port; elsewhere the CUDA op must be built."""
+     return current_platform.is_rocm() or hasattr(
+@@ -1291,7 +1294,9 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         self,
+         hidden_states: torch.Tensor,
+         qkvz_input: QuantizedActivation | None = None,
+-    ) -> torch.Tensor:
++        proj: tuple[torch.Tensor, torch.Tensor] | None = None,
++        out_fn: Callable[[torch.Tensor], object] | None = None,
++    ):
+         """Forward pass with three parts:
+         1. Input projection
+         2. Core attention (custom op)
+@@ -1305,7 +1310,10 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         # Part 1: Input Projection
+         # ============================================================
+         qkvz_in = hidden_states if qkvz_input is None else qkvz_input
+-        if self._ba_stream is None:
++        if proj is not None:
++            # Row-split caller: the input projections were done per row half.
++            mixed_qkvz, ba = proj
++        elif self._ba_stream is None:
+             mixed_qkvz, _ = self.in_proj_qkvz(qkvz_in)
+             ba, _ = self.in_proj_ba(hidden_states)
+         else:
+@@ -1341,6 +1349,8 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+                 core_attn_out,
+                 layer_name=_encode_layer_name(self.prefix),
+             )
++            if out_fn is not None:
++                return out_fn(core_attn_out.flatten(-2))
+             output, _ = self.out_proj(core_attn_out.flatten(-2))
+             return output
+ 
+@@ -1403,12 +1413,15 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+                 norm_before_gate=self.norm.norm_before_gate,
+                 activation=self.norm.activation,
+             )
++            if out_fn is not None:
++                return out_fn(out_proj_input)
+             output, _ = self.out_proj(out_proj_input)
+             return output
+ 
+         # ============================================================
+         # Part 3: Output Projection
+         # ============================================================
++        assert out_fn is None
+         return self._output_projection(core_attn_out, z)
+ 
+     def forward_xpu(
+@@ -1962,6 +1975,16 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+ 
+         # 2.1: Process the multi-query part
+         if spec_sequence_masks is not None:
++            if self._deltalog_enabled(ssm_state):
++                # DeltaLog: the Triton path reads slot[a-1] as a full state.
++                nsd = attn_metadata.num_spec_decodes
++                _si = spec_state_indices_tensor[:nsd]
++                _na = num_accepted_tokens[:nsd]
++                ops.gdn_deltalog_materialize(
++                    _si if _si.is_contiguous() else _si.contiguous(),
++                    _na if _na.is_contiguous() else _na.contiguous(),
++                    ssm_state,
++                )
+             core_attn_out_spec, last_recurrent_state = (
+                 fused_sigmoid_gating_delta_rule_update(
+                     A_log=self.A_log,
+@@ -2378,8 +2401,16 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+             scale=self.head_k_dim**-0.5,
+             norm_eps=self.layer_norm_epsilon,
+             output_gate_activation=self.norm.activation,
++            **(
++                {"log_mode": 1}
++                if self._deltalog_enabled(self.kv_cache[1])
++                else {}
++            ),
+         )
+ 
++    def _deltalog_enabled(self, ssm_state: torch.Tensor) -> bool:
++        return _DELTALOG and ssm_state.dtype == torch.float32
++
+     def _forward_core_fused_norm_packed(
+         self,
+         mixed_qkvz: torch.Tensor,
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..983d0e8c55
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,162 @@
++{
++    "1": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "2": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "4": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "8": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "16": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "24": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "32": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "40": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "48": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "64": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 2
++    },
++    "96": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 256,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 2
++    },
++    "128": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "192": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "256": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "384": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "512": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "768": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "1024": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "2048": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "4096": {
++        "BLOCK_SIZE_M": 128,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..45c6d4aade
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,162 @@
++{
++    "1": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 3
++    },
++    "2": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "4": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 3
++    },
++    "8": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "16": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "24": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "32": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "40": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "48": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "64": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "96": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "128": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "192": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "256": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "384": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "512": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "768": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "1024": {
++        "BLOCK_SIZE_M": 128,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "2048": {
++        "BLOCK_SIZE_M": 128,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "4096": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..448f588771
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,162 @@
++{
++    "1": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 4
++    },
++    "2": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 3
++    },
++    "4": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "8": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "16": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "24": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "32": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "40": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "48": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "64": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "96": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "128": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "192": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "256": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "384": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "512": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "768": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "1024": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "2048": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "4096": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..b3388079d6
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,162 @@
++{
++    "1": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "2": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "4": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "8": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "16": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "24": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "32": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "40": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "48": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "64": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "96": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "128": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "192": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "256": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "384": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "512": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "768": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "1024": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "2048": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "4096": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..84f9e2f2db
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,162 @@
++{
++    "1": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 4
++    },
++    "2": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 5
++    },
++    "4": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 4
++    },
++    "8": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 4
++    },
++    "16": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "24": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "32": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "40": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "48": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "64": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "96": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "128": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "192": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "256": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "384": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "512": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "768": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "1024": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "2048": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "4096": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/models/qwen3_next.py b/vllm/model_executor/models/qwen3_next.py
+index de566b7b06..3165f07642 100644
+--- a/vllm/model_executor/models/qwen3_next.py
++++ b/vllm/model_executor/models/qwen3_next.py
+@@ -470,9 +470,12 @@ class Qwen3NextAttention(nn.Module):
+     def forward(
+         self,
+         positions: torch.Tensor,
+-        hidden_states: torch.Tensor | QuantizedActivation,
+-    ) -> torch.Tensor:
+-        qkv, _ = self.qkv_proj(hidden_states)
++        hidden_states: torch.Tensor | QuantizedActivation | None,
++        qkv: torch.Tensor | None = None,
++        out_fn=None,
++    ):
++        if qkv is None:
++            qkv, _ = self.qkv_proj(hidden_states)
+         q, k, v, gate = self._project_qkv_gate(qkv, positions)
+         attn_output = self.attn(q, k, v)
+         if gate is not None:
+@@ -490,6 +493,8 @@ class Qwen3NextAttention(nn.Module):
+                 )
+             else:
+                 attn_output = fused_sigmoid_gate_mul(attn_output, gate)
++        if out_fn is not None:
++            return out_fn(attn_output)
+         output, _ = self.o_proj(attn_output)
+         return output
+ 
+diff --git a/vllm/models/qwen3_5/nvidia/model.py b/vllm/models/qwen3_5/nvidia/model.py
+index be483f5a88..e690c0f38e 100644
+--- a/vllm/models/qwen3_5/nvidia/model.py
++++ b/vllm/models/qwen3_5/nvidia/model.py
+@@ -28,6 +28,7 @@ from collections.abc import Iterable
+ from itertools import islice
+ from typing import ClassVar, cast
+ 
++import os
+ import torch
+ from torch import nn
+ from transformers import (
+@@ -125,6 +126,7 @@ from vllm.multimodal.inputs import MultiModalFeatureSpec
+ from vllm.sequence import IntermediateTensors
+ from vllm.tokenizers.registry import cached_tokenizer_from_config
+ 
++from . import rowsplit as _rs
+ from .ops.fused_allreduce_norm_quant import fused_allreduce_gemma_rms_norm_quant
+ from .ops.fused_gdn_gated_norm import fused_gdn_gated_rms_norm
+ from .ops.fused_norm_quant import FP8_DTYPE, gemma_add_rms_norm_quant
+@@ -175,6 +177,20 @@ def _fused_gdn_gated_rms_norm_quant(
+     )
+ 
+ 
++_AR_PF_BYTES = int(os.environ.get("VLLM_AR_PREFETCH_MB", "40")) * (1 << 20)
++
++
++_PF_LAYERS: dict = {}
++
++
++def _set_pf_hint(w, nbytes: int) -> None:
++    from vllm.distributed.device_communicators.hostmem_all_reduce import (
++        set_prefetch_hint,
++    )
++
++    set_prefetch_hint(w, nbytes)
++
++
+ class Qwen3_5RMSNorm(nn.Module):
+     """Gemma-style RMS normalization backed by flashinfer kernels.
+ 
+@@ -217,6 +233,7 @@ class Qwen3_5RMSNorm(nn.Module):
+         linear: LinearBase | None,
+         *,
+         write_y: bool = False,
++        reduce: bool | None = None,
+     ) -> tuple[QuantizedActivation | None, torch.Tensor | None, torch.Tensor]:
+         """``forward`` with the preceding TP all-reduce (``reduce_inputs``)
+         and the consumer ``linear``'s input quantization fused in.
+@@ -228,7 +245,9 @@ class Qwen3_5RMSNorm(nn.Module):
+         activation in x's dtype (when the quantized one is None, or when
+         ``write_y``; else None) and the residual (x when ``residual`` is None).
+         """
+-        allreduce = self.reduce_inputs and residual is not None
++        allreduce = (
++            self.reduce_inputs if reduce is None else reduce
++        ) and residual is not None
+         key = None if linear is None else _norm_quant_key(linear)
+         if key is None:
+             if allreduce:
+@@ -281,6 +300,8 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+ 
+         self.layer_type = layer_type
+         self.layer_idx = extract_layer_index(prefix)
++        self._pf_prefix = prefix
++        _PF_LAYERS[prefix] = self
+         is_moe_layer = config.model_type == "qwen3_5_moe_text"
+         self.use_attn_reduce_scatter_for_moe = (
+             parallel_config.use_sequence_parallel_moe
+@@ -396,6 +417,11 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+                 ),
+             )
+ 
++    def _pf_in_proj_weight(self):
++        if self.layer_type == "linear_attention":
++            return self.linear_attn.in_proj_qkvz.weight
++        return self.self_attn.qkv_proj.weight
++
+     def forward(
+         self,
+         hidden_states: torch.Tensor,
+@@ -418,6 +444,10 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+             in_proj,
+             write_y=is_gdn,
+         )
++        # L2 prefetch hint for the hostmem all-reduce that ends attention: the
++        # gate_up weight read right after it.
++        if _AR_PF_BYTES > 0 and isinstance(self.mlp, Qwen3NextMLP):
++            _set_pf_hint(self.mlp.gate_up_proj.weight, _AR_PF_BYTES)
+         if is_gdn:
+             hidden_states = self.linear_attn.forward_cuda(
+                 hidden_states, qkvz_input=in_proj_input
+@@ -445,7 +475,15 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+                 hidden_states, residual, gate_up
+             )
+         )
++        if _AR_PF_BYTES > 0:
++            nxt = self.__dict__.get("_pf_next", False)
++            if nxt is False:
++                head, _, tail = self._pf_prefix.rpartition(".")
++                nxt = _PF_LAYERS.get(f"{head}.{int(tail) + 1}") if tail.isdigit() else None
++                object.__setattr__(self, "_pf_next", nxt)
++            _set_pf_hint(None if nxt is None else nxt._pf_in_proj_weight(), _AR_PF_BYTES)
+         hidden_states = self.mlp(hidden_states if mlp_input is None else mlp_input)
++        # (no clear: with deferred all-reduces the MLP's AR runs in the next norm)
+ 
+         if self.layer_scale:
+             if len(hidden_states.shape) == 2:
+@@ -463,6 +501,107 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+ 
+         return hidden_states, residual
+ 
++    def rowsplit_ok(self) -> bool:
++        """Whether this layer can run the row-split pipeline (cached)."""
++        ok = getattr(self, "_rs_ok", None)
++        if ok is None:
++            is_gdn = self.layer_type == "linear_attention"
++            in_proj = (
++                self.linear_attn.in_proj_qkvz if is_gdn else self.self_attn.qkv_proj
++            )
++            out_proj = self.linear_attn.out_proj if is_gdn else self.self_attn.o_proj
++            ok = (
++                _rs.ROWSPLIT
++                and self.use_fused_allreduce_norm
++                and not self.use_attn_reduce_scatter_for_moe
++                and not self.layer_scale
++                and isinstance(self.mlp, Qwen3NextMLP)
++                and (not is_gdn or self.linear_attn._fused_gdn_gated_rms_norm is not None)
++                and _norm_quant_key(in_proj) is None
++                and _norm_quant_key(self.mlp.gate_up_proj) is None
++                and get_input_quant_key(out_proj) is None
++                and get_input_quant_key(self.mlp.down_proj) is None
++                and not getattr(in_proj, "requires_unquantized_input", False)
++            )
++            self._rs_ok = ok
++        return ok
++
++    def forward_split(
++        self,
++        xs: list[torch.Tensor],
++        evs: list,
++        residual: torch.Tensor | None,
++        positions: torch.Tensor,
++        embed: torch.Tensor | None = None,
++    ):
++        """Row-split layer forward. ``xs`` are the two row halves of the
++        (already all-reduced) layer input, ``evs`` the side-stream events that
++        complete them (None when ready); ``residual`` is the full residual
++        (None for the first layer, whose input is then also the residual).
++        Returns the same for the next layer: halves of this layer's
++        all-reduced MLP output, their events, and the full residual."""
++        n = xs[0].shape[0] + xs[1].shape[0]
++        a = xs[0].shape[0]
++        sl = (slice(0, a), slice(a, n))
++        is_gdn = self.layer_type == "linear_attention"
++        in_proj = self.linear_attn.in_proj_qkvz if is_gdn else self.self_attn.qkv_proj
++        out_proj = self.linear_attn.out_proj if is_gdn else self.self_attn.o_proj
++        # First layer: the embedding is both the input and the residual.
++        full_res = embed if residual is None else residual
++        assert full_res is not None
++
++        # 1. input norm + input projection, half by half: the second half's
++        # all-reduce (side stream) overlaps the first half's GEMM.
++        projs = []
++        for i in range(2):
++            x = _rs.consume(xs[i], evs[i])
++            r = None if residual is None else residual[sl[i]]
++            _, y, r = self.input_layernorm.forward_fused(x, r, None, reduce=False)
++            if is_gdn:
++                projs.append(
++                    (
++                        self.linear_attn.in_proj_qkvz(y)[0],
++                        self.linear_attn.in_proj_ba(y)[0],
++                    )
++                )
++            else:
++                projs.append(self.self_attn.qkv_proj(y)[0])
++        if is_gdn:
++            proj = (
++                torch.cat([projs[0][0], projs[1][0]]),
++                torch.cat([projs[0][1], projs[1][1]]),
++            )
++        else:
++            qkv = torch.cat(projs)
++
++        # 2. token mixer core on all rows; out_proj + all-reduce per half.
++        pend: list = []
++
++        def out_fn(inp: torch.Tensor):
++            for i in range(2):
++                p, _ = out_proj(inp[sl[i]])
++                pend.append(_rs.async_all_reduce(p))
++            return None
++
++        if is_gdn:
++            self.linear_attn.forward_cuda(full_res, proj=proj, out_fn=out_fn)
++        else:
++            self.self_attn(
++                hidden_states=None, positions=positions, qkv=qkv, out_fn=out_fn
++            )
++
++        # 3. post-attention add+norm and MLP per half; each half's down_proj
++        # all-reduce overlaps the other half's MLP.
++        outs = []
++        for i in range(2):
++            h = _rs.consume(*pend[i])
++            _, y, _ = self.post_attention_layernorm.forward_fused(
++                h, full_res[sl[i]], None, reduce=False
++            )
++            m = self.mlp(y)
++            outs.append(_rs.async_all_reduce(m))
++        return [outs[0][0], outs[1][0]], [outs[0][1], outs[1][1]], full_res
++
+ 
+ class Qwen3_5Model(nn.Module, EagleModelMixin):
+     # Qwen3.5 ships the GDN in_proj checkpoints separately (qwen3-next
+@@ -579,6 +718,22 @@ class Qwen3_5Model(nn.Module, EagleModelMixin):
+             assert residual is None
+ 
+         aux_hidden_states = self._maybe_add_hidden_state([], 0, hidden_states, residual)
++        if (
++            _rs.ROWSPLIT
++            and hidden_states.shape[0] >= _rs.ROWSPLIT_MIN_TOKENS
++            and residual is None
++            and not aux_hidden_states
++            and not self.aux_hidden_state_layers
++            and self.mlp_output_is_partial
++            and not self.use_sequence_parallel
++            and get_pp_group().is_first_rank
++            and get_pp_group().is_last_rank
++            and all(
++                layer.rowsplit_ok()
++                for layer in islice(self.layers, self.start_layer, self.end_layer)
++            )
++        ):
++            return self._forward_rowsplit(hidden_states, positions)
+         for layer_idx, layer in enumerate(
+             islice(self.layers, self.start_layer, self.end_layer),
+             start=self.start_layer,
+@@ -620,6 +775,28 @@ class Qwen3_5Model(nn.Module, EagleModelMixin):
+             return hidden_states, aux_hidden_states
+         return hidden_states
+ 
++    def _forward_rowsplit(
++        self, hidden_states: torch.Tensor, positions: torch.Tensor
++    ) -> torch.Tensor:
++        logger.info_once(
++            "Row-split TP all-reduce pipelining active for steps with >= %d tokens.",
++            _rs.ROWSPLIT_MIN_TOKENS,
++        )
++        n = hidden_states.shape[0]
++        a = _rs.split_point(n)
++        embed = hidden_states
++        xs = [embed[:a], embed[a:]]
++        evs: list = [None, None]
++        residual = None
++        for layer in islice(self.layers, self.start_layer, self.end_layer):
++            xs, evs, residual = layer.forward_split(
++                xs, evs, residual, positions, embed=embed
++            )
++        xs = [_rs.consume(x, e) for x, e in zip(xs, evs)]
++        hidden_states = torch.cat(xs)
++        hidden_states, _ = self.norm(hidden_states, residual)
++        return hidden_states
++
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         loader = AutoWeightsLoader(self)
+         return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+diff --git a/vllm/models/qwen3_5/nvidia/rowsplit.py b/vllm/models/qwen3_5/nvidia/rowsplit.py
+new file mode 100644
+index 0000000000..774e173a8e
+--- /dev/null
++++ b/vllm/models/qwen3_5/nvidia/rowsplit.py
+@@ -0,0 +1,56 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Row-split pipelining of the TP all-reduces in large (mixed/prefill) steps.
++
++The all-reduce of a row-parallel GEMM output is split by rows into two halves;
++each half is reduced on a side stream while the main stream runs the GEMMs of
++the other half. Everything between all-reduces is row-independent, so results
++are exactly the unsplit ones up to the all-reduce's own rounding (identical).
++"""
++
++import os
++
++import torch
++
++from vllm.distributed import tensor_model_parallel_all_reduce
++
++ROWSPLIT = os.environ.get("VLLM_ROWSPLIT", "1") == "1"
++ROWSPLIT_MIN_TOKENS = int(os.environ.get("VLLM_ROWSPLIT_MIN_TOKENS", "256"))
++
++_side: torch.cuda.Stream | None = None
++
++
++def side_stream() -> torch.cuda.Stream:
++    global _side
++    if _side is None:
++        _side = torch.cuda.Stream()
++    return _side
++
++
++def split_point(n: int) -> int:
++    a = (n // 2 + 7) // 8 * 8
++    return min(max(a, 1), n - 1)
++
++
++def async_all_reduce(t: torch.Tensor) -> tuple[torch.Tensor, torch.cuda.Event]:
++    """All-reduce ``t`` (produced on the current stream) on the side stream.
++    Returns (result, event); the consumer must ``wait_event`` before using it."""
++    main = torch.cuda.current_stream()
++    side = side_stream()
++    ready = torch.cuda.Event()
++    ready.record(main)
++    done = torch.cuda.Event()
++    with torch.cuda.stream(side):
++        side.wait_event(ready)
++        out = tensor_model_parallel_all_reduce(t)
++        done.record(side)
++    # t is read on the side stream, out is written there.
++    t.record_stream(side)
++    return out, done
++
++
++def consume(out: torch.Tensor, ev: torch.cuda.Event | None) -> torch.Tensor:
++    main = torch.cuda.current_stream()
++    if ev is not None:
++        main.wait_event(ev)
++        out.record_stream(main)
++    return out
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+index 5286d9008d..1f820234dc 100644
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -25,6 +25,8 @@ from copy import deepcopy
+ from dataclasses import replace
+ from typing import Any, NamedTuple
+ 
++import os
++
+ import numpy as np
+ import torch
+ import torch.nn as nn
+@@ -128,6 +130,7 @@ from vllm.v1.worker.gpu.input_batch import (
+     InputBuffers,
+     combine_sampled_and_draft_tokens,
+     expand_idx_mapping,
++    get_num_sampled_and_rejected,
+     post_update,
+     post_update_num_computed_tokens,
+     prepare_pos_seq_lens,
+@@ -158,6 +161,11 @@ from vllm.v1.worker.gpu.sample.batch_shard import (
+ )
+ from vllm.v1.worker.gpu.sample.logits_processor import build_custom_logits_processors
+ from vllm.v1.worker.gpu.sample.output import SamplerOutput
++from vllm.v1.worker.gpu.sample.greedy_local import (
++    combine_shard_argmax,
++    greedy_verify,
++    local_argmax_pairs,
++)
+ from vllm.v1.worker.gpu.sample.prompt_logprob import PromptLogprobsWorker
+ from vllm.v1.worker.gpu.sample.sampler import Sampler
+ from vllm.v1.worker.gpu.shutdown import free_before_shutdown
+@@ -197,6 +205,7 @@ from vllm.v1.worker.utils import (
+ from vllm.v1.worker.workspace import lock_workspace, use_workspace_lane
+ 
+ logger = init_logger(__name__)
++_GREEDY_LOCAL = os.environ.get("VLLM_GREEDY_LOCAL_ARGMAX", "1") == "1"
+ 
+ 
+ class GPUModelRunner(LoRAModelRunnerMixin):
+@@ -1698,12 +1707,121 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         )
+         return block_tables, slot_mappings
+ 
++    def _greedy_local_eligible(
++        self, input_batch: InputBatch, grammar_output: GrammarOutput | None
++    ) -> bool:
++        """Whether the whole batch can use the target-side greedy local-argmax path."""
++        if not _GREEDY_LOCAL or self.sampler is None or grammar_output is not None:
++            return False
++        if self.pcp_manager is not None or not hasattr(self.model, "compute_logits_local"):
++            return False
++        sampler = self.sampler
++        if (
++            type(sampler) is not Sampler
++            or sampler.return_sampling_mask
++            or sampler.trace_replay_state is not None
++            or sampler.compute_nans
++            or input_batch.has_structured_output_reqs
++            or input_batch.num_reqs == 0
++        ):
++            return False
++        rs = self.rejection_sampler
++        if input_batch.num_draft_tokens > 0:
++            if (
++                rs is None
++                or rs.watermark_key is not None
++                or rs.enable_adaptive_verification
++                or rs.synthetic_conditional_rates is not None
++                or rs.fly_window_size != 0
++                or self.adaptive_verification is not None
++            ):
++                return False
++        idx = input_batch.idx_mapping_np
++        if sampler.get_logprobs_dims(idx) is not None:
++            return False
++        if bool(np.any(sampler.needs_logits_processing[idx])):
++            return False
++        if not bool(np.all(sampler.sampling_states.temperature.np[idx] == 0.0)):
++            return False
++        return True
++
++    def _sample_greedy_local(
++        self, hidden_states: torch.Tensor, input_batch: InputBatch
++    ) -> tuple[SamplerOutput, torch.Tensor, torch.Tensor]:
++        from vllm.distributed import (
++            get_tensor_model_parallel_rank,
++            get_tensor_model_parallel_world_size,
++            tensor_model_parallel_all_gather,
++        )
++
++        logger.info_once("Using target-side greedy local-argmax sampling fast path.")
++        assert self.sampler is not None
++        tp = get_tensor_model_parallel_world_size()
++        rank = get_tensor_model_parallel_rank()
++        sample_hidden = hidden_states[input_batch.logits_indices]
++        local_logits = self.model.compute_logits_local(sample_hidden)
++        vals, gids = local_argmax_pairs(local_logits, rank, self.vocab_size)
++        if tp > 1:
++            pair = torch.stack([vals, gids.float()], dim=-1)
++            gathered = tensor_model_parallel_all_gather(pair, dim=-1).view(
++                vals.shape[0], tp, 2
++            )
++            tgt = combine_shard_argmax(gathered[:, :, 0], gathered[:, :, 1].long())
++        else:
++            tgt = gids
++        num_reqs = input_batch.num_reqs
++        if input_batch.num_draft_tokens > 0:
++            from vllm.v1.worker.gpu.spec_decode.rejection_sampler import (
++                gather_draft_sampled,
++            )
++
++            draft_sampled, _ = gather_draft_sampled(
++                input_batch.input_ids,
++                input_batch.positions,
++                input_batch.logits_indices,
++                input_batch.expanded_idx_mapping,
++                input_batch.expanded_local_pos,
++                self.sampler.req_states.prefill_len.gpu,
++            )
++            assert self.rejection_sampler is not None
++            width = self.rejection_sampler.num_speculative_steps + 1
++            sampled, num_sampled = greedy_verify(
++                tgt, draft_sampled, input_batch.cu_num_logits, num_reqs, width
++            )
++            num_sampled, num_rejected = get_num_sampled_and_rejected(
++                num_sampled,
++                input_batch.seq_lens,
++                input_batch.cu_num_logits,
++                input_batch.idx_mapping,
++                self.sampler.req_states.prefill_len.gpu,
++            )
++        else:
++            sampled = tgt.view(-1, 1)
++            num_sampled, num_rejected = get_num_sampled_and_rejected(
++                input_batch.seq_lens.new_ones(num_reqs),
++                input_batch.seq_lens,
++                input_batch.cu_num_logits,
++                input_batch.idx_mapping,
++                self.sampler.req_states.prefill_len.gpu,
++            )
++        out = SamplerOutput(
++            sampled_token_ids=sampled,
++            logprobs_tensors=None,
++            num_nans=None,
++            num_sampled=num_sampled,
++            num_rejected=num_rejected,
++            sampling_mask_tensors=None,
++        )
++        return out, num_sampled, num_rejected
++
+     def sample(
+         self,
+         hidden_states: torch.Tensor,
+         input_batch: InputBatch,
+         grammar_output: GrammarOutput | None,
+     ) -> tuple[SamplerOutput, torch.Tensor, torch.Tensor]:
++        if self._greedy_local_eligible(input_batch, grammar_output):
++            return self._sample_greedy_local(hidden_states, input_batch)
+         shard_metadata = None
+         global_input_batch = input_batch
+         if self.batch_sharder is not None:
+diff --git a/vllm/v1/worker/gpu/sample/greedy_local.py b/vllm/v1/worker/gpu/sample/greedy_local.py
+new file mode 100644
+index 0000000000..26f9c9ab83
+--- /dev/null
++++ b/vllm/v1/worker/gpu/sample/greedy_local.py
+@@ -0,0 +1,89 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Greedy fast path for the target sampler / verifier under tensor parallelism.
++
++When every request in the batch is greedy (temperature 0) and needs no logits
++processing, the sampled/verified token at each logits row is just the argmax over
++the full vocabulary. Each TP rank takes the argmax over its own vocab shard, the
++(value, global id) pairs are all-gathered (8 B per row instead of a full
++logits all-to-all) and the first maximum wins (ties -> lower global id, as
++torch.argmax / the rejection kernel). Greedy verification then accepts the
++leading draft tokens that equal the target argmax and takes the target argmax at
++the first mismatch (or at the bonus row), exactly like the rejection kernel.
++"""
++
++import torch
++
++from vllm.triton_utils import tl, triton
++from vllm.v1.worker.gpu.sample.greedy_argmax import greedy_argmax
++
++
++def combine_shard_argmax(values: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
++    """values/ids: [rows, tp] per-shard (max, global id), shards in increasing
++    vocab order. Returns the global id of the first maximum."""
++    r = values.argmax(dim=-1, keepdim=True)  # first max -> lowest shard on ties
++    return ids.gather(-1, r).squeeze(-1).to(torch.int64)
++
++
++def local_argmax_pairs(
++    local_logits: torch.Tensor, rank: int, vocab_size: int
++) -> tuple[torch.Tensor, torch.Tensor]:
++    """(max value fp32, global id int64) over this rank's shard, first max on ties,
++    NaN treated as -inf, columns beyond ``vocab_size`` ignored."""
++    shard_w = local_logits.shape[-1]
++    start = rank * shard_w
++    n_eff = max(0, min(shard_w, vocab_size - start))
++    view = local_logits[:, :n_eff]
++    idx = greedy_argmax(view)
++    vals = view.gather(1, idx[:, None]).squeeze(1).float()
++    vals = torch.where(vals != vals, torch.full_like(vals, float("-inf")), vals)
++    return vals, idx + start
++
++
++@triton.jit
++def _greedy_verify_kernel(
++    tgt_ptr,  # [num_logits] int64 target argmax
++    draft_ptr,  # [num_logits] int64 draft token at each logits row (row i holds input)
++    cu_ptr,  # [num_reqs + 1]
++    sampled_ptr,  # [num_reqs, width]
++    sampled_stride,
++    num_sampled_ptr,  # [num_reqs] int32
++):
++    r = tl.program_id(0)
++    start = tl.load(cu_ptr + r).to(tl.int64)
++    end = tl.load(cu_ptr + r + 1).to(tl.int64)
++    n_draft = end - start - 1
++    a = tl.zeros((), tl.int64)
++    verifying = True
++    for i in range(n_draft):
++        if verifying:
++            t = tl.load(tgt_ptr + start + i)
++            d = tl.load(draft_ptr + start + i + 1)
++            acc = (t == d) & (d >= 0)
++            tl.store(sampled_ptr + r * sampled_stride + i, t)
++            verifying = acc
++            a += acc
++    # a == n_draft: bonus token; else the rejection row was already stored.
++    if a == n_draft:
++        tl.store(sampled_ptr + r * sampled_stride + a, tl.load(tgt_ptr + start + a))
++    tl.store(num_sampled_ptr + r, (a + 1).to(tl.int32))
++
++
++def greedy_verify(
++    tgt: torch.Tensor,
++    draft_sampled: torch.Tensor,
++    cu_num_logits: torch.Tensor,
++    num_reqs: int,
++    width: int,
++) -> tuple[torch.Tensor, torch.Tensor]:
++    sampled = torch.full((num_reqs, width), -1, dtype=torch.int64, device=tgt.device)
++    num_sampled = torch.empty(num_reqs, dtype=torch.int32, device=tgt.device)
++    _greedy_verify_kernel[(num_reqs,)](
++        tgt,
++        draft_sampled,
++        cu_num_logits,
++        sampled,
++        sampled.stride(0),
++        num_sampled,
++        num_warps=1,
++    )
++    return sampled, num_sampled
+diff --git a/vllm/v1/worker/mamba_utils.py b/vllm/v1/worker/mamba_utils.py
+index 1bc2a33a88..f2095efaf9 100644
+--- a/vllm/v1/worker/mamba_utils.py
++++ b/vllm/v1/worker/mamba_utils.py
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ import dataclasses
++import os
+ import itertools
+ from collections.abc import Callable
+ from typing import Any, NamedTuple
+@@ -1290,6 +1291,67 @@ class MambaSpecDecodeGPUContext:
+             TEMPORAL_TILES=_TEMPORAL_TILES,
+         )
+ 
++    def _deltalog_heads(self) -> int:
++        """Value-head count if every temporal state is fp32 [HV,128,128]
++        (the DeltaLog layout), else 0. Cached."""
++        cached = getattr(self, "_deltalog_hv", None)
++        if cached is not None:
++            return cached
++        hv = 0
++        if self.is_initialized and os.environ.get("VLLM_GDN_DELTALOG", "1") == "1":
++            conv = self.state_conv_widths.cpu()
++            elem = self.state_elem_sizes.cpu()
++            inner = self.state_inner_sizes.cpu()
++            tmask = conv == 0
++            if bool(tmask.any()):
++                e, i = elem[tmask], inner[tmask]
++                if bool((e == 4).all()) and bool((i == i[0]).all()):
++                    n = int(i[0])
++                    if n % (128 * 128) == 0:
++                        hv = n // (128 * 128)
++        self._deltalog_hv = hv
++        return hv
++
++    def run_deltalog_materialize(
++        self,
++        mode: int,
++        num_reqs: int,
++        idx_mapping: torch.Tensor | None,
++        a: torch.Tensor,
++        b: torch.Tensor,
++        c: torch.Tensor,
++    ) -> None:
++        """DeltaLog: before a block-boundary copy reads the temporal state at
++        bt[col+bias], replay that slot's logged rows into a full state.
++        mode 0 (precopy): a=src_col, b=dst_col, c=token_bias.
++        mode 1 (postprocess): a=num_accepted, b=state_idx, c=new_num_computed.
++        """
++        hv = self._deltalog_heads()
++        if hv == 0 or num_reqs == 0 or idx_mapping is None:
++            return
++        from vllm import _custom_ops as ops
++
++        idx_mapping, a, b, c = (
++            t if t.dtype == torch.int32 else t.to(torch.int32)
++            for t in (idx_mapping, a, b, c)
++        )
++        ops.gdn_deltalog_materialize_all(
++            self.block_table_ptrs,
++            self.block_table_stride_req,
++            self.state_base_addrs,
++            self.state_block_strides,
++            self.state_conv_widths,
++            self.state_group_indices,
++            idx_mapping,
++            a,
++            b,
++            c,
++            mode,
++            self.block_size,
++            num_reqs,
++            hv,
++        )
++
+     def run_fused_precopy(
+         self,
+         num_reqs: int,
+@@ -1312,6 +1374,9 @@ class MambaSpecDecodeGPUContext:
+         """
+         if num_reqs == 0 or not self.is_initialized:
+             return
++        self.run_deltalog_materialize(
++            0, num_reqs, idx_mapping, src_col_gpu, state_idx_gpu, token_bias_gpu
++        )
+         total_states = self.num_states
+         grid = (num_reqs, total_states, _TEMPORAL_TILES)
+         precopy_mamba_align_fused_kernel[grid](
+@@ -1363,6 +1428,14 @@ class MambaSpecDecodeGPUContext:
+         accepted_snapshot = self.num_accepted_tokens_snapshot
+         accepted_snapshot.copy_(num_accepted_tokens_gpu)
+ 
++        self.run_deltalog_materialize(
++            1,
++            num_reqs,
++            idx_mapping,
++            accepted_snapshot,
++            state_idx_gpu,
++            new_num_computed_tokens_gpu,
++        )
+         total_states = self.num_states
+         grid = (num_reqs, total_states, _TEMPORAL_TILES)
+         postprocess_mamba_fused_kernel[grid](

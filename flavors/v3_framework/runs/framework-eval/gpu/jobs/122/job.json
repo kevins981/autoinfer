@@ -1,0 +1,19 @@
+{
+  "id": 122,
+  "pid": 1438288,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "hm-probe",
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/hm/run.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-15T00:30:48+00:00",
+  "state": "done",
+  "started": "2026-11-15T00:47:35+00:00",
+  "ended": "2026-11-15T00:47:42+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.122
+}

@@ -1,0 +1,1735 @@
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..da2d982564 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -2,6 +2,8 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ 
++import os
++
+ import torch
+ from torch.distributed import ProcessGroup
+ 
+@@ -119,6 +121,24 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         self.fi_pcie_ipc_ar_comm: FlashInferPcieIpcAllReduce | None = None
+         self.aiter_ar_comm: AiterCustomAllreduce | None = None
+         self.use_aiter_ag_rs: bool = False
++        self.hostmem_ar_comm = None
++        _hm_bytes = int(os.environ.get("VLLM_HOSTMEM_AR_MAX_BYTES", "1310720"))
++        if (
++            _hm_bytes > 0
++            and self.world_size == 2
++            and unique_name.split(":")[0] == "tp"
++            and current_platform.is_cuda()
++            and not (
++                torch.cuda.device_count() >= 2 and torch.cuda.can_device_access_peer(0, 1)
++            )
++        ):
++            from vllm.distributed.device_communicators.hostmem_all_reduce import (
++                HostMemAllReduce,
++            )
++
++            self.hostmem_ar_comm = HostMemAllReduce(
++                self.cpu_group, self.device, _hm_bytes
++            )
+ 
+         # cuMem graph buffers cannot be IPC-registered; capture copies them instead.
+         config = get_current_vllm_config_or_none()
+@@ -369,6 +389,8 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             enabled_ar_backends.append("CUSTOM")
+         if self.symm_mem_comm is not None and not self.symm_mem_comm.disabled:
+             enabled_ar_backends.append("SYMM_MEM")
++        if self.hostmem_ar_comm is not None and not self.hostmem_ar_comm.disabled:
++            enabled_ar_backends.insert(0, "HOSTMEM")
+         if self.pynccl_comm is not None and not self.pynccl_comm.disabled:
+             enabled_ar_backends.append("PYNCCL")
+ 
+@@ -399,6 +421,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             out = torch.ops.vllm.all_reduce_symmetric_with_copy(input_)
+             if out is not None:
+                 return out
++        hm = self.hostmem_ar_comm
++        if hm is not None and hm.should_use(input_):
++            return hm.all_reduce(input_)
+         qr_comm = self.qr_comm
+         if (
+             qr_comm is not None
+diff --git a/vllm/distributed/device_communicators/hostmem_all_reduce.py b/vllm/distributed/device_communicators/hostmem_all_reduce.py
+new file mode 100644
+index 0000000000..0d753c0758
+--- /dev/null
++++ b/vllm/distributed/device_communicators/hostmem_all_reduce.py
+@@ -0,0 +1,87 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Small-message 2-rank all-reduce through mapped pinned host memory (no P2P).
++
++Each rank writes its partial into its own slot of a POSIX shm segment that is
++cudaHostRegister-ed (mapped) in both processes, flags it, polls the peer flag,
++reads the peer slot and sums rank0 + rank1 (same order on both ranks, so the
++result is bitwise identical on both). CUDA-graph capturable: epochs are kept in
++device memory.
++"""
++import os
++import uuid
++from pathlib import Path
++
++import torch
++import torch.distributed as dist
++from torch.distributed import ProcessGroup
++
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++_MAXB = 128
++_NBLOCKS = 32
++_NTHREADS = 256
++_ext = None
++
++
++def _load_ext():
++    global _ext
++    if _ext is None:
++        from torch.utils.cpp_extension import load
++
++        _ext = load(
++            "vllm_hostmem_ar",
++            [str(Path(__file__).with_name("hostmem_ar.cu"))],
++            verbose=False,
++        )
++    return _ext
++
++
++class HostMemAllReduce:
++    def __init__(self, group: ProcessGroup, device, max_bytes: int, hidden_hint=None):
++        self.disabled = True
++        self.group = group
++        self.device = torch.device(device)
++        self.rank = dist.get_rank(group)
++        self.world_size = dist.get_world_size(group)
++        if self.world_size != 2 or max_bytes <= 0:
++            return
++        self.max_bytes = max_bytes
++        self.slot = (max_bytes + 4095) // 4096 * 4096
++        total = 4 * self.slot + 2 * _MAXB * 128
++        ext = _load_ext()
++        ranks = dist.get_process_group_ranks(group)
++        name = [f"/dev/shm/vllm_hostmem_ar_{os.getpid()}_{uuid.uuid4().hex[:8]}"]
++        dist.broadcast_object_list(name, src=ranks[0], group=group)
++        path = name[0]
++        if self.rank == 0:
++            _, dp = ext.map_shm(path, total, True)
++        dist.barrier(group)
++        if self.rank == 1:
++            _, dp = ext.map_shm(path, total, False)
++        dist.barrier(group)
++        if self.rank == 0:
++            os.unlink(path)  # mappings stay valid
++        self.dp = dp
++        self.flags = dp + 4 * self.slot
++        self.ctr = torch.zeros(_MAXB, dtype=torch.int32, device=self.device)
++        self.ext = ext
++        self.disabled = False
++        logger.info("HostMem all-reduce enabled (max %d bytes)", max_bytes)
++
++    def should_use(self, inp: torch.Tensor) -> bool:
++        return (
++            not self.disabled
++            and inp.dtype == torch.bfloat16
++            and inp.is_cuda
++            and inp.is_contiguous()
++            and 0 < inp.numel() * 2 <= self.max_bytes
++            and (inp.numel() * 2) % 16 == 0
++        )
++
++    def all_reduce(self, inp: torch.Tensor) -> torch.Tensor:
++        out = torch.empty_like(inp)
++        self.ext.allreduce(inp, out, self.dp, self.flags, self.ctr.data_ptr(),
++                           self.rank, _NBLOCKS, _NTHREADS, self.slot, 1)
++        return out
+diff --git a/vllm/distributed/device_communicators/hostmem_ar.cu b/vllm/distributed/device_communicators/hostmem_ar.cu
+new file mode 100644
+index 0000000000..345b16f443
+--- /dev/null
++++ b/vllm/distributed/device_communicators/hostmem_ar.cu
+@@ -0,0 +1,107 @@
++#include <torch/extension.h>
++#include <c10/cuda/CUDAStream.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <unistd.h>
++#include <stdexcept>
++#include <string>
++
++// returns {host_ptr, dev_ptr}
++std::vector<int64_t> map_shm(std::string path, int64_t size, bool create) {
++  int fd = open(path.c_str(), create ? (O_CREAT | O_RDWR | O_TRUNC) : O_RDWR, 0600);
++  if (fd < 0) throw std::runtime_error("open failed");
++  if (create && ftruncate(fd, size) != 0) throw std::runtime_error("ftruncate");
++  void* p = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++  if (p == MAP_FAILED) throw std::runtime_error("mmap");
++  if (create) memset(p, 0, size);
++  close(fd);
++  auto e = cudaHostRegister(p, size, cudaHostRegisterMapped | cudaHostRegisterPortable);
++  if (e != cudaSuccess) throw std::runtime_error(std::string("hostregister: ") + cudaGetErrorString(e));
++  void* d;
++  e = cudaHostGetDevicePointer(&d, p, 0);
++  if (e != cudaSuccess) throw std::runtime_error("getdevptr");
++  return {(int64_t)p, (int64_t)d};
++}
++
++__device__ __forceinline__ uint4 ldv(const uint4* p) {
++  uint4 r;
++  asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(r.x), "=r"(r.y), "=r"(r.z), "=r"(r.w) : "l"(p));
++  return r;
++}
++__device__ __forceinline__ __nv_bfloat162 add2(uint32_t a, uint32_t b) {
++  __nv_bfloat162 x = *reinterpret_cast<__nv_bfloat162*>(&a), y = *reinterpret_cast<__nv_bfloat162*>(&b);
++  float2 fx = __bfloat1622float2(x), fy = __bfloat1622float2(y);
++  return __floats2bfloat162_rn(fx.x + fy.x, fx.y + fy.y);
++}
++__device__ __forceinline__ uint32_t addp(uint32_t a, uint32_t b) {
++  __nv_bfloat162 r = add2(a, b);
++  return *reinterpret_cast<uint32_t*>(&r);
++}
++
++__device__ __forceinline__ void rd_sum(const uint4* in, uint4* out, const uint4* peer, int lo, int hi, int rank) {
++  int i = lo + threadIdx.x;
++  for (; i + 3 * (int)blockDim.x < hi; i += 4 * blockDim.x) {
++    uint4 v[4];
++#pragma unroll
++    for (int k = 0; k < 4; k++) v[k] = ldv(peer + i + k * blockDim.x);
++#pragma unroll
++    for (int k = 0; k < 4; k++) {
++      uint4 m = in[i + k * blockDim.x], r;
++      uint4 a = rank == 0 ? m : v[k], c = rank == 0 ? v[k] : m;
++      r.x = addp(a.x, c.x); r.y = addp(a.y, c.y); r.z = addp(a.z, c.z); r.w = addp(a.w, c.w);
++      out[i + k * blockDim.x] = r;
++    }
++  }
++  for (; i < hi; i += blockDim.x) {
++    uint4 v = ldv(peer + i), m = in[i], r;
++    uint4 a = rank == 0 ? m : v, c = rank == 0 ? v : m;
++    r.x = addp(a.x, c.x); r.y = addp(a.y, c.y); r.z = addp(a.z, c.z); r.w = addp(a.w, c.w);
++    out[i] = r;
++  }
++}
++__global__ void ar_kernel(const uint4* __restrict__ in, uint4* __restrict__ out, uint4* buf,
++                          volatile uint32_t* flags, int* ctr, int rank, int nvec, int chunk, size_t slot_stride, int S) {
++  int b = blockIdx.x;
++  int epoch = ctr[b] + 1;
++  int par = epoch & 1;
++  uint4* mine = buf + (size_t)(rank * 2 + par) * slot_stride;
++  const uint4* peer = buf + (size_t)((1 - rank) * 2 + par) * slot_stride;
++  int lo = b * chunk, hi = min(nvec, lo + chunk);
++  int sub = (chunk + S - 1) / S;
++  volatile uint32_t* myf = flags + (rank * gridDim.x + b) * 32;
++  volatile uint32_t* pf = flags + ((1 - rank) * gridDim.x + b) * 32;
++  uint32_t base = (uint32_t)(epoch - 1) * S;
++  for (int j = 0; j <= S; j++) {
++    if (j < S) {
++      int l = min(hi, lo + j * sub), h = min(hi, l + sub);
++      for (int i = l + threadIdx.x; i < h; i += blockDim.x) mine[i] = in[i];
++    }
++    if (j >= 1) {
++      if (threadIdx.x == 0) { while ((int)(*pf - (base + j)) < 0) {} __threadfence_system(); }
++      __syncthreads();
++      int l = min(hi, lo + (j - 1) * sub), h = min(hi, l + sub);
++      rd_sum(in, out, peer, l, h, rank);
++    }
++    if (j < S) {
++      __threadfence_system();
++      __syncthreads();
++      if (threadIdx.x == 0) *myf = base + j + 1;
++    }
++  }
++  if (threadIdx.x == 0) ctr[b] = epoch;
++}
++
++void allreduce(torch::Tensor in, torch::Tensor out, int64_t buf, int64_t flags, int64_t ctr, int64_t rank,
++               int64_t nblocks, int64_t nthreads, int64_t slot_bytes, int64_t S) {
++  int nvec = in.numel() * 2 / 16;
++  int chunk = (nvec + nblocks - 1) / nblocks;
++  ar_kernel<<<nblocks, nthreads, 0, c10::cuda::getCurrentCUDAStream()>>>(
++      (const uint4*)in.data_ptr(), (uint4*)out.data_ptr(), (uint4*)buf, (volatile uint32_t*)flags, (int*)ctr,
++      (int)rank, nvec, chunk, (size_t)(slot_bytes / 16), (int)S);
++}
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("map_shm", &map_shm);
++  m.def("allreduce", &allreduce);
++}
+diff --git a/vllm/model_executor/kernels/linear/__init__.py b/vllm/model_executor/kernels/linear/__init__.py
+index 122c13aa55..f6ad4b8c10 100644
+--- a/vllm/model_executor/kernels/linear/__init__.py
++++ b/vllm/model_executor/kernels/linear/__init__.py
+@@ -744,6 +744,18 @@ def choose_scaled_mm_linear_kernel(
+     )
+ 
+ 
++def _prefer_triton_fp8_block() -> bool:
++    """VLLM_FP8_BLOCK_PREFER_TRITON: 1/0 forces; default on for sm89 (no
++    native block-scaled FP8 kernel there except Triton)."""
++    import os
++
++    v = os.environ.get("VLLM_FP8_BLOCK_PREFER_TRITON")
++    if v is not None:
++        return v == "1"
++    cap = current_platform.get_device_capability()
++    return cap is not None and cap.to_int() == 89
++
++
+ def init_fp8_linear_kernel(
+     activation_quant_key: QuantKey,
+     weight_quant_key: QuantKey,
+@@ -769,6 +781,11 @@ def init_fp8_linear_kernel(
+                 "fp8_block_w8a8",
+             )
+ 
++        if force_kernel is None and _prefer_triton_fp8_block():
++            # W8A8 block-FP8 via Triton (dynamic per-token-group-128 activation
++            # quant, 128x128 block-scaled weights) instead of weight-only Marlin.
++            force_kernel = TritonFp8BlockScaledMMKernel
++
+         kernel_type = choose_scaled_mm_linear_kernel(
+             config=scaled_mm_linear_kernel_config,
+             possible_kernels=_POSSIBLE_FP8_BLOCK_KERNELS,  # type: ignore[misc]
+diff --git a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+index bdea28e11a..c2e4f75a8e 100644
+--- a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
++++ b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+@@ -1291,7 +1291,9 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         self,
+         hidden_states: torch.Tensor,
+         qkvz_input: QuantizedActivation | None = None,
+-    ) -> torch.Tensor:
++        proj: tuple[torch.Tensor, torch.Tensor] | None = None,
++        out_fn: Callable[[torch.Tensor], object] | None = None,
++    ):
+         """Forward pass with three parts:
+         1. Input projection
+         2. Core attention (custom op)
+@@ -1305,7 +1307,10 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         # Part 1: Input Projection
+         # ============================================================
+         qkvz_in = hidden_states if qkvz_input is None else qkvz_input
+-        if self._ba_stream is None:
++        if proj is not None:
++            # Row-split caller: the input projections were done per row half.
++            mixed_qkvz, ba = proj
++        elif self._ba_stream is None:
+             mixed_qkvz, _ = self.in_proj_qkvz(qkvz_in)
+             ba, _ = self.in_proj_ba(hidden_states)
+         else:
+@@ -1341,6 +1346,8 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+                 core_attn_out,
+                 layer_name=_encode_layer_name(self.prefix),
+             )
++            if out_fn is not None:
++                return out_fn(core_attn_out.flatten(-2))
+             output, _ = self.out_proj(core_attn_out.flatten(-2))
+             return output
+ 
+@@ -1403,12 +1410,15 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+                 norm_before_gate=self.norm.norm_before_gate,
+                 activation=self.norm.activation,
+             )
++            if out_fn is not None:
++                return out_fn(out_proj_input)
+             output, _ = self.out_proj(out_proj_input)
+             return output
+ 
+         # ============================================================
+         # Part 3: Output Projection
+         # ============================================================
++        assert out_fn is None
+         return self._output_projection(core_attn_out, z)
+ 
+     def forward_xpu(
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..983d0e8c55
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,162 @@
++{
++    "1": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "2": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "4": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "8": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "16": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "24": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "32": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "40": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "48": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "64": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 2
++    },
++    "96": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 256,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 2
++    },
++    "128": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "192": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "256": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "384": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "512": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "768": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "1024": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "2048": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "4096": {
++        "BLOCK_SIZE_M": 128,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..45c6d4aade
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,162 @@
++{
++    "1": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 3
++    },
++    "2": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "4": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 3
++    },
++    "8": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "16": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "24": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "32": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "40": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "48": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "64": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "96": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "128": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "192": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "256": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "384": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "512": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "768": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "1024": {
++        "BLOCK_SIZE_M": 128,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "2048": {
++        "BLOCK_SIZE_M": 128,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "4096": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..448f588771
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,162 @@
++{
++    "1": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 4
++    },
++    "2": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 3
++    },
++    "4": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "8": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "16": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "24": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "32": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "40": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "48": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "64": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "96": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "128": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "192": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "256": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "384": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "512": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "768": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "1024": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "2048": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "4096": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..b3388079d6
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,162 @@
++{
++    "1": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "2": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "4": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "8": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "16": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "24": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "32": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "40": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "48": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "64": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "96": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "128": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "192": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "256": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "384": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "512": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "768": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "1024": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "2048": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "4096": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..84f9e2f2db
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,162 @@
++{
++    "1": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 4
++    },
++    "2": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 5
++    },
++    "4": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 4
++    },
++    "8": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 8,
++        "num_stages": 4
++    },
++    "16": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 5
++    },
++    "24": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "32": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "40": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "48": {
++        "BLOCK_SIZE_M": 16,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "64": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 4
++    },
++    "96": {
++        "BLOCK_SIZE_M": 32,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "128": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "192": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 64,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "256": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "384": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "512": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "768": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "1024": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "2048": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    },
++    "4096": {
++        "BLOCK_SIZE_M": 64,
++        "BLOCK_SIZE_N": 128,
++        "BLOCK_SIZE_K": 128,
++        "GROUP_SIZE_M": 8,
++        "num_warps": 4,
++        "num_stages": 3
++    }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/models/qwen3_next.py b/vllm/model_executor/models/qwen3_next.py
+index de566b7b06..3165f07642 100644
+--- a/vllm/model_executor/models/qwen3_next.py
++++ b/vllm/model_executor/models/qwen3_next.py
+@@ -470,9 +470,12 @@ class Qwen3NextAttention(nn.Module):
+     def forward(
+         self,
+         positions: torch.Tensor,
+-        hidden_states: torch.Tensor | QuantizedActivation,
+-    ) -> torch.Tensor:
+-        qkv, _ = self.qkv_proj(hidden_states)
++        hidden_states: torch.Tensor | QuantizedActivation | None,
++        qkv: torch.Tensor | None = None,
++        out_fn=None,
++    ):
++        if qkv is None:
++            qkv, _ = self.qkv_proj(hidden_states)
+         q, k, v, gate = self._project_qkv_gate(qkv, positions)
+         attn_output = self.attn(q, k, v)
+         if gate is not None:
+@@ -490,6 +493,8 @@ class Qwen3NextAttention(nn.Module):
+                 )
+             else:
+                 attn_output = fused_sigmoid_gate_mul(attn_output, gate)
++        if out_fn is not None:
++            return out_fn(attn_output)
+         output, _ = self.o_proj(attn_output)
+         return output
+ 
+diff --git a/vllm/models/qwen3_5/nvidia/model.py b/vllm/models/qwen3_5/nvidia/model.py
+index be483f5a88..d4cacba83b 100644
+--- a/vllm/models/qwen3_5/nvidia/model.py
++++ b/vllm/models/qwen3_5/nvidia/model.py
+@@ -125,6 +125,7 @@ from vllm.multimodal.inputs import MultiModalFeatureSpec
+ from vllm.sequence import IntermediateTensors
+ from vllm.tokenizers.registry import cached_tokenizer_from_config
+ 
++from . import rowsplit as _rs
+ from .ops.fused_allreduce_norm_quant import fused_allreduce_gemma_rms_norm_quant
+ from .ops.fused_gdn_gated_norm import fused_gdn_gated_rms_norm
+ from .ops.fused_norm_quant import FP8_DTYPE, gemma_add_rms_norm_quant
+@@ -217,6 +218,7 @@ class Qwen3_5RMSNorm(nn.Module):
+         linear: LinearBase | None,
+         *,
+         write_y: bool = False,
++        reduce: bool | None = None,
+     ) -> tuple[QuantizedActivation | None, torch.Tensor | None, torch.Tensor]:
+         """``forward`` with the preceding TP all-reduce (``reduce_inputs``)
+         and the consumer ``linear``'s input quantization fused in.
+@@ -228,7 +230,9 @@ class Qwen3_5RMSNorm(nn.Module):
+         activation in x's dtype (when the quantized one is None, or when
+         ``write_y``; else None) and the residual (x when ``residual`` is None).
+         """
+-        allreduce = self.reduce_inputs and residual is not None
++        allreduce = (
++            self.reduce_inputs if reduce is None else reduce
++        ) and residual is not None
+         key = None if linear is None else _norm_quant_key(linear)
+         if key is None:
+             if allreduce:
+@@ -463,6 +467,107 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+ 
+         return hidden_states, residual
+ 
++    def rowsplit_ok(self) -> bool:
++        """Whether this layer can run the row-split pipeline (cached)."""
++        ok = getattr(self, "_rs_ok", None)
++        if ok is None:
++            is_gdn = self.layer_type == "linear_attention"
++            in_proj = (
++                self.linear_attn.in_proj_qkvz if is_gdn else self.self_attn.qkv_proj
++            )
++            out_proj = self.linear_attn.out_proj if is_gdn else self.self_attn.o_proj
++            ok = (
++                _rs.ROWSPLIT
++                and self.use_fused_allreduce_norm
++                and not self.use_attn_reduce_scatter_for_moe
++                and not self.layer_scale
++                and isinstance(self.mlp, Qwen3NextMLP)
++                and (not is_gdn or self.linear_attn._fused_gdn_gated_rms_norm is not None)
++                and _norm_quant_key(in_proj) is None
++                and _norm_quant_key(self.mlp.gate_up_proj) is None
++                and get_input_quant_key(out_proj) is None
++                and get_input_quant_key(self.mlp.down_proj) is None
++                and not getattr(in_proj, "requires_unquantized_input", False)
++            )
++            self._rs_ok = ok
++        return ok
++
++    def forward_split(
++        self,
++        xs: list[torch.Tensor],
++        evs: list,
++        residual: torch.Tensor | None,
++        positions: torch.Tensor,
++        embed: torch.Tensor | None = None,
++    ):
++        """Row-split layer forward. ``xs`` are the two row halves of the
++        (already all-reduced) layer input, ``evs`` the side-stream events that
++        complete them (None when ready); ``residual`` is the full residual
++        (None for the first layer, whose input is then also the residual).
++        Returns the same for the next layer: halves of this layer's
++        all-reduced MLP output, their events, and the full residual."""
++        n = xs[0].shape[0] + xs[1].shape[0]
++        a = xs[0].shape[0]
++        sl = (slice(0, a), slice(a, n))
++        is_gdn = self.layer_type == "linear_attention"
++        in_proj = self.linear_attn.in_proj_qkvz if is_gdn else self.self_attn.qkv_proj
++        out_proj = self.linear_attn.out_proj if is_gdn else self.self_attn.o_proj
++        # First layer: the embedding is both the input and the residual.
++        full_res = embed if residual is None else residual
++        assert full_res is not None
++
++        # 1. input norm + input projection, half by half: the second half's
++        # all-reduce (side stream) overlaps the first half's GEMM.
++        projs = []
++        for i in range(2):
++            x = _rs.consume(xs[i], evs[i])
++            r = None if residual is None else residual[sl[i]]
++            _, y, r = self.input_layernorm.forward_fused(x, r, None, reduce=False)
++            if is_gdn:
++                projs.append(
++                    (
++                        self.linear_attn.in_proj_qkvz(y)[0],
++                        self.linear_attn.in_proj_ba(y)[0],
++                    )
++                )
++            else:
++                projs.append(self.self_attn.qkv_proj(y)[0])
++        if is_gdn:
++            proj = (
++                torch.cat([projs[0][0], projs[1][0]]),
++                torch.cat([projs[0][1], projs[1][1]]),
++            )
++        else:
++            qkv = torch.cat(projs)
++
++        # 2. token mixer core on all rows; out_proj + all-reduce per half.
++        pend: list = []
++
++        def out_fn(inp: torch.Tensor):
++            for i in range(2):
++                p, _ = out_proj(inp[sl[i]])
++                pend.append(_rs.async_all_reduce(p))
++            return None
++
++        if is_gdn:
++            self.linear_attn.forward_cuda(full_res, proj=proj, out_fn=out_fn)
++        else:
++            self.self_attn(
++                hidden_states=None, positions=positions, qkv=qkv, out_fn=out_fn
++            )
++
++        # 3. post-attention add+norm and MLP per half; each half's down_proj
++        # all-reduce overlaps the other half's MLP.
++        outs = []
++        for i in range(2):
++            h = _rs.consume(*pend[i])
++            _, y, _ = self.post_attention_layernorm.forward_fused(
++                h, full_res[sl[i]], None, reduce=False
++            )
++            m = self.mlp(y)
++            outs.append(_rs.async_all_reduce(m))
++        return [outs[0][0], outs[1][0]], [outs[0][1], outs[1][1]], full_res
++
+ 
+ class Qwen3_5Model(nn.Module, EagleModelMixin):
+     # Qwen3.5 ships the GDN in_proj checkpoints separately (qwen3-next
+@@ -579,6 +684,22 @@ class Qwen3_5Model(nn.Module, EagleModelMixin):
+             assert residual is None
+ 
+         aux_hidden_states = self._maybe_add_hidden_state([], 0, hidden_states, residual)
++        if (
++            _rs.ROWSPLIT
++            and hidden_states.shape[0] >= _rs.ROWSPLIT_MIN_TOKENS
++            and residual is None
++            and not aux_hidden_states
++            and not self.aux_hidden_state_layers
++            and self.mlp_output_is_partial
++            and not self.use_sequence_parallel
++            and get_pp_group().is_first_rank
++            and get_pp_group().is_last_rank
++            and all(
++                layer.rowsplit_ok()
++                for layer in islice(self.layers, self.start_layer, self.end_layer)
++            )
++        ):
++            return self._forward_rowsplit(hidden_states, positions)
+         for layer_idx, layer in enumerate(
+             islice(self.layers, self.start_layer, self.end_layer),
+             start=self.start_layer,
+@@ -620,6 +741,28 @@ class Qwen3_5Model(nn.Module, EagleModelMixin):
+             return hidden_states, aux_hidden_states
+         return hidden_states
+ 
++    def _forward_rowsplit(
++        self, hidden_states: torch.Tensor, positions: torch.Tensor
++    ) -> torch.Tensor:
++        logger.info_once(
++            "Row-split TP all-reduce pipelining active for steps with >= %d tokens.",
++            _rs.ROWSPLIT_MIN_TOKENS,
++        )
++        n = hidden_states.shape[0]
++        a = _rs.split_point(n)
++        embed = hidden_states
++        xs = [embed[:a], embed[a:]]
++        evs: list = [None, None]
++        residual = None
++        for layer in islice(self.layers, self.start_layer, self.end_layer):
++            xs, evs, residual = layer.forward_split(
++                xs, evs, residual, positions, embed=embed
++            )
++        xs = [_rs.consume(x, e) for x, e in zip(xs, evs)]
++        hidden_states = torch.cat(xs)
++        hidden_states, _ = self.norm(hidden_states, residual)
++        return hidden_states
++
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         loader = AutoWeightsLoader(self)
+         return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+diff --git a/vllm/models/qwen3_5/nvidia/rowsplit.py b/vllm/models/qwen3_5/nvidia/rowsplit.py
+new file mode 100644
+index 0000000000..774e173a8e
+--- /dev/null
++++ b/vllm/models/qwen3_5/nvidia/rowsplit.py
+@@ -0,0 +1,56 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Row-split pipelining of the TP all-reduces in large (mixed/prefill) steps.
++
++The all-reduce of a row-parallel GEMM output is split by rows into two halves;
++each half is reduced on a side stream while the main stream runs the GEMMs of
++the other half. Everything between all-reduces is row-independent, so results
++are exactly the unsplit ones up to the all-reduce's own rounding (identical).
++"""
++
++import os
++
++import torch
++
++from vllm.distributed import tensor_model_parallel_all_reduce
++
++ROWSPLIT = os.environ.get("VLLM_ROWSPLIT", "1") == "1"
++ROWSPLIT_MIN_TOKENS = int(os.environ.get("VLLM_ROWSPLIT_MIN_TOKENS", "256"))
++
++_side: torch.cuda.Stream | None = None
++
++
++def side_stream() -> torch.cuda.Stream:
++    global _side
++    if _side is None:
++        _side = torch.cuda.Stream()
++    return _side
++
++
++def split_point(n: int) -> int:
++    a = (n // 2 + 7) // 8 * 8
++    return min(max(a, 1), n - 1)
++
++
++def async_all_reduce(t: torch.Tensor) -> tuple[torch.Tensor, torch.cuda.Event]:
++    """All-reduce ``t`` (produced on the current stream) on the side stream.
++    Returns (result, event); the consumer must ``wait_event`` before using it."""
++    main = torch.cuda.current_stream()
++    side = side_stream()
++    ready = torch.cuda.Event()
++    ready.record(main)
++    done = torch.cuda.Event()
++    with torch.cuda.stream(side):
++        side.wait_event(ready)
++        out = tensor_model_parallel_all_reduce(t)
++        done.record(side)
++    # t is read on the side stream, out is written there.
++    t.record_stream(side)
++    return out, done
++
++
++def consume(out: torch.Tensor, ev: torch.cuda.Event | None) -> torch.Tensor:
++    main = torch.cuda.current_stream()
++    if ev is not None:
++        main.wait_event(ev)
++        out.record_stream(main)
++    return out
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+index 5286d9008d..1f820234dc 100644
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -25,6 +25,8 @@ from copy import deepcopy
+ from dataclasses import replace
+ from typing import Any, NamedTuple
+ 
++import os
++
+ import numpy as np
+ import torch
+ import torch.nn as nn
+@@ -128,6 +130,7 @@ from vllm.v1.worker.gpu.input_batch import (
+     InputBuffers,
+     combine_sampled_and_draft_tokens,
+     expand_idx_mapping,
++    get_num_sampled_and_rejected,
+     post_update,
+     post_update_num_computed_tokens,
+     prepare_pos_seq_lens,
+@@ -158,6 +161,11 @@ from vllm.v1.worker.gpu.sample.batch_shard import (
+ )
+ from vllm.v1.worker.gpu.sample.logits_processor import build_custom_logits_processors
+ from vllm.v1.worker.gpu.sample.output import SamplerOutput
++from vllm.v1.worker.gpu.sample.greedy_local import (
++    combine_shard_argmax,
++    greedy_verify,
++    local_argmax_pairs,
++)
+ from vllm.v1.worker.gpu.sample.prompt_logprob import PromptLogprobsWorker
+ from vllm.v1.worker.gpu.sample.sampler import Sampler
+ from vllm.v1.worker.gpu.shutdown import free_before_shutdown
+@@ -197,6 +205,7 @@ from vllm.v1.worker.utils import (
+ from vllm.v1.worker.workspace import lock_workspace, use_workspace_lane
+ 
+ logger = init_logger(__name__)
++_GREEDY_LOCAL = os.environ.get("VLLM_GREEDY_LOCAL_ARGMAX", "1") == "1"
+ 
+ 
+ class GPUModelRunner(LoRAModelRunnerMixin):
+@@ -1698,12 +1707,121 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         )
+         return block_tables, slot_mappings
+ 
++    def _greedy_local_eligible(
++        self, input_batch: InputBatch, grammar_output: GrammarOutput | None
++    ) -> bool:
++        """Whether the whole batch can use the target-side greedy local-argmax path."""
++        if not _GREEDY_LOCAL or self.sampler is None or grammar_output is not None:
++            return False
++        if self.pcp_manager is not None or not hasattr(self.model, "compute_logits_local"):
++            return False
++        sampler = self.sampler
++        if (
++            type(sampler) is not Sampler
++            or sampler.return_sampling_mask
++            or sampler.trace_replay_state is not None
++            or sampler.compute_nans
++            or input_batch.has_structured_output_reqs
++            or input_batch.num_reqs == 0
++        ):
++            return False
++        rs = self.rejection_sampler
++        if input_batch.num_draft_tokens > 0:
++            if (
++                rs is None
++                or rs.watermark_key is not None
++                or rs.enable_adaptive_verification
++                or rs.synthetic_conditional_rates is not None
++                or rs.fly_window_size != 0
++                or self.adaptive_verification is not None
++            ):
++                return False
++        idx = input_batch.idx_mapping_np
++        if sampler.get_logprobs_dims(idx) is not None:
++            return False
++        if bool(np.any(sampler.needs_logits_processing[idx])):
++            return False
++        if not bool(np.all(sampler.sampling_states.temperature.np[idx] == 0.0)):
++            return False
++        return True
++
++    def _sample_greedy_local(
++        self, hidden_states: torch.Tensor, input_batch: InputBatch
++    ) -> tuple[SamplerOutput, torch.Tensor, torch.Tensor]:
++        from vllm.distributed import (
++            get_tensor_model_parallel_rank,
++            get_tensor_model_parallel_world_size,
++            tensor_model_parallel_all_gather,
++        )
++
++        logger.info_once("Using target-side greedy local-argmax sampling fast path.")
++        assert self.sampler is not None
++        tp = get_tensor_model_parallel_world_size()
++        rank = get_tensor_model_parallel_rank()
++        sample_hidden = hidden_states[input_batch.logits_indices]
++        local_logits = self.model.compute_logits_local(sample_hidden)
++        vals, gids = local_argmax_pairs(local_logits, rank, self.vocab_size)
++        if tp > 1:
++            pair = torch.stack([vals, gids.float()], dim=-1)
++            gathered = tensor_model_parallel_all_gather(pair, dim=-1).view(
++                vals.shape[0], tp, 2
++            )
++            tgt = combine_shard_argmax(gathered[:, :, 0], gathered[:, :, 1].long())
++        else:
++            tgt = gids
++        num_reqs = input_batch.num_reqs
++        if input_batch.num_draft_tokens > 0:
++            from vllm.v1.worker.gpu.spec_decode.rejection_sampler import (
++                gather_draft_sampled,
++            )
++
++            draft_sampled, _ = gather_draft_sampled(
++                input_batch.input_ids,
++                input_batch.positions,
++                input_batch.logits_indices,
++                input_batch.expanded_idx_mapping,
++                input_batch.expanded_local_pos,
++                self.sampler.req_states.prefill_len.gpu,
++            )
++            assert self.rejection_sampler is not None
++            width = self.rejection_sampler.num_speculative_steps + 1
++            sampled, num_sampled = greedy_verify(
++                tgt, draft_sampled, input_batch.cu_num_logits, num_reqs, width
++            )
++            num_sampled, num_rejected = get_num_sampled_and_rejected(
++                num_sampled,
++                input_batch.seq_lens,
++                input_batch.cu_num_logits,
++                input_batch.idx_mapping,
++                self.sampler.req_states.prefill_len.gpu,
++            )
++        else:
++            sampled = tgt.view(-1, 1)
++            num_sampled, num_rejected = get_num_sampled_and_rejected(
++                input_batch.seq_lens.new_ones(num_reqs),
++                input_batch.seq_lens,
++                input_batch.cu_num_logits,
++                input_batch.idx_mapping,
++                self.sampler.req_states.prefill_len.gpu,
++            )
++        out = SamplerOutput(
++            sampled_token_ids=sampled,
++            logprobs_tensors=None,
++            num_nans=None,
++            num_sampled=num_sampled,
++            num_rejected=num_rejected,
++            sampling_mask_tensors=None,
++        )
++        return out, num_sampled, num_rejected
++
+     def sample(
+         self,
+         hidden_states: torch.Tensor,
+         input_batch: InputBatch,
+         grammar_output: GrammarOutput | None,
+     ) -> tuple[SamplerOutput, torch.Tensor, torch.Tensor]:
++        if self._greedy_local_eligible(input_batch, grammar_output):
++            return self._sample_greedy_local(hidden_states, input_batch)
+         shard_metadata = None
+         global_input_batch = input_batch
+         if self.batch_sharder is not None:
+diff --git a/vllm/v1/worker/gpu/sample/greedy_local.py b/vllm/v1/worker/gpu/sample/greedy_local.py
+new file mode 100644
+index 0000000000..26f9c9ab83
+--- /dev/null
++++ b/vllm/v1/worker/gpu/sample/greedy_local.py
+@@ -0,0 +1,89 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Greedy fast path for the target sampler / verifier under tensor parallelism.
++
++When every request in the batch is greedy (temperature 0) and needs no logits
++processing, the sampled/verified token at each logits row is just the argmax over
++the full vocabulary. Each TP rank takes the argmax over its own vocab shard, the
++(value, global id) pairs are all-gathered (8 B per row instead of a full
++logits all-to-all) and the first maximum wins (ties -> lower global id, as
++torch.argmax / the rejection kernel). Greedy verification then accepts the
++leading draft tokens that equal the target argmax and takes the target argmax at
++the first mismatch (or at the bonus row), exactly like the rejection kernel.
++"""
++
++import torch
++
++from vllm.triton_utils import tl, triton
++from vllm.v1.worker.gpu.sample.greedy_argmax import greedy_argmax
++
++
++def combine_shard_argmax(values: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
++    """values/ids: [rows, tp] per-shard (max, global id), shards in increasing
++    vocab order. Returns the global id of the first maximum."""
++    r = values.argmax(dim=-1, keepdim=True)  # first max -> lowest shard on ties
++    return ids.gather(-1, r).squeeze(-1).to(torch.int64)
++
++
++def local_argmax_pairs(
++    local_logits: torch.Tensor, rank: int, vocab_size: int
++) -> tuple[torch.Tensor, torch.Tensor]:
++    """(max value fp32, global id int64) over this rank's shard, first max on ties,
++    NaN treated as -inf, columns beyond ``vocab_size`` ignored."""
++    shard_w = local_logits.shape[-1]
++    start = rank * shard_w
++    n_eff = max(0, min(shard_w, vocab_size - start))
++    view = local_logits[:, :n_eff]
++    idx = greedy_argmax(view)
++    vals = view.gather(1, idx[:, None]).squeeze(1).float()
++    vals = torch.where(vals != vals, torch.full_like(vals, float("-inf")), vals)
++    return vals, idx + start
++
++
++@triton.jit
++def _greedy_verify_kernel(
++    tgt_ptr,  # [num_logits] int64 target argmax
++    draft_ptr,  # [num_logits] int64 draft token at each logits row (row i holds input)
++    cu_ptr,  # [num_reqs + 1]
++    sampled_ptr,  # [num_reqs, width]
++    sampled_stride,
++    num_sampled_ptr,  # [num_reqs] int32
++):
++    r = tl.program_id(0)
++    start = tl.load(cu_ptr + r).to(tl.int64)
++    end = tl.load(cu_ptr + r + 1).to(tl.int64)
++    n_draft = end - start - 1
++    a = tl.zeros((), tl.int64)
++    verifying = True
++    for i in range(n_draft):
++        if verifying:
++            t = tl.load(tgt_ptr + start + i)
++            d = tl.load(draft_ptr + start + i + 1)
++            acc = (t == d) & (d >= 0)
++            tl.store(sampled_ptr + r * sampled_stride + i, t)
++            verifying = acc
++            a += acc
++    # a == n_draft: bonus token; else the rejection row was already stored.
++    if a == n_draft:
++        tl.store(sampled_ptr + r * sampled_stride + a, tl.load(tgt_ptr + start + a))
++    tl.store(num_sampled_ptr + r, (a + 1).to(tl.int32))
++
++
++def greedy_verify(
++    tgt: torch.Tensor,
++    draft_sampled: torch.Tensor,
++    cu_num_logits: torch.Tensor,
++    num_reqs: int,
++    width: int,
++) -> tuple[torch.Tensor, torch.Tensor]:
++    sampled = torch.full((num_reqs, width), -1, dtype=torch.int64, device=tgt.device)
++    num_sampled = torch.empty(num_reqs, dtype=torch.int32, device=tgt.device)
++    _greedy_verify_kernel[(num_reqs,)](
++        tgt,
++        draft_sampled,
++        cu_num_logits,
++        sampled,
++        sampled.stride(0),
++        num_sampled,
++        num_warps=1,
++    )
++    return sampled, num_sampled

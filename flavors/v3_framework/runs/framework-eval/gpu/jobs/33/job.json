@@ -1,0 +1,18 @@
+{
+  "id": 33,
+  "pid": 1109701,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "t2-l2prefetch",
+  "timeout_min": 8.0,
+  "command": [
+    "./run7.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-2.w1",
+  "submitted": "2026-11-14T18:10:14+00:00",
+  "state": "done",
+  "started": "2026-11-14T18:22:44+00:00",
+  "ended": "2026-11-14T18:23:01+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.278
+}

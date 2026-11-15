@@ -1,0 +1,19 @@
+{
+  "id": 37,
+  "pid": 1125105,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "t1-k3b",
+  "timeout_min": 18.0,
+  "command": [
+    "bash",
+    "agents/leader-1/job_k3b.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T18:32:51+00:00",
+  "state": "done",
+  "started": "2026-11-14T18:46:14+00:00",
+  "ended": "2026-11-14T18:50:29+00:00",
+  "exit_code": 3,
+  "gpu_minutes": 4.257
+}

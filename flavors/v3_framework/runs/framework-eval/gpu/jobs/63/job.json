@@ -1,0 +1,20 @@
+{
+  "id": 63,
+  "pid": 1227461,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "deltalog-smoke-gdn2",
+  "timeout_min": 10.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/run13.sh",
+    "agents/leader-2.w1/out/deltalog_smoke3"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T20:39:37+00:00",
+  "state": "done",
+  "started": "2026-11-14T20:47:45+00:00",
+  "ended": "2026-11-14T20:50:08+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.38
+}

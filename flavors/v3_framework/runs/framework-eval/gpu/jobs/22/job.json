@@ -1,0 +1,16 @@
+{
+  "id": 22,
+  "pid": 1055906,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": null,
+  "timeout_min": 15.0,
+  "command": [
+    "agents/leader-1.w1/dv/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T17:06:16+00:00",
+  "state": "refused",
+  "reason": "pid 1072115 (this user, outside this run, 14978 MiB); pid 1072116 (this user, outside this run, 14978 MiB)",
+  "ended": "2026-11-14T17:26:09+00:00"
+}

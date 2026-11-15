@@ -1,0 +1,15 @@
+{
+ "id": "T3-1",
+ "team": "T3",
+ "by": "leader-3",
+ "backend": "codex",
+ "model": "gpt-6.1-sol",
+ "effort": "high",
+ "work": "/scratch/kevinsong/learning/autoinfer/.cache/sparring_work/framework-eval-T3-1-1794709014",
+ "sid_new": "2c31b416-3350-436d-8521-369b773bf8a7",
+ "session": "01a1dcfe-484c-7211-a086-c6ca3d165ace",
+ "state": "ended",
+ "turns": 5,
+ "started": "2026-11-15T02:16:54.312768+00:00",
+ "ended": "2026-11-15T02:19:34.585538+00:00"
+}

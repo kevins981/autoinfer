@@ -1,0 +1,18 @@
+{
+  "id": 81,
+  "pid": 1276913,
+  "team": "T3",
+  "agent": "leader-3",
+  "label": "t3-drain",
+  "timeout_min": 3.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-3/jobs/drain.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-3/scripts",
+  "submitted": "2026-11-14T21:46:11+00:00",
+  "state": "done",
+  "started": "2026-11-14T21:46:11+00:00",
+  "ended": "2026-11-14T21:46:18+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.119
+}

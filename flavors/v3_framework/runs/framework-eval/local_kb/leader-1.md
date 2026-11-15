@@ -5,3 +5,32 @@
 - Jobs: 1,3,4,6 worker AR microbenches. Host-mem AR: 43 us vs NCCL 53-60 at n=42; neutral at n>=260. PCIe: store+load concurrently 15-17 GB/s/dir (T2 job 8).
 - job 5 failed (socket path). flags1 A/B rerun pending.
 - Workspaces: t1-base (BASE, my A/Bs), t1-ar (worker: host AR).
+- 2026-11-14: shared map dropped (human). Own map = reports/T1-sweep/; add update-<n>.md at each resync/closing (include comparison with T2's map: they add L2 prefetch, prefill lockstep, W8A8 decode, DeltaLog). No map proposals.
+- T1-001 flags +3.1% (job 9); T1-002 hostmem AR +4.35% (job 13); T1-003 k=3 screen neg -3.6%, TTFT p99 2079 (gate fail); 128K ok.
+- T1-004 = T1-001+T1-002: OFFICIAL 707.6 (+11.3%) -> CHAMPION. Workspace t1-c4 = T1-004.
+- Queued: bss A/B (batch-sharded sampling) on t1-c4. Worker task 4: reduced-vocab draft head (BPE-rank ids).
+- T1-005 = T1-004 + --enable-batch-sharded-sampling: +1.78% unofficial. Not yet official (bundle with reduced-vocab draft).
+- T1-006 draft vocab subset: dropped (mixed -1.57%, imbalance; low value). Worker task 5: AR/GEMM overlap microbench (8 min).
+- T2 will file + officially eval T1-005 + their capture sizes (T2-00x) if their ABBA wins. Don't duplicate.
+- Profile T1-005 (agents/leader-1/jobs/prof_t1005): decode 34.9 ms (nsys): Marlin 18.1, hostmem AR 5.6 (41.6us x135), GDN 2.96, target lm_head 1.45, fp8 draft heads 2x0.77, sendrecv 0.39, idle 2.8 ms: gaps sit in eager input prep before the target graph (mamba align precopy, page indices, rope positions: ~1.6 ms) + 1.2 ms nsys graph-launch artifact. Mixed step 140 ms: Marlin 55, NCCL AR 41, idle 21.6 (eager).
+- Candidate: input-prep gaps before target graph ~1.5 ms/step (~4%) -> verify with TRACE=graph.
+- T1-007 AR/GEMM overlap: negative (no SM concurrency; chunk fixed costs).
+- T2-002 = T1-005 + capture sizes: official 757.6 (+19.1%). Rebase further work on T2-002.
+- T1-008 TRITON_ATTN on T1-005 +8.41% unofficial. T1-009 = T2-002 + TRITON_ATTN OFFICIAL 786.4 (+3.8% vs T2-002). Candidate champion.
+- Resync requested (balance 19.6). Plan: k=3 retest on new champ, AR fixed-cost fusion, fresh profile.
+- Resync 1: +80 GPU-min (balance ~99.6). T1-009 champion 786.4. Running k3b retest on t1-champ.
+- T1-010 k=3 on T1-009: screen neg -5.8%, TTFT p99 1695. Verify rows not free (ridge ~80 w/ Marlin bf16). Retry only on W8A8 champion.
+- T2-006 champion 819.9 (W8A8 + TRITON_ATTN). ws t1-c6 = T2-006.
+- Profile T2-006 (TRACE=graph, jobs/prof_t2006): decode 31.9 ms, idle 0.16; mixed 104.8 ms, idle 12.4, GDN prefill eager 7.1. Time share mixed ~24%.
+- Mixed-step NCCL ARs ~38 ms/mixed step (~9% total) -> candidate: dense-TP 2-microbatch overlap (DBO needs DP>1 in engine; new code). Worker Task 9 = concurrency microbench W8A8 GEMM || NCCL.
+- Checked T2 profile: decode NCCL = SendRecv ~0.4ms (batch-sharded logits) + tiny AGs; NCCL ARs only in mixed steps. Worker queue: T8 fused AR, T9 GEMM||NCCL concurrency, T10 target greedy local argmax (generic fast path, fallback when logits needed).
+- T1-011 fused AR+add+norm: mixed +0.26% (n.s.), stackable.
+- Task 9: NCCL AR overlaps W8A8 Triton GEMMs well (job 50). Task 11: row-split linear sublayers in mixed steps (>=256 tokens) with side-stream ARs; attention/GDN full-rows. napkin +3-4%.
+- Usage-limit stop ~19:20; resumed. T1-012 greedy local argmax: mixed +1.18%. Balance 75.2. Task 11 (row-split) not started.
+- T1-014 (T1-012+T1-013) OFFICIAL 842.7 (+2.8% vs T2-006). Balance 42.7. Task 13: rowsplit on eager >=512 steps (job 61).
+
+## spar T1-1 (before closing)
+- Marlin in-situ gap: NOT established. Isolated number is ncu, in-situ is nsys; never timed with matched method. Test: CUDA-event microbench alone vs interleaved (~3 GPU-min).
+- k=2 best: ASSUMED (extrapolated from 2->3). k=1 never measured. Flag-only ABBA (~5 GPU-min if it loses).
+- T1-015 -0.7%: "no evidence of a win", not a regression; between-job variance unmeasured.
+- k=1 tested (T1-016, job 67): screen negative -9.2%; step -16% vs napkin -17..-20%. k=2 optimum now measured both sides.

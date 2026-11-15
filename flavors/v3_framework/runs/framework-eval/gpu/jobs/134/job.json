@@ -1,0 +1,18 @@
+{
+  "id": 134,
+  "pid": 1506468,
+  "team": "T3",
+  "agent": "leader-3",
+  "label": null,
+  "timeout_min": 11.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-3/jobs/abba_mb56.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-15T01:43:11+00:00",
+  "state": "done",
+  "started": "2026-11-15T01:46:55+00:00",
+  "ended": "2026-11-15T01:54:36+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 7.682
+}

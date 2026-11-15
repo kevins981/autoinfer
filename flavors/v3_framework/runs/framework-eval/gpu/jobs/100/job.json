@@ -1,0 +1,20 @@
+{
+  "id": 100,
+  "pid": 1329455,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "nq-smoke",
+  "timeout_min": 12.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/run14.sh",
+    "agents/leader-2.w1/out/nq_smoke"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T22:41:50+00:00",
+  "state": "done",
+  "started": "2026-11-14T22:41:50+00:00",
+  "ended": "2026-11-14T22:46:19+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.475
+}

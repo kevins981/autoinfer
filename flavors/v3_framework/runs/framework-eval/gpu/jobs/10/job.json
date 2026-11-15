@@ -9,5 +9,10 @@
     "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-2/steplog_job.sh"
   ],
   "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/workspaces/t2-steplog/vllm",
-  "submitted": "2026-11-14T16:23:44+00:00"
+  "submitted": "2026-11-14T16:23:44+00:00",
+  "state": "done",
+  "started": "2026-11-14T16:34:51+00:00",
+  "ended": "2026-11-14T16:37:07+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.273
 }

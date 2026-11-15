@@ -1,0 +1,21 @@
+{
+  "id": 139,
+  "pid": 1537762,
+  "team": "T4",
+  "agent": "leader-4.w1",
+  "label": "prof_graph",
+  "timeout_min": 15.0,
+  "command": [
+    "bash",
+    "agents/leader-4/run_prof.sh",
+    "graph",
+    "prof_graph"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-15T02:17:37+00:00",
+  "state": "done",
+  "started": "2026-11-15T02:17:37+00:00",
+  "ended": "2026-11-15T02:19:40+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.057
+}

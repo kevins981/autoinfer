@@ -11,6 +11,9 @@
   ],
   "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
   "submitted": "2026-11-14T16:22:36+00:00",
-  "state": "running",
-  "started": "2026-11-14T16:22:36+00:00"
+  "state": "done",
+  "started": "2026-11-14T16:22:36+00:00",
+  "ended": "2026-11-14T16:34:51+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 12.245
 }

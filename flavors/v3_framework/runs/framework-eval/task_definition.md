@@ -95,3 +95,16 @@ it is never a training or tuning set.
 Questions this file doesn't settle go to the manager, who rules from the principles above (exact
 math up to floating-point reordering; precision; exact verification for anything draft-side;
 nothing fitted to the benchmark) or asks the human, and adds the ruling here.
+
+## Ruling (manager, 2026-11-14; confirmed by the human): FP8-activation A/B carried over to combinations
+A record that combines an FP8-activation record (whose same-job GSM8K A/B passed) with changes that are exact or
+floating-point reordering only, and that don't touch the FP8 GEMM paths (e.g. a serve flag such as the attention backend),
+may rely on that A/B; the official GSM8K-250 gate still applies. A combination that changes the FP8 paths, their inputs'
+precision, or anything approximate needs its own A/B. (First applied: T2-006 = T2-004 + TRITON_ATTN.)
+
+## Ruling (manager, 2026-11-14; confirmed by the human): fused norm + FP8 activation quant
+A kernel that fuses a bf16 op (e.g. RMSNorm) with the FP8 activation quant may rely on the champion's FP8-activation A/B
+(no new bf16-activation reference A/B) when (a) its quant stage is shown bitwise identical to the existing quant on the same
+inputs (same scales, same codes), and (b) its only other difference is fp reordering inside the bf16 op (same precision,
+same formula). It must then pass a same-job GSM8K-250 run on both arms (champion vs the change), plus the official gate.
+Anything that changes the quant scheme, scale computation or the precision of its inputs needs the full A/B. (First applied: T2's fused RMSNorm+quant.)

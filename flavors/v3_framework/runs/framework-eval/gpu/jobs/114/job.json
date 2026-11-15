@@ -1,0 +1,20 @@
+{
+  "id": 114,
+  "pid": 1400826,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "mm-smoke",
+  "timeout_min": 9.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/gemm/run_smoke_mm.sh",
+    "agents/leader-2.w1/out/mm_smoke"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T23:53:13+00:00",
+  "state": "done",
+  "started": "2026-11-14T23:57:59+00:00",
+  "ended": "2026-11-15T00:01:40+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.674
+}

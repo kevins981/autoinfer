@@ -1,0 +1,263 @@
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..da2d982564 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -2,6 +2,8 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ 
++import os
++
+ import torch
+ from torch.distributed import ProcessGroup
+ 
+@@ -119,6 +121,24 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         self.fi_pcie_ipc_ar_comm: FlashInferPcieIpcAllReduce | None = None
+         self.aiter_ar_comm: AiterCustomAllreduce | None = None
+         self.use_aiter_ag_rs: bool = False
++        self.hostmem_ar_comm = None
++        _hm_bytes = int(os.environ.get("VLLM_HOSTMEM_AR_MAX_BYTES", "1310720"))
++        if (
++            _hm_bytes > 0
++            and self.world_size == 2
++            and unique_name.split(":")[0] == "tp"
++            and current_platform.is_cuda()
++            and not (
++                torch.cuda.device_count() >= 2 and torch.cuda.can_device_access_peer(0, 1)
++            )
++        ):
++            from vllm.distributed.device_communicators.hostmem_all_reduce import (
++                HostMemAllReduce,
++            )
++
++            self.hostmem_ar_comm = HostMemAllReduce(
++                self.cpu_group, self.device, _hm_bytes
++            )
+ 
+         # cuMem graph buffers cannot be IPC-registered; capture copies them instead.
+         config = get_current_vllm_config_or_none()
+@@ -369,6 +389,8 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             enabled_ar_backends.append("CUSTOM")
+         if self.symm_mem_comm is not None and not self.symm_mem_comm.disabled:
+             enabled_ar_backends.append("SYMM_MEM")
++        if self.hostmem_ar_comm is not None and not self.hostmem_ar_comm.disabled:
++            enabled_ar_backends.insert(0, "HOSTMEM")
+         if self.pynccl_comm is not None and not self.pynccl_comm.disabled:
+             enabled_ar_backends.append("PYNCCL")
+ 
+@@ -399,6 +421,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             out = torch.ops.vllm.all_reduce_symmetric_with_copy(input_)
+             if out is not None:
+                 return out
++        hm = self.hostmem_ar_comm
++        if hm is not None and hm.should_use(input_):
++            return hm.all_reduce(input_)
+         qr_comm = self.qr_comm
+         if (
+             qr_comm is not None
+diff --git a/vllm/distributed/device_communicators/hostmem_all_reduce.py b/vllm/distributed/device_communicators/hostmem_all_reduce.py
+new file mode 100644
+index 0000000000..0d753c0758
+--- /dev/null
++++ b/vllm/distributed/device_communicators/hostmem_all_reduce.py
+@@ -0,0 +1,87 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Small-message 2-rank all-reduce through mapped pinned host memory (no P2P).
++
++Each rank writes its partial into its own slot of a POSIX shm segment that is
++cudaHostRegister-ed (mapped) in both processes, flags it, polls the peer flag,
++reads the peer slot and sums rank0 + rank1 (same order on both ranks, so the
++result is bitwise identical on both). CUDA-graph capturable: epochs are kept in
++device memory.
++"""
++import os
++import uuid
++from pathlib import Path
++
++import torch
++import torch.distributed as dist
++from torch.distributed import ProcessGroup
++
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++_MAXB = 128
++_NBLOCKS = 32
++_NTHREADS = 256
++_ext = None
++
++
++def _load_ext():
++    global _ext
++    if _ext is None:
++        from torch.utils.cpp_extension import load
++
++        _ext = load(
++            "vllm_hostmem_ar",
++            [str(Path(__file__).with_name("hostmem_ar.cu"))],
++            verbose=False,
++        )
++    return _ext
++
++
++class HostMemAllReduce:
++    def __init__(self, group: ProcessGroup, device, max_bytes: int, hidden_hint=None):
++        self.disabled = True
++        self.group = group
++        self.device = torch.device(device)
++        self.rank = dist.get_rank(group)
++        self.world_size = dist.get_world_size(group)
++        if self.world_size != 2 or max_bytes <= 0:
++            return
++        self.max_bytes = max_bytes
++        self.slot = (max_bytes + 4095) // 4096 * 4096
++        total = 4 * self.slot + 2 * _MAXB * 128
++        ext = _load_ext()
++        ranks = dist.get_process_group_ranks(group)
++        name = [f"/dev/shm/vllm_hostmem_ar_{os.getpid()}_{uuid.uuid4().hex[:8]}"]
++        dist.broadcast_object_list(name, src=ranks[0], group=group)
++        path = name[0]
++        if self.rank == 0:
++            _, dp = ext.map_shm(path, total, True)
++        dist.barrier(group)
++        if self.rank == 1:
++            _, dp = ext.map_shm(path, total, False)
++        dist.barrier(group)
++        if self.rank == 0:
++            os.unlink(path)  # mappings stay valid
++        self.dp = dp
++        self.flags = dp + 4 * self.slot
++        self.ctr = torch.zeros(_MAXB, dtype=torch.int32, device=self.device)
++        self.ext = ext
++        self.disabled = False
++        logger.info("HostMem all-reduce enabled (max %d bytes)", max_bytes)
++
++    def should_use(self, inp: torch.Tensor) -> bool:
++        return (
++            not self.disabled
++            and inp.dtype == torch.bfloat16
++            and inp.is_cuda
++            and inp.is_contiguous()
++            and 0 < inp.numel() * 2 <= self.max_bytes
++            and (inp.numel() * 2) % 16 == 0
++        )
++
++    def all_reduce(self, inp: torch.Tensor) -> torch.Tensor:
++        out = torch.empty_like(inp)
++        self.ext.allreduce(inp, out, self.dp, self.flags, self.ctr.data_ptr(),
++                           self.rank, _NBLOCKS, _NTHREADS, self.slot, 1)
++        return out
+diff --git a/vllm/distributed/device_communicators/hostmem_ar.cu b/vllm/distributed/device_communicators/hostmem_ar.cu
+new file mode 100644
+index 0000000000..345b16f443
+--- /dev/null
++++ b/vllm/distributed/device_communicators/hostmem_ar.cu
+@@ -0,0 +1,107 @@
++#include <torch/extension.h>
++#include <c10/cuda/CUDAStream.h>
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <unistd.h>
++#include <stdexcept>
++#include <string>
++
++// returns {host_ptr, dev_ptr}
++std::vector<int64_t> map_shm(std::string path, int64_t size, bool create) {
++  int fd = open(path.c_str(), create ? (O_CREAT | O_RDWR | O_TRUNC) : O_RDWR, 0600);
++  if (fd < 0) throw std::runtime_error("open failed");
++  if (create && ftruncate(fd, size) != 0) throw std::runtime_error("ftruncate");
++  void* p = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++  if (p == MAP_FAILED) throw std::runtime_error("mmap");
++  if (create) memset(p, 0, size);
++  close(fd);
++  auto e = cudaHostRegister(p, size, cudaHostRegisterMapped | cudaHostRegisterPortable);
++  if (e != cudaSuccess) throw std::runtime_error(std::string("hostregister: ") + cudaGetErrorString(e));
++  void* d;
++  e = cudaHostGetDevicePointer(&d, p, 0);
++  if (e != cudaSuccess) throw std::runtime_error("getdevptr");
++  return {(int64_t)p, (int64_t)d};
++}
++
++__device__ __forceinline__ uint4 ldv(const uint4* p) {
++  uint4 r;
++  asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(r.x), "=r"(r.y), "=r"(r.z), "=r"(r.w) : "l"(p));
++  return r;
++}
++__device__ __forceinline__ __nv_bfloat162 add2(uint32_t a, uint32_t b) {
++  __nv_bfloat162 x = *reinterpret_cast<__nv_bfloat162*>(&a), y = *reinterpret_cast<__nv_bfloat162*>(&b);
++  float2 fx = __bfloat1622float2(x), fy = __bfloat1622float2(y);
++  return __floats2bfloat162_rn(fx.x + fy.x, fx.y + fy.y);
++}
++__device__ __forceinline__ uint32_t addp(uint32_t a, uint32_t b) {
++  __nv_bfloat162 r = add2(a, b);
++  return *reinterpret_cast<uint32_t*>(&r);
++}
++
++__device__ __forceinline__ void rd_sum(const uint4* in, uint4* out, const uint4* peer, int lo, int hi, int rank) {
++  int i = lo + threadIdx.x;
++  for (; i + 3 * (int)blockDim.x < hi; i += 4 * blockDim.x) {
++    uint4 v[4];
++#pragma unroll
++    for (int k = 0; k < 4; k++) v[k] = ldv(peer + i + k * blockDim.x);
++#pragma unroll
++    for (int k = 0; k < 4; k++) {
++      uint4 m = in[i + k * blockDim.x], r;
++      uint4 a = rank == 0 ? m : v[k], c = rank == 0 ? v[k] : m;
++      r.x = addp(a.x, c.x); r.y = addp(a.y, c.y); r.z = addp(a.z, c.z); r.w = addp(a.w, c.w);
++      out[i + k * blockDim.x] = r;
++    }
++  }
++  for (; i < hi; i += blockDim.x) {
++    uint4 v = ldv(peer + i), m = in[i], r;
++    uint4 a = rank == 0 ? m : v, c = rank == 0 ? v : m;
++    r.x = addp(a.x, c.x); r.y = addp(a.y, c.y); r.z = addp(a.z, c.z); r.w = addp(a.w, c.w);
++    out[i] = r;
++  }
++}
++__global__ void ar_kernel(const uint4* __restrict__ in, uint4* __restrict__ out, uint4* buf,
++                          volatile uint32_t* flags, int* ctr, int rank, int nvec, int chunk, size_t slot_stride, int S) {
++  int b = blockIdx.x;
++  int epoch = ctr[b] + 1;
++  int par = epoch & 1;
++  uint4* mine = buf + (size_t)(rank * 2 + par) * slot_stride;
++  const uint4* peer = buf + (size_t)((1 - rank) * 2 + par) * slot_stride;
++  int lo = b * chunk, hi = min(nvec, lo + chunk);
++  int sub = (chunk + S - 1) / S;
++  volatile uint32_t* myf = flags + (rank * gridDim.x + b) * 32;
++  volatile uint32_t* pf = flags + ((1 - rank) * gridDim.x + b) * 32;
++  uint32_t base = (uint32_t)(epoch - 1) * S;
++  for (int j = 0; j <= S; j++) {
++    if (j < S) {
++      int l = min(hi, lo + j * sub), h = min(hi, l + sub);
++      for (int i = l + threadIdx.x; i < h; i += blockDim.x) mine[i] = in[i];
++    }
++    if (j >= 1) {
++      if (threadIdx.x == 0) { while ((int)(*pf - (base + j)) < 0) {} __threadfence_system(); }
++      __syncthreads();
++      int l = min(hi, lo + (j - 1) * sub), h = min(hi, l + sub);
++      rd_sum(in, out, peer, l, h, rank);
++    }
++    if (j < S) {
++      __threadfence_system();
++      __syncthreads();
++      if (threadIdx.x == 0) *myf = base + j + 1;
++    }
++  }
++  if (threadIdx.x == 0) ctr[b] = epoch;
++}
++
++void allreduce(torch::Tensor in, torch::Tensor out, int64_t buf, int64_t flags, int64_t ctr, int64_t rank,
++               int64_t nblocks, int64_t nthreads, int64_t slot_bytes, int64_t S) {
++  int nvec = in.numel() * 2 / 16;
++  int chunk = (nvec + nblocks - 1) / nblocks;
++  ar_kernel<<<nblocks, nthreads, 0, c10::cuda::getCurrentCUDAStream()>>>(
++      (const uint4*)in.data_ptr(), (uint4*)out.data_ptr(), (uint4*)buf, (volatile uint32_t*)flags, (int*)ctr,
++      (int)rank, nvec, chunk, (size_t)(slot_bytes / 16), (int)S);
++}
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("map_shm", &map_shm);
++  m.def("allreduce", &allreduce);
++}

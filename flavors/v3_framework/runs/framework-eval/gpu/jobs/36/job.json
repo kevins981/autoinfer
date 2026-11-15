@@ -1,0 +1,26 @@
+{
+  "id": 36,
+  "pid": 1120100,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "t2-ncu-gdn",
+  "timeout_min": 15.0,
+  "command": [
+    "bash",
+    "ncu_t2.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-2.w1/../../workspaces/t2-w8a8c",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-2.w1/out/ncu_gdn",
+    "gdn_decode_post_conv_mtp",
+    "0",
+    "6",
+    "--devices",
+    "0"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-2.w1",
+  "submitted": "2026-11-14T18:24:01+00:00",
+  "state": "done",
+  "started": "2026-11-14T18:40:40+00:00",
+  "ended": "2026-11-14T18:46:12+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 5.537
+}

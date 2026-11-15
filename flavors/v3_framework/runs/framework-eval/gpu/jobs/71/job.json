@@ -1,0 +1,19 @@
+{
+  "id": 71,
+  "pid": 1257666,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "nq-inv",
+  "timeout_min": 2.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/nq/run_inv.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T21:15:45+00:00",
+  "state": "done",
+  "started": "2026-11-14T21:23:33+00:00",
+  "ended": "2026-11-14T21:23:39+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.103
+}

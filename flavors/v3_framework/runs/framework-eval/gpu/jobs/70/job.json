@@ -1,0 +1,21 @@
+{
+  "id": 70,
+  "pid": 1254668,
+  "team": "T2",
+  "agent": "leader-2",
+  "label": "official:T2-008",
+  "timeout_min": 20.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/workspaces/eval-T2-008-1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/bank/T2-008/official/1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/bank/T2-008/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T21:11:50+00:00",
+  "state": "done",
+  "started": "2026-11-14T21:15:32+00:00",
+  "ended": "2026-11-14T21:23:31+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 7.989
+}

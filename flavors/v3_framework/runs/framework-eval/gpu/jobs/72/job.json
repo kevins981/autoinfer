@@ -1,0 +1,18 @@
+{
+  "id": 72,
+  "pid": 1260547,
+  "team": "T3",
+  "agent": "leader-3",
+  "label": "t3-prof-champ",
+  "timeout_min": 15.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-3/jobs/prof_champ.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T21:17:46+00:00",
+  "state": "done",
+  "started": "2026-11-14T21:23:40+00:00",
+  "ended": "2026-11-14T21:26:10+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.494
+}

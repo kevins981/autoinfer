@@ -5,3 +5,19 @@
 {"t": "2026-11-14T16:11:01+00:00", "event": "open", "team": "T2", "type": "sweep", "by": "manager"}
 {"t": "2026-11-14T16:11:01+00:00", "event": "grant", "team": "T2", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
 {"t": "2026-11-14T16:11:01+00:00", "event": "grant", "team": "T2", "kind": "start", "minutes": 80.0, "by": "manager", "note": "sweep team start"}
+{"t": "2026-11-14T18:32:29+00:00", "event": "grant", "team": "T1", "kind": "extension", "minutes": 80.0, "by": "manager", "note": "resync 1: wins T1-004, T2-002 (joint), T1-009 on 80 GPU-min; plan k=3 re-test, AR fixed-cost fusion, re-profile"}
+{"t": "2026-11-14T18:59:48+00:00", "event": "grant", "team": "T2", "kind": "extension", "minutes": 60.0, "by": "manager", "note": "resync 1: wins T2-002 (joint), T2-006 (joint); plan GDN DeltaLog (ncu job 36), decode-M Triton configs, fused act-quant RMSNorm"}
+{"t": "2026-11-14T21:16:23+00:00", "event": "close", "team": "T1", "by": "manager", "note": "team recommended closing after sparring and two closing tests; k=2 measured optimal, remaining items high-effort; 3 official wins"}
+{"t": "2026-11-14T21:16:35+00:00", "event": "open", "team": "T3", "type": "sweep", "by": "manager"}
+{"t": "2026-11-14T21:16:35+00:00", "event": "grant", "team": "T3", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-14T21:16:35+00:00", "event": "grant", "team": "T3", "kind": "start", "minutes": 80.0, "by": "manager", "note": "sweep team start (replaces T1)"}
+{"t": "2026-11-14T23:18:21+00:00", "event": "grant", "team": "T3", "kind": "extension", "minutes": 60.0, "by": "manager", "note": "resync 1: win T3-003 (+1.97%); plan DeltaLog 2-step checkpoint, mixed-step profile for T3-004, prefetch tuning; T3-005 promotion pending repeated same-job A/B"}
+{"t": "2026-11-14T23:26:43+00:00", "event": "grant", "team": "T2", "kind": "extension", "minutes": 60.0, "by": "manager", "note": "resync 2: wins T2-008, T2-009 since last grant; plan decode-M W8A8 GEMM efficiency (microbench running), then GDN quant fusion or reduced-vocab draft head"}
+{"t": "2026-11-15T01:07:21+00:00", "event": "grant", "team": "T3", "kind": "extension", "minutes": 50.0, "by": "manager", "note": "resync 2: wins T3-006, T3-009 since last grant; plan lower ROWSPLIT_MIN_TOKENS, CE AR re-test on restored row-split, prefetch retune"}
+{"t": "2026-11-15T02:15:53+00:00", "event": "close", "team": "T2", "by": "manager", "note": "team recommended closing after spar T2-1 and its checks (k=3 -11.7% screen on current code; mixed GEMMs at 80-90% of ceiling); remaining ideas <=1%; 5 official wins"}
+{"t": "2026-11-15T02:15:54+00:00", "event": "open", "team": "T4", "type": "sweep", "by": "manager"}
+{"t": "2026-11-15T02:15:54+00:00", "event": "grant", "team": "T4", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-15T02:15:54+00:00", "event": "grant", "team": "T4", "kind": "start", "minutes": 80.0, "by": "manager", "note": "sweep team start (replaces T2)"}
+{"t": "2026-11-15T02:30:19+00:00", "event": "grant", "team": "T3", "kind": "last-chance", "minutes": 35.0, "by": "manager", "note": "resync 3: no win since last grant; measured lead T3-015 (k=3 step excess mostly fixable: M=56/64 GEMM tiles, DeltaLog 2-row cap; job 142)"}
+{"t": "2026-11-15T03:21:02+00:00", "event": "close", "team": "T3", "by": "manager", "note": "run ended by the human; write-up and last map update done"}
+{"t": "2026-11-15T03:21:29+00:00", "event": "close", "team": "T4", "by": "manager", "note": "run ended by the human; write-up and map update done"}

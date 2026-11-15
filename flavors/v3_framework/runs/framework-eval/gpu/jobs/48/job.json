@@ -1,0 +1,18 @@
+{
+  "id": 48,
+  "pid": 1151742,
+  "team": "T2",
+  "agent": "leader-2",
+  "label": null,
+  "timeout_min": 12.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-2/prof_champ.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T19:08:37+00:00",
+  "state": "done",
+  "started": "2026-11-14T19:08:38+00:00",
+  "ended": "2026-11-14T19:11:06+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.481
+}

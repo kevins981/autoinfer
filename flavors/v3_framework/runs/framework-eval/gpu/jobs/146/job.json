@@ -1,0 +1,15 @@
+{
+  "id": 146,
+  "pid": 1555313,
+  "team": "T3",
+  "agent": "leader-3.w1",
+  "label": null,
+  "timeout_min": 6.0,
+  "command": [
+    "agents/leader-3.w1/k3_gemm.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-15T02:30:25+00:00",
+  "state": "cancelled",
+  "ended": "2026-11-15T02:33:05+00:00"
+}

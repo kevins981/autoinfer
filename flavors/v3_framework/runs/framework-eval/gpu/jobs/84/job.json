@@ -1,0 +1,18 @@
+{
+  "id": 84,
+  "pid": 1282323,
+  "team": "T3",
+  "agent": "leader-3",
+  "label": null,
+  "timeout_min": 7.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-3/jobs/ce_bench.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-3/scripts",
+  "submitted": "2026-11-14T21:52:10+00:00",
+  "state": "done",
+  "started": "2026-11-14T21:58:40+00:00",
+  "ended": "2026-11-14T21:58:51+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.178
+}

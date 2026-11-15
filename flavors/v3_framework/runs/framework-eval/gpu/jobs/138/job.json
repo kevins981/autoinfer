@@ -1,0 +1,18 @@
+{
+  "id": 138,
+  "pid": 1528643,
+  "team": "T3",
+  "agent": "leader-3",
+  "label": null,
+  "timeout_min": 6.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-3/jobs/nccl_proto.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-15T02:06:27+00:00",
+  "state": "done",
+  "started": "2026-11-15T02:15:22+00:00",
+  "ended": "2026-11-15T02:15:43+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.365
+}

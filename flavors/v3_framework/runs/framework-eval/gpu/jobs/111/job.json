@@ -1,0 +1,19 @@
+{
+  "id": 111,
+  "pid": 1373414,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "splitk-test",
+  "timeout_min": 5.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/gemm/run_sk.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T23:28:08+00:00",
+  "state": "done",
+  "started": "2026-11-14T23:52:57+00:00",
+  "ended": "2026-11-14T23:53:05+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.129
+}

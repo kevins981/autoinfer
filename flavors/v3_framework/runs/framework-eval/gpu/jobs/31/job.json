@@ -1,0 +1,19 @@
+{
+  "id": 31,
+  "pid": 1095043,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "t1-triton",
+  "timeout_min": 18.0,
+  "command": [
+    "bash",
+    "agents/leader-1/job_triton.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T17:50:34+00:00",
+  "state": "done",
+  "started": "2026-11-14T18:07:52+00:00",
+  "ended": "2026-11-14T18:16:36+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 8.73
+}

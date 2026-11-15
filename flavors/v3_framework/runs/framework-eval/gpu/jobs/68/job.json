@@ -1,0 +1,18 @@
+{
+  "id": 68,
+  "pid": 1246185,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": null,
+  "timeout_min": 3.0,
+  "command": [
+    "agents/leader-1.w1/marlin/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T21:02:44+00:00",
+  "state": "done",
+  "started": "2026-11-14T21:15:12+00:00",
+  "ended": "2026-11-14T21:15:22+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.16
+}

@@ -1,0 +1,19 @@
+{
+  "id": 97,
+  "pid": 1326901,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "nq-silu2",
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/nq/run_s.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T22:39:48+00:00",
+  "state": "done",
+  "started": "2026-11-14T22:39:48+00:00",
+  "ended": "2026-11-14T22:39:51+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.06
+}

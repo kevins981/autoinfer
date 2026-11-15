@@ -1,0 +1,18 @@
+{
+  "id": 40,
+  "pid": 1142241,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "t2-deltalog-test",
+  "timeout_min": 5.0,
+  "command": [
+    "./run8.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-2.w1",
+  "submitted": "2026-11-14T18:55:04+00:00",
+  "state": "done",
+  "started": "2026-11-14T18:59:12+00:00",
+  "ended": "2026-11-14T18:59:24+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.191
+}

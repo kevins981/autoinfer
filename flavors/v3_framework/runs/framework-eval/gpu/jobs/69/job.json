@@ -1,0 +1,19 @@
+{
+  "id": 69,
+  "pid": 1252744,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "nq-micro2",
+  "timeout_min": 4.0,
+  "command": [
+    "bash",
+    "agents/leader-2.w1/nq/run_nq.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
+  "submitted": "2026-11-14T21:11:02+00:00",
+  "state": "done",
+  "started": "2026-11-14T21:15:22+00:00",
+  "ended": "2026-11-14T21:15:30+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.133
+}

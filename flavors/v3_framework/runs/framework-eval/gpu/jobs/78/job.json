@@ -1,0 +1,18 @@
+{
+  "id": 78,
+  "pid": 1268557,
+  "team": "T3",
+  "agent": "leader-3",
+  "label": "t3-l2-pcie",
+  "timeout_min": 4.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-3/jobs/l2_pcie.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval/agents/leader-3/scripts",
+  "submitted": "2026-11-14T21:30:45+00:00",
+  "state": "done",
+  "started": "2026-11-14T21:30:45+00:00",
+  "ended": "2026-11-14T21:30:54+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.137
+}

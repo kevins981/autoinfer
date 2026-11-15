@@ -1,0 +1,23 @@
+# leader-3 (T3) working notes
+
+- Champion T2-008 880.1. Decode step ~31 ms: body GEMMs 16.7, AR 6.4, lm_heads 3.1, GDN 2.0.
+- Link: D2H+H2D on one GPU at once = 22.6 GB/s total (job 75). Decode AR 48.6 us ≈ floor.
+- gate_up in situ: 132 us after GDN layers, 113 after attention layers. The +19 us is the GDN state's dirty L2 write-back.
+- Drain bench (job 82):
+  - Dirty 25 MB raises gate_up from 139 to 169 us.
+  - A 40 MB weight prefetch during the window gives 101 us.
+  - A 40 MB junk read gives 133.
+  - The Triton prefetch kernel is too slow (90 us for 40 MB).
+- T3-001: hostmem AR for all sizes is a screen negative (-6.6%, job 79).
+- Fp16 accumulation is dead (overflow).
+- Split with T2: T2 does fused norm+quant and decode-M Triton configs; T3 does the AR window and the CE AR.
+- Worker w1 (ws t3-pf): AR-kernel prefetch blocks, task agents/leader-3/tasks/w1-task1.md, budget 20 GPU-min.
+- Scripts: agents/leader-3/scripts; jobs: agents/leader-3/jobs.
+- T3-002: CE AR microbench (job 84) overlaps well with GEMMs.
+- T3-003: AR-window prefetch is +2.41% in ABBA (job 85); official eval is job 87.
+  - In this config the decode ARs run inside the RowParallelLinear, not in forward_fused. The hint is set in DecoderLayer.forward.
+- T3-004: CE AR in the server row-split is -1.56% in ABBA (job 86). Cause unexplained; it needs an nsys profile.
+- Worker task 2: in-situ profile and tuning of the prefetch (12 GPU-min).
+- T3-009 (row-split restore on T2-011) is champion at 951.5.
+- Nulls and negatives after it: T3-010..013 and an NCCL_PROTO microbench (job 138).
+- Recommended closing T3. Write-up: reports/T3-writeup.md; final map update: reports/T3-sweep/update-3.md.

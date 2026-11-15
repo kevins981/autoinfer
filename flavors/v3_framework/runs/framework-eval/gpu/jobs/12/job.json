@@ -9,5 +9,7 @@
     "agents/leader-1.w1/hm/job3.sh"
   ],
   "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v3_framework/runs/framework-eval",
-  "submitted": "2026-11-14T16:24:28+00:00"
+  "submitted": "2026-11-14T16:24:28+00:00",
+  "state": "cancelled",
+  "ended": "2026-11-14T16:34:28+00:00"
 }

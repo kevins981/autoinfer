@@ -1,0 +1,13 @@
+# leader-4 (T4) notes
+- HEAD T3-004; workspace t4-head built. Profile job 199: agents/leader-4/prof/head_node; scripts step_kern.py, step_detail.py, one_step.py.
+- Calibration: comm 25% GPU time; NCCL in mixed ~0.1 ms/prompt token, flat 170-330 us/call; host AR 30 us at 48 rows.
+- Dead (others' evidence): duplex/pipelined host AR (T1 jobs 40-46, T3-001, T3-006), k=3 (x4), tree (T2-020), lazy3 (T2-019), AR+norm fusion (T1-007/009), W8A8 at decode M (T1 job 184).
+- fp16-acc W8A8: ruled provisionally NO (manager), pending the human.
+- Current: P4 layer-level 2-micro-batch overlap of mixed-step ARs; gate = t4-w1 task 2 microbench.
+- Worker t4-w1 on workspace t4-w1 (has an unused host_ar2 kernel; don't ship it).
+- Job 203 (t4-w1, agents/t4-w1/ovl2): 8-layer GEMM+AR stack, graph. NCCL two-half overlap = 0 (S≈gemm+AR at M 304/608/1024): explains T3-003's loss. Host-AR halves at M=304: D 8.21 vs S_nccl 9.35 ms (-12%), single run. Splitting GEMMs into halves is free (5.33 vs 5.53). Task 3 = repeat + sizes + mixer stand-in.
+- Spar T4-1: open belief = host-AR halves on separate instances don't need ordering only if both spin kernels can be co-resident (4 blocks each: fine).
+- Job 204 (t4-w1/ovl3): lead holds. S_nccl vs D_host (two halves, host AR per stream) per 8-layer stack: 304: 9.84/8.40, 400: 12.96/11.23, 608: 17.28/14.36, 1024: 27.24/24.74 ms; bitwise equal. => ~11-23 ms per mixed step, ~4% wall napkin.
+- Task 4 (engine, T4-001): split only the row-independent chain between mixers (mixer on full batch), threshold M>=192, two host-AR instances.
+- fp16-acc W8A8: ruled NO, final (human).
+- T5 (leader-5) C1 = lossless block-exponent AR encoding, same HostAllReduce.all_reduce contract -> drops into T4-001. T5 not taking #3/#4 yet (will tell me).

@@ -1,0 +1,20 @@
+{
+  "id": 106,
+  "pid": 1913984,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "unofficial:T1-013",
+  "timeout_min": 10.0,
+  "command": [
+    "bash",
+    "-c",
+    "TRIALS=2 PROMPTS=200 GATES=gsm8k STOP_BELOW=763.34 /scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness/eval.sh /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/workspaces/uo-T1-013-1 /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/bank/T1-013/unofficial/1/b /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/bank/T1-013/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T09:38:50+00:00",
+  "state": "cancelled",
+  "started": "2026-11-15T09:38:50+00:00",
+  "ended": "2026-11-15T09:39:17+00:00",
+  "exit_code": 130,
+  "gpu_minutes": 0.436
+}

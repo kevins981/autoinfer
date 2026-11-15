@@ -1,0 +1,51 @@
+{
+ "record": "T1-012",
+ "n": 1,
+ "head": "T1-010",
+ "prompts": 200,
+ "requested_by": "leader-1",
+ "team": "T1",
+ "started": "2026-11-15T08:53:53+00:00",
+ "key_b": {
+  "diff_sha256": "d80e27c904aa73755a22a8afffd29fd470c9d19c8dfe9ce43ed364bd3f6f9e8b",
+  "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+  "prompts": 200,
+  "eval_sh": "c35852d"
+ },
+ "key_a": {
+  "diff_sha256": "66a4c8287909fb5f4cae2543e038bdb8127346d644fe529c40ba406b5bfb806b",
+  "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+  "prompts": 200,
+  "eval_sh": "c35852d"
+ },
+ "order": "BB",
+ "stop_below": 741.31,
+ "reference": [
+  753.859438075687,
+  751.3371974706703
+ ],
+ "reference_cached": [
+  753.859438075687,
+  751.3371974706703
+ ],
+ "a_new": [],
+ "b": [
+  755.7284242199127,
+  757.2891843901245
+ ],
+ "reference_mean": 752.6,
+ "gain_pct": 0.52,
+ "verdict": "PASS",
+ "gates_failed": [],
+ "gsm8k": 0.936,
+ "long_request": true,
+ "p99": {
+  "p99_ttft_ms": 1216.6,
+  "p99_tpot_ms": 40.1
+ },
+ "mtp_acceptance": [
+  2.348,
+  2.35
+ ],
+ "ended": "2026-11-15T09:02:15+00:00"
+}

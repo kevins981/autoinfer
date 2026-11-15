@@ -1,0 +1,16 @@
+{
+  "id": 35,
+  "pid": 1709844,
+  "team": "T1",
+  "agent": "t1-w1",
+  "label": "chunk-w3",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "agents/t1-w1/chunk/job3.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T06:23:02+00:00",
+  "state": "cancelled",
+  "ended": "2026-11-15T06:32:47+00:00"
+}

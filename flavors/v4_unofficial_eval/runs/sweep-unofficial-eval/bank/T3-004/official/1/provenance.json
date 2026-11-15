@@ -1,0 +1,14 @@
+{
+  "record": "T3-004",
+  "n": 1,
+  "diff_sha256": "0e2a3752765c1f8c9bb7fc13eb87caf5a4d6bd80831c7e6b49c2b97f3b10ff13",
+  "baseline_commit": "4527515cd705db206ae927cf5acef506abc64bdd",
+  "harness": "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness",
+  "harness_version": "c35852d",
+  "workspace": "eval-T3-004-1",
+  "requested_by": "manager",
+  "team": "",
+  "started": "2026-11-15T13:59:48+00:00",
+  "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+  "ended": "2026-11-15T14:08:19+00:00"
+}

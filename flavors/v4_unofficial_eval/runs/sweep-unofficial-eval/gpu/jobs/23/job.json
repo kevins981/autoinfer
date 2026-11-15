@@ -1,0 +1,19 @@
+{
+  "id": 23,
+  "pid": 1672436,
+  "team": "T1",
+  "agent": "t1-w1",
+  "label": "chunked-ar",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "agents/t1-w1/chunk/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T05:48:20+00:00",
+  "state": "done",
+  "started": "2026-11-15T05:50:06+00:00",
+  "ended": "2026-11-15T05:55:01+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.916
+}

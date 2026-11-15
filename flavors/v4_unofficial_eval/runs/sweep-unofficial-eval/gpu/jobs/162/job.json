@@ -1,0 +1,21 @@
+{
+  "id": 162,
+  "pid": 2052422,
+  "team": "T3",
+  "agent": "leader-3",
+  "label": "t3-psi-screen",
+  "timeout_min": 16.0,
+  "command": [
+    "bash",
+    "agents/leader-3/jobs/psi_screen.sh",
+    "8",
+    "16"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T11:49:51+00:00",
+  "state": "done",
+  "started": "2026-11-15T11:51:10+00:00",
+  "ended": "2026-11-15T11:55:07+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.949
+}

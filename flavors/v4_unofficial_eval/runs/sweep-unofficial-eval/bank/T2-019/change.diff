@@ -1,0 +1,2431 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0b5accbe87..485be0bdc3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -473,6 +473,7 @@ if(VLLM_GPU_LANG STREQUAL "CUDA" OR VLLM_GPU_LANG STREQUAL "HIP")
+     "csrc/custom_all_gather_reduce_scatter.cu"
+     "csrc/custom_all_gather_reduce_scatter_ops.cpp"
+     "csrc/custom_all_reduce.cu"
++    "csrc/host_all_reduce.cu"
+     "csrc/fused_deepseek_v4_qnorm_rope_kv_insert_kernel.cu"
+     "csrc/fused_kimi_k3_mla_key_concat_kv_cache_kernel.cu")
+ 
+diff --git a/csrc/gdn/fused_gdn_decode_kernel.cu b/csrc/gdn/fused_gdn_decode_kernel.cu
+index 5e606ffd7f..a0b24f28e6 100644
+--- a/csrc/gdn/fused_gdn_decode_kernel.cu
++++ b/csrc/gdn/fused_gdn_decode_kernel.cu
+@@ -147,7 +147,195 @@ __device__ __forceinline__ Sum2 warp_reduce_sum_pair(float x, float y) {
+   return {x, y};
+ }
+ 
+-template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate>
++// ---- Replay-mode support (single state write per step) -------------------
++// Rows of the previous step (L2-normalised k fp32, v bf16, decay, beta) are
++// cached as raw bytes inside the dead state page of window column 1.
++constexpr int kReplayMaxRows = 3;
++constexpr int kRowBytes = 784;  // 128*4 + 128*2 + 8 (+16B alignment pad)
++// Lazy commit (K<=3): pending rows of up to three steps, one page per step at
++// kPageStride bytes in the head's slot-1 region (page p = p-th oldest pending
++// step). The 8 pad bytes after row 0's decay/beta of page p hold the accepted
++// row counts of pages 0..p-1 (int32 each at kHeaderOff + 4*j; p <= 2).
++constexpr int kMaxPages = 3;
++constexpr int kReplayMaxTotal = kMaxPages * kReplayMaxRows;
++constexpr int kPageStride = 4096;
++constexpr int kHeaderOff = 776;
++// replay_flags bits: 1 replay mode, 2 replay pending rows first, 4 lazy (do not
++// commit S to the home slot; store this step's rows to the page after the last
++// pending one), bits 3-4: pending steps - 1 (only with bit 2). The newest
++// pending step's row count is num_accepted_tokens, older ones come from the
++// header of the newest page.
++
++__device__ __forceinline__ int replay_pages(int flags) {
++  return (flags & 2) ? ((flags >> 3) & 3) + 1 : 0;
++}
++
++// Fills cnt[0..npages-1] (rows per pending page, oldest first); returns total.
++__device__ __forceinline__ int replay_row_counts(int flags, int accepted,
++                                                 const unsigned char* rows_base,
++                                                 int (&cnt)[kMaxPages]) {
++  const int npages = min(replay_pages(flags), kMaxPages);
++  int total = 0;
++#pragma unroll
++  for (int j = 0; j < kMaxPages; ++j) {
++    int c = 0;
++    if (j < npages - 1) {
++      c = *reinterpret_cast<const int*>(rows_base + (npages - 1) * kPageStride +
++                                        kHeaderOff + 4 * j);
++      c = max(0, min(c, kReplayMaxRows));
++    } else if (j == npages - 1) {
++      c = min(accepted, kReplayMaxRows);
++    }
++    cnt[j] = c;
++    total += c;
++  }
++  return total;
++}
++
++__device__ __forceinline__ const unsigned char* pending_row_ptr(
++    const unsigned char* rows_base, const int (&cnt)[kMaxPages], int npages,
++    int i) {
++  int page = 0;
++  int rem = i;
++#pragma unroll
++  for (int j = 0; j < kMaxPages - 1; ++j) {
++    if (page == j && j < npages - 1 && rem >= cnt[j]) {
++      rem -= cnt[j];
++      ++page;
++    }
++  }
++  return rows_base + page * kPageStride + rem * kRowBytes;
++}
++
++__device__ __forceinline__ void load_pending_rows(
++    const unsigned char* rows_base, const int (&cnt)[kMaxPages], int npages,
++    int total, int tid, float (*replay_k)[kDimK], __nv_bfloat16 (*replay_v)[kDimV],
++    float* replay_decay, float* replay_beta) {
++  for (int idx = tid; idx < total * kDimK; idx += kThreads) {
++    const int i = idx / kDimK;
++    const int d = idx % kDimK;
++    const unsigned char* r = pending_row_ptr(rows_base, cnt, npages, i);
++    replay_k[i][d] = *reinterpret_cast<const float*>(r + d * 4);
++    replay_v[i][d] = reinterpret_cast<const __nv_bfloat16*>(r + 512)[d];
++  }
++  if (tid < total) {
++    const unsigned char* r = pending_row_ptr(rows_base, cnt, npages, tid);
++    const float2 db = *reinterpret_cast<const float2*>(r + 768);
++    replay_decay[tid] = db.x;
++    replay_beta[tid] = db.y;
++  }
++}
++
++template <typename StateT>
++__device__ __forceinline__ unsigned char* replay_rows_base(
++    StateT* state, int col1_slot, int value_head, int64_t state_slot_stride) {
++  return reinterpret_cast<unsigned char*>(
++      state + static_cast<int64_t>(col1_slot) * state_slot_stride +
++      static_cast<int64_t>(value_head) * kDimV * kDimK);
++}
++
++// One delta-rule row update of the register-resident state tile (same
++// arithmetic as the token loop of the decode kernel).
++__device__ __forceinline__ void replay_row_update(
++    float (&h)[kRowsPerWarp][4], const float4 k4, float decay, float beta,
++    const float (&v_rows)[kRowsPerWarp]) {
++  const float k_values[4] = {k4.x, k4.y, k4.z, k4.w};
++  float dot_hk[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      h[row][i] *= decay;
++      dot_hk[row] += h[row][i] * k_values[i];
++    }
++  }
++  const Sum2 dot_hk_01 = warp_reduce_sum_pair(dot_hk[0], dot_hk[1]);
++  const Sum2 dot_hk_23 = warp_reduce_sum_pair(dot_hk[2], dot_hk[3]);
++  const float reduced_hk[kRowsPerWarp] = {dot_hk_01.x, dot_hk_01.y,
++                                          dot_hk_23.x, dot_hk_23.y};
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++    const float delta = (v_rows[row] - reduced_hk[row]) * beta;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      h[row][i] += k_values[i] * delta;
++    }
++  }
++}
++
++// Standalone flush: for every request whose replay_flags has bit1 (the previous
++// step ran in replay mode), applies min(accepted, kReplayMaxRows) pending rows to
++// the committed state in slot col0 and writes the result to slot col0
++// (dst_acc_slot == 0) or to slot accepted-1 (dst_acc_slot != 0, the slot the
++// per-token-store kernels read). Pending rows live in the (dead) slot-1 page.
++// The rows are copied to shared memory before any state store because the
++// destination can be that very page.
++template <typename StateT>
++__global__ __launch_bounds__(kThreads) void gdn_replay_flush_kernel(
++    const int* __restrict__ state_indices,
++    const int* __restrict__ num_accepted_tokens,
++    const int* __restrict__ replay_flags, StateT* __restrict__ state,
++    int dst_acc_slot, int state_indices_width, int64_t state_slot_stride) {
++  const int request = blockIdx.x;
++  const int value_head = blockIdx.y;
++  const int tid = threadIdx.x;
++  const int lane = tid & 31;
++  const int warp = tid >> 5;
++  const int flags = replay_flags[request];
++  if ((flags & 2) == 0) return;
++  const int col0 = state_indices[request * state_indices_width];
++  const int accepted = num_accepted_tokens[request];
++  if (col0 <= 0 || accepted <= 0 || accepted > state_indices_width) return;
++  const int dst_slot =
++      dst_acc_slot ? state_indices[request * state_indices_width + accepted - 1]
++                   : col0;
++  if (dst_slot <= 0) return;
++  __shared__ float replay_k[kReplayMaxTotal][kDimK];
++  __shared__ __nv_bfloat16 replay_v[kReplayMaxTotal][kDimV];
++  __shared__ float replay_decay[kReplayMaxTotal];
++  __shared__ float replay_beta[kReplayMaxTotal];
++  const unsigned char* rows = replay_rows_base(
++      state, state_indices[request * state_indices_width + 1], value_head,
++      state_slot_stride);
++  int cnt[kMaxPages];
++  const int replay_count = replay_row_counts(flags, accepted, rows, cnt);
++  load_pending_rows(rows, cnt, replay_pages(flags), replay_count, tid, replay_k, replay_v,
++                    replay_decay, replay_beta);
++  __syncthreads();
++  const StateT* s0 = state + static_cast<int64_t>(col0) * state_slot_stride +
++                     value_head * kDimV * kDimK;
++  StateT* sd = state + static_cast<int64_t>(dst_slot) * state_slot_stride +
++               value_head * kDimV * kDimK;
++  const int k_base = lane * 4;
++  for (int chunk = 0; chunk < kNumChunks; ++chunk) {
++    float h[kRowsPerWarp][4];
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) {
++      const int value = chunk * kChunkV + warp + row * kWarps;
++      const float4 sv = load_state4(s0 + value * kDimK + k_base);
++      h[row][0] = sv.x; h[row][1] = sv.y; h[row][2] = sv.z; h[row][3] = sv.w;
++    }
++    for (int i = 0; i < replay_count; ++i) {
++      const float4 k4 = *reinterpret_cast<const float4*>(&replay_k[i][k_base]);
++      float v_rows[kRowsPerWarp];
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        const int value = chunk * kChunkV + warp + row * kWarps;
++        v_rows[row] = __bfloat162float(replay_v[i][value]);
++      }
++      replay_row_update(h, k4, replay_decay[i], replay_beta[i], v_rows);
++    }
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) {
++      const int value = chunk * kChunkV + warp + row * kWarps;
++      store_state4(sd + value * kDimK + k_base,
++                   make_float4(h[row][0], h[row][1], h[row][2], h[row][3]));
++    }
++  }
++}
++
++template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate,
++          bool Replay>
+ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+     const __nv_bfloat16* __restrict__ mixed_qkv,
+     const __nv_bfloat16* __restrict__ a, const __nv_bfloat16* __restrict__ b,
+@@ -158,7 +346,10 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+     const void* __restrict__ norm_weight, __nv_bfloat16* __restrict__ out,
+     int H, int HV, int state_indices_width, int dt_bias_type,
+     bool norm_weight_is_bf16, float scale, float norm_eps,
+-    GdnDecodeStrides strides) {
++    GdnDecodeStrides strides, const int* __restrict__ replay_flags) {
++  // The replay variant only runs T <= 3 rows (replay_mode) or old-style rows
++  // with width <= 3, so it needs fewer per-token shared arrays (smem budget).
++  constexpr int kTok = Replay ? 4 : kMaxMtpTokens;
+   const int request = blockIdx.x;
+   const int value_head = blockIdx.y;
+   const int tid = threadIdx.x;
+@@ -172,11 +363,34 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+   }
+ 
+   const int accepted = num_accepted_tokens[request];
+-  const int source_slot =
++  int source_slot =
+       accepted > 0 && accepted <= state_indices_width
+           ? state_indices[request * state_indices_width + accepted - 1]
+           : 0;
+-  if (source_slot <= 0 || num_tokens > kMaxMtpTokens) {
++  int replay_count = 0;
++  int col0 = 0;
++  int flags = 0;
++  bool do_replay = false;
++  int cnt[kMaxPages] = {0, 0, 0};
++  bool lazy = false;  // bit2: keep the committed state, store rows to page B
++  bool store_col0 = false;
++  bool replay_mode = false;  // bit0: no per-token stores, pending rows stored
++  if constexpr (Replay) {
++    flags = replay_flags[request];
++    col0 = state_indices[request * state_indices_width];
++    if ((flags & 2) && col0 > 0 && accepted > 0 && accepted <= state_indices_width) {
++      source_slot = col0;
++      do_replay = true;
++    }
++    replay_mode = (flags & 1) && state_indices_width >= 2 &&
++                  state_indices_width <= kReplayMaxRows &&
++                  num_tokens <= kReplayMaxRows;
++    lazy = replay_mode && (flags & 4) && do_replay;
++    // replay_count is computed below once the pending rows' address is known.
++    store_col0 = replay_mode && !lazy && source_slot > 0 &&
++                 (source_slot != col0 || do_replay);
++  }
++  if (source_slot <= 0 || num_tokens > kTok) {
+     for (int linear = tid; linear < num_tokens * kDimV; linear += kThreads) {
+       const int token = bos + linear / kDimV;
+       const int value = linear % kDimV;
+@@ -189,12 +403,29 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+ 
+   const int key_head = value_head / ValueHeadsPerKeyHead;
+   __shared__ StateT shared_state[2][kChunkV][kDimK];
+-  __shared__ float shared_q[kMaxMtpTokens][kDimK];
+-  __shared__ float shared_k[kMaxMtpTokens][kDimK];
+-  __shared__ __nv_bfloat16 shared_v[kMaxMtpTokens][kDimV];
+-  __shared__ __nv_bfloat16 shared_out[kMaxMtpTokens][kDimV];
+-  __shared__ float shared_decay[kMaxMtpTokens];
+-  __shared__ float shared_beta[kMaxMtpTokens];
++  __shared__ float shared_q[kTok][kDimK];
++  __shared__ float shared_k[kTok][kDimK];
++  __shared__ __nv_bfloat16 shared_v[kTok][kDimV];
++  __shared__ __nv_bfloat16 shared_out[kTok][kDimV];
++  __shared__ float shared_decay[kTok];
++  __shared__ float shared_beta[kTok];
++  __shared__ float replay_k[kReplayMaxTotal][kDimK];
++  __shared__ __nv_bfloat16 replay_v[kReplayMaxTotal][kDimV];
++  __shared__ float replay_decay[kReplayMaxTotal];
++  __shared__ float replay_beta[kReplayMaxTotal];
++  unsigned char* rows_base = nullptr;
++  if constexpr (Replay) {
++    if (do_replay || replay_mode) {
++      rows_base = replay_rows_base(
++          state, state_indices[request * state_indices_width + 1], value_head,
++          strides.state_slot);
++      if (do_replay) {
++        replay_count = replay_row_counts(flags, accepted, rows_base, cnt);
++        load_pending_rows(rows_base, cnt, replay_pages(flags), replay_count, tid, replay_k, replay_v,
++                          replay_decay, replay_beta);
++      }
++    }
++  }
+ 
+   StateT* source_state =
+       state + static_cast<int64_t>(source_slot) * strides.state_slot +
+@@ -274,6 +505,30 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+       h[row][3] = state_value.w;
+     }
+ 
++    if constexpr (Replay) {
++      for (int i = 0; i < replay_count; ++i) {
++        const float4 rk4 =
++            *reinterpret_cast<const float4*>(&replay_k[i][k_base]);
++        float v_rows[kRowsPerWarp];
++#pragma unroll
++        for (int row = 0; row < kRowsPerWarp; ++row) {
++          v_rows[row] =
++              __bfloat162float(replay_v[i][chunk * kChunkV + rows[row]]);
++        }
++        replay_row_update(h, rk4, replay_decay[i], replay_beta[i], v_rows);
++      }
++      if (store_col0) {
++        StateT* dst0 = state + static_cast<int64_t>(col0) * strides.state_slot +
++                       value_head * kDimV * kDimK;
++#pragma unroll
++        for (int row = 0; row < kRowsPerWarp; ++row) {
++          const int value = chunk * kChunkV + rows[row];
++          store_state4(dst0 + value * kDimK + k_base,
++                       make_float4(h[row][0], h[row][1], h[row][2], h[row][3]));
++        }
++      }
++    }
++
+     for (int t = 0; t < num_tokens; ++t) {
+       const float4 q4 = *reinterpret_cast<const float4*>(&shared_q[t][k_base]);
+       const float4 k4 = *reinterpret_cast<const float4*>(&shared_k[t][k_base]);
+@@ -321,7 +576,7 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+       }
+ 
+       const int destination_slot =
+-          state_indices[request * state_indices_width + t];
++          (Replay && replay_mode) ? 0 : state_indices[request * state_indices_width + t];
+       if (destination_slot > 0) {
+         StateT* destination_state =
+             state +
+@@ -338,6 +593,32 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+   }
+   __syncthreads();
+ 
++  if constexpr (Replay) {
++    if (replay_mode) {
++      // lazy: the page after the last pending one; commit/first step: page 0
++      unsigned char* store_base =
++          lazy ? rows_base + replay_pages(flags) * kPageStride : rows_base;
++      for (int idx = tid; idx < num_tokens * kDimK; idx += kThreads) {
++        const int i = idx / kDimK;
++        const int d = idx % kDimK;
++        unsigned char* r = store_base + i * kRowBytes;
++        *reinterpret_cast<float*>(r + d * 4) = shared_k[i][d];
++        reinterpret_cast<__nv_bfloat16*>(r + 512)[d] = shared_v[i][d];
++      }
++      if (tid < num_tokens) {
++        *reinterpret_cast<float2*>(store_base + tid * kRowBytes + 768) =
++            make_float2(shared_decay[tid], shared_beta[tid]);
++      }
++      // only 8 pad bytes after row 0's decay/beta: two ints (page <= 2 never
++      // needs more than the counts of pages 0 and 1)
++      if (lazy && tid < kMaxPages - 1) {
++        // row counts of all pages pending before this step (read later by the
++        // step that replays them)
++        *reinterpret_cast<int*>(store_base + kHeaderOff + 4 * tid) = cnt[tid];
++      }
++    }
++  }
++
+   if (warp < num_tokens) {
+     const int t = warp;
+     float output_values[4];
+@@ -373,7 +654,8 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+   }
+ }
+ 
+-template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate>
++template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate,
++          bool Replay>
+ void launch_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a_log,
+     torch::stable::Tensor const& dt_bias,
+@@ -383,7 +665,8 @@ void launch_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor& state, torch::stable::Tensor const& norm_weight,
+     torch::stable::Tensor& out, const __nv_bfloat16* a, const __nv_bfloat16* b,
+     const __nv_bfloat16* output_gate, int num_key_heads, int num_value_heads,
+-    double scale, double norm_eps, GdnDecodeStrides strides) {
++    double scale, double norm_eps, GdnDecodeStrides strides,
++    const int* replay_flags) {
+   using torch::headeronly::ScalarType;
+ 
+   const auto dt_bias_scalar_type = dt_bias.scalar_type();
+@@ -398,7 +681,8 @@ void launch_gdn_decode_post_conv_mtp(
+       get_current_cuda_stream(mixed_qkv.get_device_index());
+   const int num_requests = static_cast<int>(state_indices.size(0));
+   const dim3 grid(num_requests, num_value_heads);
+-  gdn_decode_post_conv_mtp_kernel<StateT, ValueHeadsPerKeyHead, SigmoidGate>
++  gdn_decode_post_conv_mtp_kernel<StateT, ValueHeadsPerKeyHead, SigmoidGate,
++                                  Replay>
+       <<<grid, kThreads, 0, stream>>>(
+           static_cast<const __nv_bfloat16*>(mixed_qkv.data_ptr()), a, b,
+           static_cast<const float*>(a_log.data_ptr()), dt_bias.data_ptr(),
+@@ -410,7 +694,8 @@ void launch_gdn_decode_post_conv_mtp(
+           num_key_heads, num_value_heads,
+           static_cast<int>(state_indices.size(1)), dt_bias_type,
+           norm_weight.scalar_type() == ScalarType::BFloat16,
+-          static_cast<float>(scale), static_cast<float>(norm_eps), strides);
++          static_cast<float>(scale), static_cast<float>(norm_eps), strides,
++          replay_flags);
+   const cudaError_t error = cudaGetLastError();
+   STD_TORCH_CHECK(error == cudaSuccess,
+                   "GDN decode MTP post-conv kernel launch failed: ",
+@@ -419,7 +704,7 @@ void launch_gdn_decode_post_conv_mtp(
+ 
+ }  // namespace
+ 
+-void fused_gdn_decode_post_conv_mtp(
++static void fused_gdn_decode_post_conv_mtp_impl(
+     torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
+     torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
+     torch::stable::Tensor const& dt_bias,
+@@ -428,8 +713,12 @@ void fused_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor const& num_accepted_tokens,
+     torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
+     torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
+-    double scale, double norm_eps, const std::string& output_gate_activation) {
++    double scale, double norm_eps, const std::string& output_gate_activation,
++    torch::stable::Tensor const* replay_flags_tensor) {
+   using torch::headeronly::ScalarType;
++  const bool replay = replay_flags_tensor != nullptr;
++  const int* replay_flags =
++      replay ? static_cast<const int*>(replay_flags_tensor->data_ptr()) : nullptr;
+ 
+   STD_TORCH_CHECK(
+       mixed_qkv.is_cuda() && mixed_qkv.scalar_type() == ScalarType::BFloat16,
+@@ -553,13 +842,34 @@ void fused_gdn_decode_post_conv_mtp(
+   const auto* b_ptr = static_cast<const __nv_bfloat16*>(b.data_ptr());
+   const auto* output_gate_ptr =
+       static_cast<const __nv_bfloat16*>(output_gate.data_ptr());
++  if (replay) {
++    STD_TORCH_CHECK(state_indices.size(1) >= 2 &&
++                        state_indices.size(1) <= kReplayMaxRows,
++                    "replay mode needs 2 <= state_indices width <= 3");
++    STD_TORCH_CHECK(replay_flags_tensor->is_cuda() &&
++                        replay_flags_tensor->scalar_type() == ScalarType::Int &&
++                        replay_flags_tensor->is_contiguous() &&
++                        replay_flags_tensor->dim() == 1 &&
++                        replay_flags_tensor->size(0) >= state_indices.size(0),
++                    "replay_flags must be a contiguous CUDA int32 [>=N]");
++  }
+   const auto launch = [&]<typename StateT, int ValueHeadsPerKeyHead,
+                           bool SigmoidGate>() {
+-    launch_gdn_decode_post_conv_mtp<StateT, ValueHeadsPerKeyHead, SigmoidGate>(
+-        mixed_qkv, a_log, dt_bias, state_indices, cu_seqlens,
+-        num_accepted_tokens, state, norm_weight, out, a_ptr, b_ptr,
+-        output_gate_ptr, num_key_heads, num_value_heads, scale, norm_eps,
+-        strides);
++    if (replay) {
++      launch_gdn_decode_post_conv_mtp<StateT, ValueHeadsPerKeyHead,
++                                      SigmoidGate, true>(
++          mixed_qkv, a_log, dt_bias, state_indices, cu_seqlens,
++          num_accepted_tokens, state, norm_weight, out, a_ptr, b_ptr,
++          output_gate_ptr, num_key_heads, num_value_heads, scale, norm_eps,
++          strides, replay_flags);
++    } else {
++      launch_gdn_decode_post_conv_mtp<StateT, ValueHeadsPerKeyHead,
++                                      SigmoidGate, false>(
++          mixed_qkv, a_log, dt_bias, state_indices, cu_seqlens,
++          num_accepted_tokens, state, norm_weight, out, a_ptr, b_ptr,
++          output_gate_ptr, num_key_heads, num_value_heads, scale, norm_eps,
++          strides, nullptr);
++    }
+   };
+   const auto dispatch_state_type = [&]<int ValueHeadsPerKeyHead>() {
+     if (state_scalar_type == ScalarType::Float) {
+@@ -595,3 +905,90 @@ void fused_gdn_decode_post_conv_mtp(
+       break;
+   }
+ }
++
++void fused_gdn_decode_post_conv_mtp(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
++    torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
++    double scale, double norm_eps, const std::string& output_gate_activation) {
++  fused_gdn_decode_post_conv_mtp_impl(
++      mixed_qkv, a, b, a_log, dt_bias, state_indices, cu_seqlens,
++      num_accepted_tokens, state, output_gate, norm_weight, out, scale,
++      norm_eps, output_gate_activation, nullptr);
++}
++
++// Replay variant: one state write per step; see gdn_replay_flush_kernel.
++void fused_gdn_decode_post_conv_mtp_replay(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
++    torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
++    torch::stable::Tensor const& replay_flags, double scale, double norm_eps,
++    const std::string& output_gate_activation) {
++  fused_gdn_decode_post_conv_mtp_impl(
++      mixed_qkv, a, b, a_log, dt_bias, state_indices, cu_seqlens,
++      num_accepted_tokens, state, output_gate, norm_weight, out, scale,
++      norm_eps, output_gate_activation, &replay_flags);
++}
++
++void gdn_replay_flush(torch::stable::Tensor const& state_indices,
++                      torch::stable::Tensor const& num_accepted_tokens,
++                      torch::stable::Tensor const& replay_flags,
++                      torch::stable::Tensor& state, int64_t dst_acc_slot) {
++  using torch::headeronly::ScalarType;
++  STD_TORCH_CHECK(state.scalar_type() == ScalarType::Float ||
++                      state.scalar_type() == ScalarType::BFloat16,
++                  "state must be float32 or bfloat16");
++  STD_TORCH_CHECK(state_indices.is_cuda() && state_indices.dim() == 2 &&
++                      state_indices.size(1) >= 2 &&
++                      state_indices.size(1) <= kReplayMaxRows &&
++                      state_indices.is_contiguous() &&
++                      state_indices.scalar_type() == ScalarType::Int,
++                  "state_indices must be contiguous int32 [N, 2..3]");
++  STD_TORCH_CHECK(num_accepted_tokens.is_cuda() &&
++                      num_accepted_tokens.scalar_type() == ScalarType::Int &&
++                      num_accepted_tokens.numel() >= state_indices.size(0),
++                  "num_accepted_tokens must be CUDA int32 [>=N]");
++  STD_TORCH_CHECK(replay_flags.is_cuda() &&
++                      replay_flags.scalar_type() == ScalarType::Int &&
++                      replay_flags.numel() >= state_indices.size(0),
++                  "replay_flags must be CUDA int32 [>=N]");
++  STD_TORCH_CHECK(state.dim() == 4 && state.size(2) == kDimV &&
++                      state.size(3) == kDimK,
++                  "state must have shape [slots, HV, 128, 128]");
++  const int num_requests = static_cast<int>(state_indices.size(0));
++  if (num_requests == 0) return;
++  const int hv = static_cast<int>(state.size(1));
++  torch::stable::accelerator::DeviceGuard const device_guard(
++      state.get_device_index());
++  const cudaStream_t stream = get_current_cuda_stream(state.get_device_index());
++  const dim3 grid(num_requests, hv);
++  if (state.scalar_type() == ScalarType::Float) {
++    gdn_replay_flush_kernel<float><<<grid, kThreads, 0, stream>>>(
++        static_cast<const int*>(state_indices.data_ptr()),
++        static_cast<const int*>(num_accepted_tokens.data_ptr()),
++        static_cast<const int*>(replay_flags.data_ptr()),
++        static_cast<float*>(state.data_ptr()), static_cast<int>(dst_acc_slot),
++        static_cast<int>(state_indices.size(1)), state.stride(0));
++  } else {
++    gdn_replay_flush_kernel<__nv_bfloat16><<<grid, kThreads, 0, stream>>>(
++        static_cast<const int*>(state_indices.data_ptr()),
++        static_cast<const int*>(num_accepted_tokens.data_ptr()),
++        static_cast<const int*>(replay_flags.data_ptr()),
++        static_cast<__nv_bfloat16*>(state.data_ptr()),
++        static_cast<int>(dst_acc_slot),
++        static_cast<int>(state_indices.size(1)), state.stride(0));
++  }
++  const cudaError_t error = cudaGetLastError();
++  STD_TORCH_CHECK(error == cudaSuccess, "GDN replay flush launch failed: ",
++                  cudaGetErrorString(error));
++}
+diff --git a/csrc/host_all_reduce.cu b/csrc/host_all_reduce.cu
+new file mode 100644
+index 0000000000..d766e0d349
+--- /dev/null
++++ b/csrc/host_all_reduce.cu
+@@ -0,0 +1,139 @@
++// One-shot 2-rank all-reduce through pinned host memory (for machines without GPU P2P).
++// Each rank writes its input to its slot in a shared (cudaHostRegister'ed) host buffer, publishes
++// a per-block sequence flag, waits for the peer's flag, then reads the peer slot and sums.
++// Slots are double-buffered by sequence parity; the sequence counter lives on the device (one per
++// block, advanced by the kernel itself), so the kernel is CUDA-graph capturable and replayable.
++#include "torch_utils.h"
++
++#include <torch/csrc/stable/macros.h>
++#include <torch/csrc/stable/accelerator.h>
++#include <torch/csrc/stable/tensor.h>
++#include <torch/csrc/stable/ops.h>
++#include <torch/headeronly/core/ScalarType.h>
++#include <torch/csrc/stable/device.h>
++
++#include <cuda_bf16.h>
++#include <cuda_fp16.h>
++#include <cuda_runtime.h>
++#include <stdint.h>
++
++namespace {
++constexpr int kHostArMaxBlocks = 256;
++constexpr int kHostArGrid = 4;  // grid must be constant across calls (see kernel)
++constexpr int kHostArFlagStride = 8;  // uint32 words per flag (32 B)
++
++__device__ __forceinline__ uint4 ldcv(const uint4* p) {
++  uint4 r;
++  asm volatile("ld.global.cv.v4.u32 {%0,%1,%2,%3}, [%4];"
++               : "=r"(r.x), "=r"(r.y), "=r"(r.z), "=r"(r.w)
++               : "l"(p));
++  return r;
++}
++
++template <typename T2> struct Add2;
++template <> struct Add2<__nv_bfloat162> {
++  static __device__ __forceinline__ uint32_t run(uint32_t a, uint32_t b) {
++    __nv_bfloat162 x = *reinterpret_cast<__nv_bfloat162*>(&a);
++    __nv_bfloat162 y = *reinterpret_cast<__nv_bfloat162*>(&b);
++    float2 fx = __bfloat1622float2(x), fy = __bfloat1622float2(y);
++    __nv_bfloat162 r = __floats2bfloat162_rn(fx.x + fy.x, fx.y + fy.y);
++    return *reinterpret_cast<uint32_t*>(&r);
++  }
++};
++template <> struct Add2<__half2> {
++  static __device__ __forceinline__ uint32_t run(uint32_t a, uint32_t b) {
++    __half2 x = *reinterpret_cast<__half2*>(&a);
++    __half2 y = *reinterpret_cast<__half2*>(&b);
++    float2 fx = __half22float2(x), fy = __half22float2(y);
++    __half2 r = __floats2half2_rn(fx.x + fy.x, fx.y + fy.y);
++    return *reinterpret_cast<uint32_t*>(&r);
++  }
++};
++
++template <typename T2>
++__global__ void host_ar_kernel(const uint4* in, uint4* out, uint4* host_data,
++                               volatile uint32_t* flags, uint32_t* ctr,
++                               int rank, int n16, long slot16) {
++  int b = blockIdx.x;
++  uint32_t seq = ctr[b] + 1;
++  int par = seq & 1;
++  uint4* mine = host_data + (long)(par * 2 + rank) * slot16;
++  const uint4* peer = host_data + (long)(par * 2 + (1 - rank)) * slot16;
++  int cs = (n16 + gridDim.x - 1) / gridDim.x;
++  int lo = b * cs, hi = min(n16, lo + cs);
++  for (int i = lo + threadIdx.x; i < hi; i += blockDim.x) mine[i] = in[i];
++  __syncthreads();
++  if (threadIdx.x == 0) {
++    __threadfence_system();
++    flags[(rank * kHostArMaxBlocks + b) * kHostArFlagStride] = seq;
++    while ((int)(flags[((1 - rank) * kHostArMaxBlocks + b) * kHostArFlagStride] -
++                 seq) < 0) {
++    }
++    __threadfence_system();
++    ctr[b] = seq;
++  }
++  __syncthreads();
++  for (int i = lo + threadIdx.x; i < hi; i += blockDim.x) {
++    uint4 p = ldcv(peer + i);
++    uint4 a = in[i];
++    uint4 r;
++    r.x = Add2<T2>::run(a.x, p.x);
++    r.y = Add2<T2>::run(a.y, p.y);
++    r.z = Add2<T2>::run(a.z, p.z);
++    r.w = Add2<T2>::run(a.w, p.w);
++    out[i] = r;
++  }
++}
++}  // namespace
++
++// Registers [ptr, ptr+size) (page-aligned mmap) as mapped pinned memory; returns device pointer.
++int64_t host_ar_register(int64_t ptr, int64_t size) {
++  cudaError_t e = cudaHostRegister(reinterpret_cast<void*>(ptr), size,
++                                   cudaHostRegisterMapped | cudaHostRegisterPortable);
++  STD_TORCH_CHECK(e == cudaSuccess, "cudaHostRegister failed: ",
++                  cudaGetErrorString(e));
++  void* d = nullptr;
++  e = cudaHostGetDevicePointer(&d, reinterpret_cast<void*>(ptr), 0);
++  STD_TORCH_CHECK(e == cudaSuccess, "cudaHostGetDevicePointer failed: ",
++                  cudaGetErrorString(e));
++  return reinterpret_cast<int64_t>(d);
++}
++
++void host_ar_unregister(int64_t ptr) {
++  cudaHostUnregister(reinterpret_cast<void*>(ptr));
++}
++
++// Host buffer layout: [flags: 1 MiB][data: 4 slots of slot_bytes] (slot index = parity*2 + rank).
++void host_ar_all_reduce(torch::stable::Tensor& inp, torch::stable::Tensor& out,
++                        int64_t dev_base, int64_t data_off, int64_t slot_bytes,
++                        torch::stable::Tensor& ctr, int64_t rank, int64_t grid,
++                        int64_t threads) {
++  const torch::stable::accelerator::DeviceGuard device_guard(
++      inp.get_device_index());
++  const cudaStream_t stream = get_current_cuda_stream(inp.get_device_index());
++  STD_TORCH_CHECK(inp.is_contiguous() && out.is_contiguous());
++  STD_TORCH_CHECK(inp.scalar_type() == out.scalar_type());
++  STD_TORCH_CHECK(inp.numel() == out.numel());
++  int64_t nbytes = inp.numel() * inp.element_size();
++  STD_TORCH_CHECK(nbytes % 16 == 0 && nbytes <= slot_bytes,
++                  "host_ar: bad size ", nbytes);
++  // Slot parity comes from the per-block counters, so every call must use the same grid:
++  // otherwise block ranges differ between calls and a rank can overwrite slot bytes the peer
++  // is still reading.
++  STD_TORCH_CHECK(grid == kHostArGrid, "host_ar: grid must be ", kHostArGrid);
++  int n16 = nbytes / 16;
++  auto* data = reinterpret_cast<uint4*>(dev_base + data_off);
++  auto* flags = reinterpret_cast<volatile uint32_t*>(dev_base);
++  auto* c = reinterpret_cast<uint32_t*>(ctr.mutable_data_ptr());
++  auto* ip = reinterpret_cast<const uint4*>(inp.const_data_ptr());
++  auto* op = reinterpret_cast<uint4*>(out.mutable_data_ptr());
++  if (inp.scalar_type() == torch::headeronly::ScalarType::BFloat16) {
++    host_ar_kernel<__nv_bfloat162><<<grid, threads, 0, stream>>>(
++        ip, op, data, flags, c, (int)rank, n16, slot_bytes / 16);
++  } else if (inp.scalar_type() == torch::headeronly::ScalarType::Half) {
++    host_ar_kernel<__half2><<<grid, threads, 0, stream>>>(
++        ip, op, data, flags, c, (int)rank, n16, slot_bytes / 16);
++  } else {
++    STD_TORCH_CHECK(false, "host_ar supports bf16/fp16 only");
++  }
++}
+diff --git a/csrc/ops.h b/csrc/ops.h
+index 81a0065c98..78df344389 100644
+--- a/csrc/ops.h
++++ b/csrc/ops.h
+@@ -451,6 +451,21 @@ void fused_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
+     torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
+     double scale, double norm_eps, const std::string& output_gate_activation);
++void fused_gdn_decode_post_conv_mtp_replay(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
++    torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
++    torch::stable::Tensor const& replay_flags,
++    double scale, double norm_eps, const std::string& output_gate_activation);
++void gdn_replay_flush(torch::stable::Tensor const& state_indices,
++                      torch::stable::Tensor const& num_accepted_tokens,
++                      torch::stable::Tensor const& replay_flags,
++                      torch::stable::Tensor& state, int64_t dst_acc_slot);
+ 
+ #endif
+ 
+@@ -569,6 +584,13 @@ void selective_scan_fwd(
+     const std::optional<torch::stable::Tensor>& cu_chunk_seqlen,
+     const std::optional<torch::stable::Tensor>& last_chunk_indices);
+ 
++int64_t host_ar_register(int64_t ptr, int64_t size);
++void host_ar_unregister(int64_t ptr);
++void host_ar_all_reduce(torch::stable::Tensor& inp, torch::stable::Tensor& out,
++                        int64_t dev_base, int64_t data_off, int64_t slot_bytes,
++                        torch::stable::Tensor& ctr, int64_t rank, int64_t grid,
++                        int64_t threads);
++
+ using fptr_t = int64_t;
+ fptr_t init_custom_ar(const std::vector<int64_t>& fake_ipc_ptrs,
+                       torch::stable::Tensor& rank_data, int64_t rank,
+diff --git a/csrc/quantization/marlin/marlin.cu b/csrc/quantization/marlin/marlin.cu
+index 9d031dcd28..107f6889fa 100644
+--- a/csrc/quantization/marlin/marlin.cu
++++ b/csrc/quantization/marlin/marlin.cu
+@@ -88,6 +88,12 @@ thread_config_t large_batch_thread_configs[] = {
+     {64, 128, 128},
+     {128, 64, 128}};
+ 
++thread_config_t mid_batch_thread_configs[] = {
++    // thread_k, thread_n, num_threads
++    {128, 64, 128},
++    {64, 128, 128},
++    {64, 256, 256}};
++
+ typedef struct {
+   int blocks_per_sm;
+   thread_config_t tb_cfg;
+@@ -201,12 +207,17 @@ exec_config_t determine_exec_config(
+     int num_bits, int group_size, bool has_zp, bool is_zp_float, int stages,
+     int max_shared_mem, int sms) {
+   exec_config_t exec_cfg = exec_config_t{1, thread_config_t{-1, -1, -1}};
+-  thread_config_t* thread_configs = thread_m_blocks > 1
+-                                        ? large_batch_thread_configs
+-                                        : small_batch_thread_configs;
++  // M<=48 decode: {128,64,128} first (measured faster than {64,256,256} on the
++  // large FP8 GEMMs; the heuristic below still applies on top).
++  thread_config_t* thread_configs =
++      thread_m_blocks > 3   ? large_batch_thread_configs
++      : thread_m_blocks > 1 ? mid_batch_thread_configs
++                            : small_batch_thread_configs;
+   int thread_configs_size =
+-      thread_m_blocks > 1
++      thread_m_blocks > 3
+           ? sizeof(large_batch_thread_configs) / sizeof(thread_config_t)
++      : thread_m_blocks > 1
++          ? sizeof(mid_batch_thread_configs) / sizeof(thread_config_t)
+           : sizeof(small_batch_thread_configs) / sizeof(thread_config_t);
+ 
+   for (int i = 0; i < thread_configs_size; i++) {
+diff --git a/csrc/torch_bindings.cpp b/csrc/torch_bindings.cpp
+index 78ae89a646..bcad209373 100644
+--- a/csrc/torch_bindings.cpp
++++ b/csrc/torch_bindings.cpp
+@@ -573,6 +573,16 @@ STABLE_TORCH_LIBRARY_FRAGMENT(_C, ops) {
+       "Tensor! state, Tensor output_gate, Tensor norm_weight, Tensor! out, "
+       "float scale, float norm_eps=1e-5, "
+       "str output_gate_activation='silu') -> ()");
++  ops.def(
++      "fused_gdn_decode_post_conv_mtp_replay("
++      "Tensor mixed_qkv, Tensor a, Tensor b, Tensor A_log, Tensor dt_bias, "
++      "Tensor state_indices, Tensor cu_seqlens, Tensor num_accepted_tokens, "
++      "Tensor! state, Tensor output_gate, Tensor norm_weight, Tensor! out, "
++      "Tensor replay_flags, float scale, float norm_eps=1e-5, "
++      "str output_gate_activation='silu') -> ()");
++  ops.def(
++      "gdn_replay_flush(Tensor state_indices, Tensor num_accepted_tokens, "
++      "Tensor replay_flags, Tensor! state, int dst_acc_slot) -> ()");
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+@@ -907,6 +917,9 @@ STABLE_TORCH_LIBRARY_IMPL(_C, CUDA, ops) {
+ #ifdef VLLM_ENABLE_FUSED_GDN_DECODE
+   ops.impl("fused_gdn_decode_post_conv_mtp",
+            TORCH_BOX(&fused_gdn_decode_post_conv_mtp));
++  ops.impl("fused_gdn_decode_post_conv_mtp_replay",
++           TORCH_BOX(&fused_gdn_decode_post_conv_mtp_replay));
++  ops.impl("gdn_replay_flush", TORCH_BOX(&gdn_replay_flush));
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+@@ -1181,11 +1194,17 @@ STABLE_TORCH_LIBRARY_FRAGMENT(_C_custom_ar, custom_ar) {
+   custom_ar.def("allocate_shared_buffer_and_handle(int size) -> (int, Tensor)");
+   custom_ar.def("open_mem_handle(Tensor mem_handle) -> int");
+   custom_ar.def("free_shared_buffer(int ptr) -> ()");
++  custom_ar.def("host_ar_register(int ptr, int size) -> int");
++  custom_ar.def("host_ar_unregister(int ptr) -> ()");
++  custom_ar.def(
++      "host_ar_all_reduce(Tensor inp, Tensor! out, int dev_base, int data_off, "
++      "int slot_bytes, Tensor ctr, int rank, int grid, int threads) -> ()");
+ }
+ 
+ STABLE_TORCH_LIBRARY_IMPL(_C_custom_ar, CUDA, custom_ar) {
+   custom_ar.impl("init_custom_ar", TORCH_BOX(&init_custom_ar));
+   custom_ar.impl("all_reduce", TORCH_BOX(&all_reduce));
++  custom_ar.impl("host_ar_all_reduce", TORCH_BOX(&host_ar_all_reduce));
+ }
+ 
+ STABLE_TORCH_LIBRARY_IMPL(_C_custom_ar, CPU, custom_ar) {
+@@ -1202,6 +1221,8 @@ STABLE_TORCH_LIBRARY_IMPL(_C_custom_ar, CompositeExplicitAutograd, custom_ar) {
+   custom_ar.impl("allocate_shared_buffer_and_handle",
+                  TORCH_BOX(&allocate_shared_buffer_and_handle));
+   custom_ar.impl("free_shared_buffer", TORCH_BOX(&free_shared_buffer));
++  custom_ar.impl("host_ar_register", TORCH_BOX(&host_ar_register));
++  custom_ar.impl("host_ar_unregister", TORCH_BOX(&host_ar_unregister));
+ }
+ 
+ STABLE_TORCH_LIBRARY_IMPL(_C_cache_ops, CPU, ops) {
+diff --git a/vllm/_custom_ops.py b/vllm/_custom_ops.py
+index 00fe25c0f4..8bfe26f0ec 100644
+--- a/vllm/_custom_ops.py
++++ b/vllm/_custom_ops.py
+@@ -3210,6 +3210,57 @@ def fused_gdn_decode_post_conv_mtp(
+     return out
+ 
+ 
++def fused_gdn_decode_post_conv_mtp_replay(
++    mixed_qkv: torch.Tensor,
++    a: torch.Tensor,
++    b: torch.Tensor,
++    A_log: torch.Tensor,
++    dt_bias: torch.Tensor,
++    state_indices: torch.Tensor,
++    cu_seqlens: torch.Tensor,
++    num_accepted_tokens: torch.Tensor,
++    state: torch.Tensor,
++    output_gate: torch.Tensor,
++    norm_weight: torch.Tensor,
++    out: torch.Tensor,
++    replay_flags: torch.Tensor,
++    scale: float = 128**-0.5,
++    norm_eps: float = 1e-5,
++    output_gate_activation: str = "silu",
++) -> torch.Tensor:
++    torch.ops._C.fused_gdn_decode_post_conv_mtp_replay(
++        mixed_qkv,
++        a,
++        b,
++        A_log,
++        dt_bias,
++        state_indices,
++        cu_seqlens,
++        num_accepted_tokens,
++        state,
++        output_gate,
++        norm_weight,
++        out,
++        replay_flags,
++        scale,
++        norm_eps,
++        output_gate_activation,
++    )
++    return out
++
++
++def gdn_replay_flush(
++    state_indices: torch.Tensor,
++    num_accepted_tokens: torch.Tensor,
++    replay_flags: torch.Tensor,
++    state: torch.Tensor,
++    dst_acc_slot: int,
++) -> None:
++    torch.ops._C.gdn_replay_flush(
++        state_indices, num_accepted_tokens, replay_flags, state, dst_acc_slot
++    )
++
++
+ def concat_and_cache_mla(
+     kv_c: torch.Tensor,
+     k_pe: torch.Tensor,
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..08d8d60313 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -117,6 +117,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         self.symm_mem_comm: SymmMemCommunicator | None = None
+         self.fi_ar_comm: FlashInferAllReduce | None = None
+         self.fi_pcie_ipc_ar_comm: FlashInferPcieIpcAllReduce | None = None
++        self.host_ar_comm = None
+         self.aiter_ar_comm: AiterCustomAllreduce | None = None
+         self.use_aiter_ag_rs: bool = False
+ 
+@@ -147,6 +148,20 @@ class CudaCommunicator(DeviceCommunicatorBase):
+                 device=self.device,
+             )
+ 
++        if (
++            unique_name.split(":")[0] == "tp"
++            and self.world_size == 2
++            and current_platform.is_cuda()
++            and not envs.VLLM_BATCH_INVARIANT
++        ):
++            from vllm.distributed.device_communicators.host_all_reduce import (
++                HostAllReduce,
++            )
++
++            host_ar = HostAllReduce(group=self.cpu_group, device=self.device)
++            if not host_ar.disabled:
++                self.host_ar_comm = host_ar
++
+         if self.use_aiter_allreduce and self.world_size > 1:
+             self.aiter_ar_comm = AiterCustomAllreduce(
+                 group=self.cpu_group,
+@@ -371,6 +386,8 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             enabled_ar_backends.append("SYMM_MEM")
+         if self.pynccl_comm is not None and not self.pynccl_comm.disabled:
+             enabled_ar_backends.append("PYNCCL")
++        if getattr(self, "host_ar_comm", None) is not None:
++            enabled_ar_backends.insert(0, "HOST_PINNED(small)")
+ 
+         logger.info_once(
+             "Using %s all-reduce backends (in dispatch order) for group "
+@@ -382,6 +399,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         )
+ 
+     def all_reduce(self, input_):
++        host_ar_comm = self.host_ar_comm
++        if host_ar_comm is not None and host_ar_comm.should_use(input_):
++            return host_ar_comm.all_reduce(input_)
+         fi_ar_comm = self.fi_ar_comm
+         use_fi_ar = (
+             fi_ar_comm is not None
+diff --git a/vllm/distributed/device_communicators/host_all_reduce.py b/vllm/distributed/device_communicators/host_all_reduce.py
+new file mode 100644
+index 0000000000..0734d9ac46
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_all_reduce.py
+@@ -0,0 +1,142 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Two-rank all-reduce through pinned host memory, for PCIe machines without GPU P2P.
++
++Each rank writes its tensor into a slot of a shared /dev/shm buffer (registered as mapped pinned
++memory in both processes), publishes a per-block sequence flag, waits for the peer's flag, reads
++the peer's slot and sums.  Used only for small tensors (default <= 128*5120*2 bytes, env
++VLLM_HOST_AR_MAX_BYTES; 0 disables); everything else stays on NCCL.  The sequence counters live
++on the device and are advanced by the kernel, so calls are CUDA-graph capturable/replayable.
++Both ranks must issue the same sequence of host-AR calls (they do: dispatch depends only on
++shape/dtype, which are identical across TP ranks).
++"""
++
++import atexit
++import ctypes
++import mmap
++import os
++import uuid
++
++import torch
++import torch.distributed as dist
++from torch.distributed import ProcessGroup
++
++import vllm._custom_ops  # noqa: F401  (loads the _C_custom_ar ops)
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++_FLAGS_BYTES = 1 << 20
++_DEFAULT_MAX_BYTES = 128 * 5120 * 2
++_GRID = 4  # fixed block count (see all_reduce); enforced in csrc/host_all_reduce.cu
++
++
++class HostAllReduce:
++    def __init__(self, group: ProcessGroup, device: int | str | torch.device) -> None:
++        self.disabled = True
++        self.max_bytes = int(os.environ.get("VLLM_HOST_AR_MAX_BYTES", _DEFAULT_MAX_BYTES))
++        if self.max_bytes <= 0:
++            return
++        if not isinstance(group, ProcessGroup):
++            return
++        self.group = group
++        self.device = torch.device(device)
++        self.world_size = dist.get_world_size(group)
++        self.rank = dist.get_rank(group)
++        if self.world_size != 2:
++            return
++        from vllm.distributed.device_communicators.custom_all_reduce import _can_p2p
++
++        if _can_p2p(self.rank, self.world_size):
++            return  # P2P works: NCCL / custom all-reduce are the better choice
++        self.max_bytes = (self.max_bytes // 16) * 16
++        self.slot_bytes = self.max_bytes
++        self.total = _FLAGS_BYTES + 4 * self.slot_bytes
++        self.total = (self.total + 4095) // 4096 * 4096
++        ranks = dist.get_process_group_ranks(group)
++        # Rank 0 creates the shm file (zero-filled) and broadcasts its name.
++        name = [None]
++        if self.rank == 0:
++            name[0] = f"/dev/shm/vllm_host_ar_{os.getpid()}_{uuid.uuid4().hex}"
++            with open(name[0], "wb") as f:
++                f.truncate(self.total)
++        dist.broadcast_object_list(name, src=ranks[0], group=group)
++        self.path = name[0]
++        f = open(self.path, "r+b")
++        self._mm = mmap.mmap(f.fileno(), self.total)
++        f.close()
++        self._buf = ctypes.c_char.from_buffer(self._mm)
++        addr = ctypes.addressof(self._buf)
++        with torch.cuda.device(self.device):
++            self.dev_base = torch.ops._C_custom_ar.host_ar_register(addr, self.total)
++            self._addr = addr
++            self.ctr = torch.zeros(256, dtype=torch.int32, device=self.device)
++        # Both ranks have the file mapped: unlink it now so nothing is left behind on crashes.
++        dist.barrier(group=group)
++        if self.rank == 0:
++            try:
++                os.unlink(self.path)
++            except OSError:
++                pass
++        atexit.register(self.destroy)
++        self.disabled = False
++        ok = self._self_test()
++        if not ok:
++            self.disabled = True
++            logger.error("Host all-reduce self-test FAILED; disabled.")
++        else:
++            logger.info(
++                "Host-pinned all-reduce enabled (tp rank %d, <= %d bytes, self-test: bitwise OK).",
++                self.rank,
++                self.max_bytes,
++            )
++
++    def _self_test(self) -> bool:
++        ok = True
++        for rows in (1, 48):
++            xs = []
++            for r in range(2):
++                g = torch.Generator(device="cpu").manual_seed(1234 + r)
++                xs.append(
++                    (torch.randn(rows, 5120, generator=g) * 3).to(torch.bfloat16)
++                )
++            ref = (xs[0] + xs[1]).to(self.device)
++            x = xs[self.rank].to(self.device)
++            for _ in range(3):  # repeated calls exercise the sequence/parity logic
++                out = self.all_reduce(x)
++                torch.cuda.synchronize(self.device)
++                ok = ok and bool(torch.equal(out, ref))
++        flag = torch.tensor([int(ok)], dtype=torch.int32)
++        dist.all_reduce(flag, op=dist.ReduceOp.MIN, group=self.group)
++        return bool(flag.item())
++
++    def should_use(self, inp: torch.Tensor) -> bool:
++        if self.disabled or not inp.is_cuda:
++            return False
++        if inp.dtype not in (torch.bfloat16, torch.float16):
++            return False
++        nbytes = inp.numel() * inp.element_size()
++        return nbytes % 16 == 0 and 0 < nbytes <= self.max_bytes and inp.is_contiguous()
++
++    def all_reduce(self, inp: torch.Tensor) -> torch.Tensor:
++        out = torch.empty_like(inp)
++        nbytes = inp.numel() * inp.element_size()
++        # The grid MUST be constant across calls: slot parity comes from per-block sequence
++        # counters, and a call's block ranges must line up with the previous call's.
++        grid, threads = _GRID, 1024
++        torch.ops._C_custom_ar.host_ar_all_reduce(
++            inp, out, self.dev_base, _FLAGS_BYTES, self.slot_bytes,
++            self.ctr, self.rank, grid, threads,
++        )
++        return out
++
++    def destroy(self) -> None:
++        if getattr(self, "disabled", True) and not hasattr(self, "_mm"):
++            return
++        self.disabled = True
++        try:
++            torch.ops._C_custom_ar.host_ar_unregister(self._addr)
++            del self._buf
++            self._mm.close()
++        except Exception:
++            pass
++        del self._mm
+diff --git a/vllm/model_executor/layers/linear.py b/vllm/model_executor/layers/linear.py
+index a4a8304768..8ff1d3d90f 100644
+--- a/vllm/model_executor/layers/linear.py
++++ b/vllm/model_executor/layers/linear.py
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
++import os
+ from abc import abstractmethod
+ from collections.abc import Callable, Iterable
+ from typing import Any
+@@ -1682,6 +1683,24 @@ class KimiK3MergedQKVGateLinear(MergedColumnParallelLinear):
+ 
+ 
+ # --8<-- [start:row_parallel_linear]
++
++
++_CHUNKED_AR_MIN_ROWS = int(os.environ.get("VLLM_CHUNKED_AR_MIN_ROWS", "192"))
++_CHUNKED_AR_CHUNKS = int(os.environ.get("VLLM_CHUNKED_AR_CHUNKS", "2"))
++_CHUNKED_AR_CHECK = int(os.environ.get("VLLM_CHUNKED_AR_CHECK", "0"))
++_CHUNKED_AR_COUNT = 0
++_CHUNKED_AR_GRAPH = os.environ.get("VLLM_CHUNKED_AR_GRAPH", "0") == "1"
++_CHUNK_AR_STREAMS: dict = {}
++
++
++def _get_chunk_ar_stream(device):
++    idx = device.index if device.index is not None else torch.cuda.current_device()
++    st = _CHUNK_AR_STREAMS.get(idx)
++    if st is None:
++        st = _CHUNK_AR_STREAMS[idx] = torch.cuda.Stream(device=idx)
++    return st
++
++
+ @PluggableLayer.register("row_parallel_linear")
+ class RowParallelLinear(LinearBase):
+     """Linear layer with row parallelism.
+@@ -1845,6 +1864,23 @@ class RowParallelLinear(LinearBase):
+         # Only fuse bias add into GEMM for rank 0 (this ensures that
+         # bias will not get added more than once in TP>1 case)
+         bias_ = None if (self.tp_rank > 0 or self.skip_bias_add) else self.bias
++        if (
++            self.reduce_results
++            and self.tp_size > 1
++            and _CHUNKED_AR_MIN_ROWS > 0
++            and input_parallel.dim() == 2
++            and input_parallel.shape[0] >= _CHUNKED_AR_MIN_ROWS
++            and input_parallel.is_cuda
++            and not torch.compiler.is_compiling()
++            and (_CHUNKED_AR_GRAPH or not torch.cuda.is_current_stream_capturing())
++        ):
++            output = self._chunked_matmul_all_reduce(input_parallel, bias_)
++            if output is not None:
++                if not self.return_bias:
++                    return output
++                output_bias = self.bias if self.skip_bias_add else None
++                return output, output_bias
++
+         output_parallel = self.quant_method.apply(self, input_parallel, bias_)
+ 
+         if self.reduce_results and self.tp_size > 1:
+@@ -1857,6 +1893,47 @@ class RowParallelLinear(LinearBase):
+         output_bias = self.bias if self.skip_bias_add else None
+         return output, output_bias
+ 
++    def _chunked_matmul_all_reduce(self, input_parallel, bias_):
++        """Row-chunked GEMM + all-reduce pipeline: chunk k's NCCL all-reduce runs on a
++        side stream while chunk k+1's GEMM runs. Eager only. Returns None if unavailable."""
++        from vllm.distributed import get_tp_group
++
++        comm = get_tp_group().device_communicator
++        pynccl = getattr(comm, "pynccl_comm", None)
++        if pynccl is None or pynccl.disabled:
++            return None
++        global _CHUNKED_AR_COUNT
++        compute = torch.cuda.current_stream()
++        side = _get_chunk_ar_stream(input_parallel.device)
++        n = input_parallel.shape[0]
++        k = max(2, _CHUNKED_AR_CHUNKS)
++        bounds = [(n * i) // k for i in range(k + 1)]
++        outs = []
++        for i in range(k):
++            chunk = input_parallel[bounds[i] : bounds[i + 1]]
++            o = self.quant_method.apply(self, chunk, bias_)
++            ev = torch.cuda.Event()
++            ev.record(compute)
++            side.wait_event(ev)
++            with torch.cuda.stream(side):
++                pynccl.all_reduce(o, o, stream=side)  # in place on the side stream
++            outs.append(o)
++        done = torch.cuda.Event()
++        done.record(side)
++        compute.wait_event(done)
++        output = torch.cat(outs, dim=0)
++        if _CHUNKED_AR_CHECK and _CHUNKED_AR_COUNT < _CHUNKED_AR_CHECK and not torch.cuda.is_current_stream_capturing():
++            _CHUNKED_AR_COUNT += 1
++            ref = tensor_model_parallel_all_reduce(
++                self.quant_method.apply(self, input_parallel, bias_)
++            )
++            d = (ref.float() - output.float()).abs().max().item()
++            logger.info(
++                "chunked-AR check rows=%d maxabsdiff=%g (max|ref|=%g, bit-equal=%s)",
++                n, d, ref.float().abs().max().item(), bool(torch.equal(ref, output)),
++            )
++        return output
++
+     def extra_repr(self) -> str:
+         s = f"in_features={self.input_size_per_partition}"
+         s += f", output_features={self.output_size}"
+diff --git a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+index bdea28e11a..d8d5b82b67 100644
+--- a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
++++ b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+@@ -122,6 +122,17 @@ MAX_FUSED_GDN_MTP_TOKENS = 8
+ # regression was at 272 tokens (27B BF16 TP8).
+ _BA_PROJ_OVERLAP_MAX_TOKENS = 256
+ FUSED_GDN_STATE_DTYPES = (torch.float32, torch.bfloat16)
++_GDN_TRACE_L = os.environ.get("VLLM_GDN_REPLAY_TRACE", "0") == "1"
++_gdn_trace_cnt = [0]
++
++
++def _gdn_trace_once() -> bool:
++    # log only the first GDN layer call of every step (every 48th call)
++    _gdn_trace_cnt[0] += 1
++    return (_gdn_trace_cnt[0] - 1) % 48 == 0
++
++
++_GDN_REPLAY_SHADOW = os.environ.get("VLLM_GDN_REPLAY_SHADOW", "0") == "1"
+ 
+ 
+ def supports_fused_mtp_decode() -> bool:
+@@ -1787,6 +1798,17 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+ 
+         assert isinstance(attn_metadata, GDNAttentionMetadata)
+ 
++        if attn_metadata.replay_ns_flags is not None:
++            # A request that ran in replay mode last step but is a non-spec row
++            # now (e.g. no drafts): apply its pending rows onto its home slot.
++            ops.gdn_replay_flush(
++                attn_metadata.replay_ns_state_indices,
++                attn_metadata.replay_ns_num_accepted,
++                attn_metadata.replay_ns_flags,
++                self.kv_cache[1],
++                0,
++            )
++
+         if (
+             self.enable_packed_recurrent_decode
+             and attn_metadata.spec_sequence_masks is None
+@@ -1961,6 +1983,32 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         # 2. Recurrent attention
+ 
+         # 2.1: Process the multi-query part
++        if attn_metadata.replay_any_mode:
++            raise RuntimeError(
++                "GDN replay mode was scheduled for a batch that does not take "
++                "the fused MTP decode path"
++            )
++        if (
++            _GDN_REPLAY_SHADOW
++            and attn_metadata.replay_flush
++            and spec_sequence_masks is not None
++        ):
++            self._shadow_pre(
++                attn_metadata,
++                spec_state_indices_tensor,
++                num_accepted_tokens,
++                flush_only=True,
++            )
++        if attn_metadata.replay_flush and spec_sequence_masks is not None:
++            # Rows that ran in replay mode last step hold their committed state
++            # in the home slot plus pending rows: write it where this path reads.
++            ops.gdn_replay_flush(
++                spec_state_indices_tensor,
++                num_accepted_tokens,
++                attn_metadata.replay_flags,
++                ssm_state,
++                1,
++            )
+         if spec_sequence_masks is not None:
+             core_attn_out_spec, last_recurrent_state = (
+                 fused_sigmoid_gating_delta_rule_update(
+@@ -2362,6 +2410,52 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         assert num_accepted_tokens is not None
+ 
+         num_requests = attn_metadata.num_spec_decodes
++        if attn_metadata.replay_flags is not None:
++            shadow = None
++            if _GDN_REPLAY_SHADOW:
++                shadow = self._shadow_pre(
++                    attn_metadata,
++                    state_indices[:num_requests],
++                    num_accepted_tokens[:num_requests],
++                )
++            if _GDN_TRACE_L and not torch.cuda.is_current_stream_capturing() and num_requests <= 2 and _gdn_trace_once():
++                logger.info(
++                    "GDN layer trace: REPLAY op nreq=%d cu=%s acc=%s flags=%s tokens=%d sidx=%s",
++                    num_requests, cu_seqlens[: num_requests + 1].tolist(),
++                    num_accepted_tokens[:num_requests].tolist(),
++                    attn_metadata.replay_flags[:num_requests].tolist(),
++                    mixed_qkv.shape[0], state_indices[:num_requests].tolist(),
++                )
++            ops.fused_gdn_decode_post_conv_mtp_replay(
++                mixed_qkv=mixed_qkv,
++                a=a,
++                b=b,
++                A_log=self.A_log,
++                dt_bias=self.dt_bias,
++                state_indices=state_indices[:num_requests],
++                cu_seqlens=cu_seqlens[: num_requests + 1],
++                num_accepted_tokens=num_accepted_tokens[:num_requests],
++                state=self.kv_cache[1],
++                output_gate=output_gate,
++                norm_weight=self.norm.weight,
++                out=core_attn_out,
++                replay_flags=attn_metadata.replay_flags[:num_requests],
++                scale=self.head_k_dim**-0.5,
++                norm_eps=self.layer_norm_epsilon,
++                output_gate_activation=self.norm.activation,
++            )
++            if shadow is not None:
++                self._shadow_post(
++                    shadow,
++                    mixed_qkv,
++                    a,
++                    b,
++                    output_gate,
++                    core_attn_out,
++                    cu_seqlens[: num_requests + 1],
++                    num_accepted_tokens[:num_requests],
++                )
++            return
+         fused_mtp_decode_impl()(
+             mixed_qkv=mixed_qkv,
+             a=a,
+@@ -2412,6 +2506,214 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+             core_attn_out=core_attn_out,
+         )
+ 
++    # ---- GDN replay shadow check (debug; VLLM_GDN_REPLAY_SHADOW=1, eager only) ----
++    def _shadow_init(self) -> None:
++        self._sh_cap = int(os.environ.get("VLLM_GDN_REPLAY_SHADOW_CAP", "9"))
++        self._sh_pool = None
++        self._sh_map: dict[int, int] = {}
++        self._sh_bad: set[int] = set()
++        self._sh_hist: dict[int, list] = {}
++        self._sh_calls = 0
++        self._sh_stats = dict(
++            commit_ok=0,
++            commit_bad=0,
++            state_ok=0,
++            state_bad=0,
++            out_ok=0,
++            out_bad=0,
++            unverified=0,
++            rows=0,
++        )
++        self._sh_reports = 0
++
++    def _shadow_report(self, kind: str, row: int, extra: str) -> None:
++        self._sh_stats[kind + "_bad"] += 1
++        if self._sh_reports < 8:
++            self._sh_reports += 1
++            logger.error(
++                "GDN replay SHADOW MISMATCH %s layer=%s call=%d row=%d %s",
++                kind,
++                self.prefix,
++                self._sh_calls,
++                row,
++                extra,
++            )
++
++    def _shadow_pre(
++        self,
++        attn_metadata: GDNAttentionMetadata,
++        state_indices: torch.Tensor,
++        num_accepted_tokens: torch.Tensor,
++        flush_only: bool = False,
++    ):
++        if not hasattr(self, "_sh_map"):
++            self._shadow_init()
++        ssm_state = self.kv_cache[1]
++        _si = state_indices.tolist()
++        if any(r[0] <= 0 for r in _si):
++            return None  # dummy/profile batch (null block): nothing to compare
++        if len(_si) > self._sh_cap:
++            return None
++        if self._sh_pool is None:
++            self._sh_pool = torch.zeros(
++                (self._sh_cap * 3,) + tuple(ssm_state.shape[1:]),
++                dtype=ssm_state.dtype,
++                device=ssm_state.device,
++            )
++        self._sh_calls += 1
++        n = state_indices.shape[0]
++        si = state_indices.tolist()
++        fl = attn_metadata.replay_flags[:n].tolist()
++        ac = num_accepted_tokens[:n].tolist()
++        for r in range(n):
++            self._sh_stats["rows"] += 1
++        # 1. committed-state check for rows that replay pending rows now
++        rows = [r for r in range(n) if fl[r] & 2]
++        if rows:
++            m = len(rows)
++            shp = tuple(ssm_state.shape[1:])
++            # slot 0 is the null slot for the kernels: keep it unused
++            tmp = torch.zeros((m * 3 + 1,) + shp, dtype=ssm_state.dtype, device=ssm_state.device)
++            for j, r in enumerate(rows):
++                for t in range(3):
++                    tmp[1 + 3 * j + t].copy_(ssm_state[si[r][t]])
++            tidx = (
++                1
++                + torch.arange(m * 3, dtype=torch.int32, device=ssm_state.device).view(m, 3)
++            )
++            ops.gdn_replay_flush(
++                tidx,
++                torch.tensor([ac[r] for r in rows], dtype=torch.int32, device=ssm_state.device),
++                torch.full((m,), 2, dtype=torch.int32, device=ssm_state.device),
++                tmp,
++                0,
++            )
++            checks = []
++            for j, r in enumerate(rows):
++                H = si[r][0]
++                base = self._sh_map.get(H)
++                if base is None or H in self._sh_bad:
++                    self._sh_stats["unverified"] += 1
++                    continue
++                checks.append(
++                    (r, H, (tmp[1 + 3 * j] == self._sh_pool[base + ac[r] - 1]).all())
++                )
++            if checks:
++                oks = torch.stack([c[2] for c in checks]).tolist()
++                for (r, H, _), ok in zip(checks, oks):
++                    if ok:
++                        self._sh_stats["commit_ok"] += 1
++                    else:
++                        self._shadow_report(
++                            "commit",
++                            r,
++                            f"H={H} acc={ac[r]} flags={fl[r]} hist={self._sh_hist.get(H)}",
++                        )
++        if flush_only:
++            for r in range(n):
++                self._sh_map.pop(si[r][0], None)
++            return None
++        # 2. (re)sync the shadow pool for rows not coming from a replay step
++        if len(self._sh_map) + n > self._sh_cap:
++            keep = {si[r][0] for r in range(n) if fl[r] & 2}
++            self._sh_map = {h: b for h, b in self._sh_map.items() if h in keep}
++        used = set(self._sh_map.values())
++        free = [b for b in range(0, self._sh_cap * 3, 3) if b not in used]
++        bases = []
++        for r in range(n):
++            H = si[r][0]
++            base = self._sh_map.get(H)
++            if base is None:
++                base = free.pop()
++                self._sh_map[H] = base
++                fresh = True
++            else:
++                fresh = False
++            if not (fl[r] & 2):
++                self._sh_bad.discard(H)
++                for t in range(3):
++                    self._sh_pool[base + t].copy_(ssm_state[si[r][t]])
++            elif fresh:
++                self._sh_bad.add(H)  # shadow state unknown: unverifiable
++            h = self._sh_hist.setdefault(H, [])
++            h.append((self._sh_calls, fl[r], ac[r]))
++            del h[:-6]
++            bases.append(base)
++        sh_idx = torch.tensor(
++            [[b, b + 1, b + 2] for b in bases],
++            dtype=torch.int32,
++            device=ssm_state.device,
++        )
++        return (sh_idx, si, fl, ac)
++
++    def _shadow_post(
++        self,
++        shadow,
++        mixed_qkv,
++        a,
++        b,
++        output_gate,
++        core_attn_out,
++        cu_seqlens,
++        num_accepted_tokens,
++    ) -> None:
++        sh_idx, si, fl, ac = shadow
++        n = sh_idx.shape[0]
++        out2 = torch.empty_like(core_attn_out)
++        ops.fused_gdn_decode_post_conv_mtp(
++            mixed_qkv=mixed_qkv,
++            a=a,
++            b=b,
++            A_log=self.A_log,
++            dt_bias=self.dt_bias,
++            state_indices=sh_idx,
++            cu_seqlens=cu_seqlens,
++            num_accepted_tokens=num_accepted_tokens,
++            state=self._sh_pool,
++            output_gate=output_gate,
++            norm_weight=self.norm.weight,
++            out=out2,
++            scale=self.head_k_dim**-0.5,
++            norm_eps=self.layer_norm_epsilon,
++            output_gate_activation=self.norm.activation,
++        )
++        ssm_state = self.kv_cache[1]
++        cu = cu_seqlens.tolist()
++        bl = sh_idx[:, 0].tolist()
++        checks = []
++        for r in range(n):
++            lo, hi = cu[r], cu[r + 1]
++            H = si[r][0]
++            if H in self._sh_bad:
++                continue
++            checks.append(
++                ("out", r, -1, (core_attn_out[lo:hi] == out2[lo:hi]).all(), H)
++            )
++            if not (fl[r] & 1):
++                for t in range(hi - lo):
++                    checks.append(
++                        (
++                            "state",
++                            r,
++                            t,
++                            (ssm_state[si[r][t]] == self._sh_pool[bl[r] + t]).all(),
++                            H,
++                        )
++                    )
++        if checks:
++            oks = torch.stack([c[3] for c in checks]).tolist()
++            for (kind, r, t, _, H), ok in zip(checks, oks):
++                if ok:
++                    self._sh_stats[kind + "_ok"] += 1
++                else:
++                    self._shadow_report(
++                        kind,
++                        r,
++                        f"H={H} slot={t} flags={fl[r]} acc={ac[r]} hist={self._sh_hist.get(H)}",
++                    )
++        if ".layers.0." in self.prefix and self._sh_calls % 50 == 0:
++            logger.info("GDN replay SHADOW stats call=%d %s", self._sh_calls, self._sh_stats)
++
+     def _can_use_fused_gdn_mtp_decode(
+         self, attn_metadata: GDNAttentionMetadata
+     ) -> bool:
+diff --git a/vllm/model_executor/models/interfaces.py b/vllm/model_executor/models/interfaces.py
+index 3635a637bc..2d1122688b 100644
+--- a/vllm/model_executor/models/interfaces.py
++++ b/vllm/model_executor/models/interfaces.py
+@@ -1610,8 +1610,11 @@ class LocalArgmaxMixin:
+ 
+     def get_top_tokens(self, hidden_states: torch.Tensor) -> torch.Tensor:
+         """Vocab-parallel argmax with optional D2T remapping."""
++        # A drafter may carry a reduced head over token ids [0, N) for its
++        # greedy proposals (see eagle/utils.py reduced_draft_top_head).
++        head = getattr(self, "_draft_top_head", None)
+         top = self.logits_processor.get_top_tokens(
+-            self.lm_head,
++            self.lm_head if head is None else head,
+             hidden_states,
+         )
+         d2t = getattr(self, "draft_id_to_target_id", None)
+diff --git a/vllm/models/qwen3_5/nvidia/model.py b/vllm/models/qwen3_5/nvidia/model.py
+index be483f5a88..5163624948 100644
+--- a/vllm/models/qwen3_5/nvidia/model.py
++++ b/vllm/models/qwen3_5/nvidia/model.py
+@@ -28,6 +28,7 @@ from collections.abc import Iterable
+ from itertools import islice
+ from typing import ClassVar, cast
+ 
++import os
+ import torch
+ from torch import nn
+ from transformers import (
+@@ -294,6 +295,9 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+             and parallel_config.pipeline_parallel_size == 1
+             and not self.use_attn_reduce_scatter_for_moe
+             and flashinfer_trtllm_fused_allreduce_norm is not None
++            # Chunked GEMM+all-reduce (VLLM_CHUNKED_AR_MIN_ROWS>0) needs the all-reduce
++            # inside the row-parallel linear, not deferred to the next norm.
++            and int(os.environ.get("VLLM_CHUNKED_AR_MIN_ROWS", "192")) <= 0
+         )
+         # Whether this layer's MLP/MoE leaves an un-reduced partial, i.e.
+         # whether the *next* norm (or the final norm) must do the all-reduce.
+diff --git a/vllm/v1/attention/backends/flashinfer.py b/vllm/v1/attention/backends/flashinfer.py
+index d9436384ac..aff6fab85d 100755
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -553,6 +553,18 @@ class BatchDCPPrefillWrapper:
+         return out
+ 
+ 
++import os as _os
++
++# Spec decode: build pure-decode native-FlashInfer metadata without the blocking
++# seq_lens.cpu(): plan() with the CPU upper bound, then overwrite the device indptr /
++# last_page_len / indices with exact values computed on the GPU (the kernel takes its kv
++# length and chunk bounds from those device buffers).  VLLM_FI_EXACT_DEV_LENS=0 disables.
++_FI_EXACT_DEV_LENS = _os.environ.get('VLLM_FI_EXACT_DEV_LENS', '1') == '1'
++_FI_CHECK_UB = _os.environ.get('VLLM_FI_CHECK_UB', '0') == '1'
++# Keep split-KV when planning from upper bounds: after plan(), the device work list / merge
++# layout is rewritten from the exact lengths (_fix_split_kv_plan). 0 = no split in UB mode.
++_FI_EXACT_SPLIT = _os.environ.get('VLLM_FI_EXACT_SPLIT', '1') == '1'
++
+ class FlashInferBackend(AttentionBackend):
+     supports_kv_cache_update_bypass: bool = True
+ 
+@@ -1687,7 +1699,28 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+         # seq_lens_cpu is not needed since TRTLLM paths use GPU tensors
+         # (block_tables, seq_lens) directly.
+         needs_seq_lens_cpu = self.use_dcp or not all_uses_trtllm
+-        if needs_seq_lens_cpu:
++        exact_dev_lens = False
++        if (
++            _FI_EXACT_DEV_LENS
++            and needs_seq_lens_cpu
++            and not self.use_dcp
++            and self._num_speculative_tokens > 0
++            and num_prefills == 0
++            and num_decodes > 0
++            and not decode_with_flashinfer_trtllm_api
++            and common_attn_metadata.seq_lens_cpu_upper_bound is not None
++            and common_attn_metadata.seq_lens_cpu_upper_bound.shape[0] >= num_reqs
++            and num_reqs <= 1024
++        ):
++            exact_dev_lens = True
++            seq_lens_cpu = common_attn_metadata.seq_lens_cpu_upper_bound[:num_reqs]
++            if _FI_CHECK_UB:
++                with gpu_sync_allowed():
++                    ex = seq_lens.cpu()[:num_reqs]
++                assert bool((seq_lens_cpu >= ex).all()), (
++                    f"seq_lens_cpu_upper_bound {seq_lens_cpu.tolist()} < exact {ex.tolist()}"
++                )
++        elif needs_seq_lens_cpu:
+             if (
+                 self._num_speculative_tokens == 0
+                 and common_attn_metadata.seq_lens_cpu_upper_bound is not None
+@@ -2016,12 +2049,119 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
+                     kv_data_type=self.kv_cache_dtype,
+                     o_data_type=o_dtype,
+                     fixed_split_size=self.decode_fixed_split_size,
+-                    disable_split_kv=self.disable_split_kv,
++                    # With split-KV the kernel derives the chunk count from the device
++                    # kv length (output/LSE layout) while merge uses the planned one, so
++                    # planning with an upper bound would mismatch: no split in this mode.
++                    disable_split_kv=self.disable_split_kv
++                    or (
++                        exact_dev_lens
++                        and not (
++                            _FI_EXACT_SPLIT and decode_wrapper.is_cuda_graph_enabled
++                        )
++                    ),
+                     q_len_per_req=q_len_per_req,
+                 )
++                if exact_dev_lens:
++                    self._overwrite_exact_decode_metadata(
++                        decode_wrapper,
++                        seq_lens,
++                        block_table_tensor,
++                        num_input_tokens,
++                        page_size,
++                        q_len_per_req,
++                    )
+                 attn_metadata.decode = FIDecode(wrapper=decode_wrapper)
+         return attn_metadata
+ 
++    def _overwrite_exact_decode_metadata(
++        self,
++        decode_wrapper,
++        seq_lens: torch.Tensor,
++        block_table_tensor: torch.Tensor,
++        n: int,
++        page_size: int,
++        q_len_per_req: int = 1,
++    ) -> None:
++        """Replace the wrapper's device indptr/last_page_len/indices (planned from CPU upper
++        bounds) with exact values derived from the GPU seq_lens. Stream-ordered after plan's
++        host-to-device copies."""
++        indptr = self.paged_kv_indptr.gpu[: n + 1]
++        last = self.paged_kv_last_page_len.gpu[:n]
++        _exact_kv_meta_kernel[(1,)](
++            seq_lens,
++            indptr,
++            last,
++            n,
++            PAGE=page_size,
++            BLOCK=triton.next_power_of_2(max(n, 2)),
++        )
++        _copy_page_indices_kernel[(n,)](
++            self.paged_kv_indices,
++            block_table_tensor,
++            block_table_tensor.stride(0),
++            indptr,
++            BLOCK_SIZE=1024,
++        )
++        # Non-cudagraph wrappers hold private copies made by plan(); point them at ours.
++        decode_wrapper._paged_kv_indptr_buf = indptr
++        decode_wrapper._paged_kv_last_page_len_buf = last
++        decode_wrapper._paged_kv_indices_buf = self.paged_kv_indices
++        plan_info = getattr(decode_wrapper, "_plan_info", None)
++        if _FI_EXACT_SPLIT and plan_info is not None and len(plan_info) == 15:
++            # PrefillPlanInfo: [padded_batch, total_rows, total_rows_off, cta_tile_q,
++            # req_idx_off, qo_tile_off, kv_tile_off, merge_indptr_off, o_indptr_off,
++            # kv_chunk_size_off, v_off, s_off, block_valid_mask_off, cuda_graph, split_kv]
++            if plan_info[14] and plan_info[13]:
++                # (block_valid_mask exists only for cuda-graph wrappers)
++                self._fix_split_kv_plan(decode_wrapper, plan_info, seq_lens, q_len_per_req)
++
++    def _fix_split_kv_plan(
++        self, decode_wrapper, plan_info, seq_lens, q_len_per_req: int
++    ) -> None:
++        """The plan was made from upper-bound lengths, but the kernel derives each request's
++        chunk count from its exact device kv length and strides the tmp O/LSE layout by it.
++        Rewrite o_indptr / merge_indptr / block_valid_mask from the exact chunk counts so the
++        kernel's layout, the merge and the CTA work list agree (CTAs whose chunk lies entirely
++        beyond the exact length exit early)."""
++        ws = decode_wrapper._int_workspace_buffer
++        ws32 = ws.view(torch.int32)
++        ws8 = ws.view(torch.uint8)
++        rows = int(plan_info[1])
++        qo = max(int(q_len_per_req), 1)
++        padded = int(plan_info[0])
++        nreq = rows // qo
++        _split_meta_kernel[(1,)](
++            seq_lens,
++            ws32,
++            plan_info[8] // 4,
++            plan_info[9] // 4,
++            nreq,
++            QO=qo,
++            BLOCK=triton.next_power_of_2(max(nreq, 2)),
++        )
++        _split_meta_rows_kernel[(triton.cdiv(rows, 1024),)](
++            seq_lens,
++            ws32,
++            plan_info[8] // 4,
++            plan_info[7] // 4,
++            plan_info[9] // 4,
++            rows,
++            QO=qo,
++            BLOCK=1024,
++        )
++        _split_mask_kernel[(triton.cdiv(padded, 1024),)](
++            seq_lens,
++            ws32,
++            ws8,
++            plan_info[4] // 4,
++            plan_info[6] // 4,
++            plan_info[9] // 4,
++            plan_info[12],
++            padded,
++            nreq,
++            BLOCK=1024,
++        )
++
+     def update_draft_decode_metadata(self, _metadata: FlashInferMetadata) -> None:
+         pass
+ 
+@@ -2975,6 +3115,77 @@ def fast_plan_decode(
+     )
+ 
+ 
++@triton.jit
++def _split_meta_kernel(
++    seq_lens_ptr, ws_ptr, o_indptr_off, cs_off, nreq, QO: tl.constexpr, BLOCK: tl.constexpr
++):
++    offs = tl.arange(0, BLOCK)
++    m = offs < nreq
++    sl = tl.load(seq_lens_ptr + offs, mask=m, other=1).to(tl.int32)
++    sl = tl.maximum(sl, 1)
++    cs = tl.load(ws_ptr + cs_off)
++    nch = (sl + cs - 1) // cs
++    nch = tl.where(m, nch, 0)
++    cum = tl.cumsum(nch * QO, axis=0)
++    tl.store(ws_ptr + o_indptr_off + 1 + offs, cum, mask=m)
++    tl.store(ws_ptr + o_indptr_off, 0)
++
++
++@triton.jit
++def _split_meta_rows_kernel(
++    seq_lens_ptr, ws_ptr, o_indptr_off, merge_off, cs_off, rows, QO: tl.constexpr,
++    BLOCK: tl.constexpr,
++):
++    j = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
++    m = j < rows
++    r = j // QO
++    i = j % QO
++    sl = tl.maximum(tl.load(seq_lens_ptr + r, mask=m, other=1).to(tl.int32), 1)
++    cs = tl.load(ws_ptr + cs_off)
++    nch = (sl + cs - 1) // cs
++    base = tl.load(ws_ptr + o_indptr_off + r, mask=m, other=0)
++    tl.store(ws_ptr + merge_off + j + 1, base + (i + 1) * nch, mask=m)
++    tl.store(ws_ptr + merge_off, 0)
++
++
++@triton.jit
++def _split_mask_kernel(
++    seq_lens_ptr, ws_ptr, ws8_ptr, req_off, kvt_off, cs_off, mask_off, padded, nreq,
++    BLOCK: tl.constexpr,
++):
++    b = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
++    m = b < padded
++    r = tl.load(ws_ptr + req_off + b, mask=m, other=0)
++    t = tl.load(ws_ptr + kvt_off + b, mask=m, other=0)
++    old = tl.load(ws8_ptr + mask_off + b, mask=m, other=0)
++    sl = tl.maximum(tl.load(seq_lens_ptr + r, mask=m & (r < nreq), other=1).to(tl.int32), 1)
++    cs = tl.load(ws_ptr + cs_off)
++    nch = (sl + cs - 1) // cs
++    keep = (old != 0) & (t < nch)
++    tl.store(ws8_ptr + mask_off + b, keep.to(tl.uint8), mask=m)
++
++
++@triton.jit
++def _exact_kv_meta_kernel(
++    seq_lens_ptr,
++    indptr_ptr,
++    last_ptr,
++    n,
++    PAGE: tl.constexpr,
++    BLOCK: tl.constexpr,
++):
++    offs = tl.arange(0, BLOCK)
++    m = offs < n
++    sl = tl.load(seq_lens_ptr + offs, mask=m, other=0).to(tl.int32)
++    nb = (sl + PAGE - 1) // PAGE
++    cs = tl.cumsum(nb, axis=0)
++    tl.store(indptr_ptr + 1 + offs, cs, mask=m)
++    tl.store(indptr_ptr, 0)
++    rem = sl % PAGE
++    last = tl.where((rem == 0) & (sl != 0), PAGE, rem)
++    tl.store(last_ptr + offs, last, mask=m)
++
++
+ @triton.jit
+ def _copy_page_indices_kernel(
+     page_indices,
+diff --git a/vllm/v1/attention/backends/gdn_attn.py b/vllm/v1/attention/backends/gdn_attn.py
+index f28b3e42ad..26c61d64d1 100644
+--- a/vllm/v1/attention/backends/gdn_attn.py
++++ b/vllm/v1/attention/backends/gdn_attn.py
+@@ -3,6 +3,7 @@
+ """Backend for GatedDeltaNet attention."""
+ 
+ import math
++import os
+ from dataclasses import dataclass, replace
+ from typing import Literal
+ 
+@@ -10,6 +11,7 @@ import torch
+ 
+ from vllm._aiter_ops import rocm_aiter_ops
+ from vllm.config import VllmConfig
++from vllm.logger import init_logger
+ from vllm.model_executor.layers.mamba.checkpoint import (
+     MambaPrefillCheckpointBuilder,
+     MambaPrefillCheckpointMetadata,
+@@ -30,6 +32,11 @@ from vllm.v1.attention.backends.utils import (
+ )
+ from vllm.v1.kv_cache_interface import KVCacheSpec, MambaSpec
+ 
++logger = init_logger(__name__)
++_REPLAY_DEBUG = os.environ.get("VLLM_GDN_REPLAY_LOG_EVERY", "0") != "0"
++_REPLAY_TRACE_B = os.environ.get("VLLM_GDN_REPLAY_TRACE", "0") == "1"
++_replay_ns_total = [0, 0]  # [rows flushed, batches]
++
+ # FlashInfer's GDN prefill emits states every N tokens, N a multiple of its
+ # 64-token chunk, so checkpoint offsets must be multiples of 64.
+ FLASHINFER_GDN_CHECKPOINT_ALIGNMENT = 64
+@@ -119,6 +126,16 @@ class GDNAttentionMetadata:
+     non_spec_token_indx: torch.Tensor | None = None
+ 
+     num_accepted_tokens: torch.Tensor | None = None  # shape: [batch,]
++    # GDN replay mode (single state write): per spec row flags, see
++    # csrc/gdn/fused_gdn_decode_kernel.cu. None when the feature is off.
++    replay_flags: torch.Tensor | None = None  # shape: [batch,] int32
++    replay_flush: bool = False  # some spec row needs a standalone flush
++    replay_any_mode: bool = False  # some spec row runs in replay mode (fused only)
++    # Non-spec rows (prefill chunks, ...) whose request ran in replay mode last
++    # step: flush their pending rows onto the home slot before the non-spec path.
++    replay_ns_state_indices: torch.Tensor | None = None  # [k, 3]
++    replay_ns_num_accepted: torch.Tensor | None = None  # [k]
++    replay_ns_flags: torch.Tensor | None = None  # [k], all 2
+     uniform_spec_sequence_length: int | None = None  # None for ragged batches
+ 
+     # Pre-computed FLA chunk metadata (avoids GPU->CPU sync in prepare_chunk_indices)
+@@ -259,6 +276,19 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
+             dtype=torch.int32,
+             device=device,
+         )
++        # GDN replay mode: needs the CUDA fused MTP decode op, V2 runner, 2 drafts.
++        self.supports_replay: bool = (
++            os.environ.get("VLLM_GDN_REPLAY", "1") != "0"
++            and self.use_spec_decode
++            and self.num_spec == 2
++            and vllm_config.use_v2_model_runner
++            and device.type == "cuda"
++            and type(self) is GDNAttentionMetadataBuilder
++            and hasattr(torch.ops._C, "fused_gdn_decode_post_conv_mtp_replay")
++        )
++        self.replay_flags_buf: torch.Tensor = torch.zeros(
++            (self.decode_cudagraph_max_bs,), dtype=torch.int32, device=device
++        )
+ 
+     @staticmethod
+     def _check_chunk_metadata_override(
+@@ -335,8 +365,10 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
+         num_accepted_tokens: torch.Tensor | None = None,
+         num_decode_draft_tokens_cpu: torch.Tensor | None = None,
+         fast_build: bool = False,
++        replay_flags_cpu: torch.Tensor | None = None,
+     ) -> GDNAttentionMetadata:
+         m = common_attn_metadata
++        num_accepted_tokens_all = num_accepted_tokens
+ 
+         query_start_loc = m.query_start_loc
+         query_start_loc_cpu = m.query_start_loc_cpu
+@@ -672,6 +704,82 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
+             num_accepted_tokens = self.num_accepted_tokens[:batch_size]
+             num_accepted_tokens[num_spec_decodes:].fill_(1)
+ 
++        replay_flags: torch.Tensor | None = None
++        replay_flush = False
++        replay_any_mode = False
++        if self.supports_replay and num_spec_decodes > 0:
++            fused_batch = num_prefills == 0 and num_decodes == 0
++            if replay_flags_cpu is None:
++                spec_flags_cpu = torch.zeros(num_spec_decodes, dtype=torch.int32)
++            elif fused_batch:
++                spec_flags_cpu = replay_flags_cpu[:num_spec_decodes]
++            else:
++                assert spec_sequence_masks_cpu is not None
++                spec_flags_cpu = replay_flags_cpu[spec_sequence_masks_cpu]
++            replay_flush = (not fused_batch) and bool((spec_flags_cpu & 2).any())
++            replay_any_mode = bool((spec_flags_cpu & 1).any())
++            assert fused_batch or not replay_any_mode
++            if self._stage_spec_decode(
++                num_prefills, num_decodes, num_spec_decodes, num_spec_decode_tokens
++            ):
++                self.replay_flags_buf[:num_spec_decodes].copy_(
++                    async_tensor_h2d(spec_flags_cpu, device=query_start_loc.device),
++                    non_blocking=True,
++                )
++                replay_flags = self.replay_flags_buf[:batch_size]
++                replay_flags[num_spec_decodes:].fill_(0)
++            else:
++                replay_flags = async_tensor_h2d(
++                    spec_flags_cpu, device=query_start_loc.device
++                )
++
++        if _REPLAY_TRACE_B and self.supports_replay and num_spec_decodes > 0:
++            logger.info(
++                "GDN build trace: nspec=%d spec_tok=%d nprefill=%d ndec=%d batch=%d "
++                "staged=%s flags=%s acc=%s flush=%s",
++                num_spec_decodes, num_spec_decode_tokens, num_prefills, num_decodes,
++                batch_size,
++                self._stage_spec_decode(num_prefills, num_decodes, num_spec_decodes, num_spec_decode_tokens),
++                None if replay_flags_cpu is None else replay_flags_cpu.tolist(),
++                None if num_accepted_tokens_all is None else "set",
++                replay_flush,
++            )
++
++        replay_ns = None
++        if (
++            self.supports_replay
++            and replay_flags_cpu is not None
++            and num_accepted_tokens_all is not None
++            and not (num_prefills == 0 and num_decodes == 0 and num_spec_decodes > 0)
++        ):
++            n_rows = replay_flags_cpu.shape[0]
++            if spec_sequence_masks_cpu is None:
++                ns_mask = torch.ones(n_rows, dtype=torch.bool)
++            else:
++                ns_mask = ~spec_sequence_masks_cpu[:n_rows]
++            ns_rows = (ns_mask & ((replay_flags_cpu & 2) != 0)).nonzero().flatten()
++            if ns_rows.numel() > 0:
++                if _REPLAY_DEBUG:
++                    _replay_ns_total[0] += int(ns_rows.numel())
++                    _replay_ns_total[1] += 1
++                    if _replay_ns_total[1] <= 20:
++                        logger.info(
++                            "GDN replay: flushed %d non-spec row(s) with pending "
++                            "rows (total rows %d, batches %d)",
++                            int(ns_rows.numel()),
++                            _replay_ns_total[0],
++                            _replay_ns_total[1],
++                        )
++                replay_ns = (
++                    block_table_tensor[ns_rows, :3],
++                    num_accepted_tokens_all[ns_rows],
++                    # bit1 (flush) | bits 3-4 (pending steps - 1), as decided on the CPU
++                    async_tensor_h2d(
++                        (replay_flags_cpu[ns_rows] & 26).to(torch.int32),
++                        device=query_start_loc.device,
++                    ),
++                )
++
+         if self._stage_decode(num_prefills, num_decodes, num_spec_decodes):
+             self.non_spec_state_indices_tensor[:num_decodes].copy_(
+                 non_spec_state_indices_tensor, non_blocking=True
+@@ -714,6 +822,12 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
+             spec_token_indx=spec_token_indx,
+             non_spec_token_indx=non_spec_token_indx,
+             num_accepted_tokens=num_accepted_tokens,
++            replay_flags=replay_flags,
++            replay_flush=replay_flush,
++            replay_any_mode=replay_any_mode,
++            replay_ns_state_indices=None if replay_ns is None else replay_ns[0],
++            replay_ns_num_accepted=None if replay_ns is None else replay_ns[1],
++            replay_ns_flags=None if replay_ns is None else replay_ns[2],
+             uniform_spec_sequence_length=uniform_spec_sequence_length,
+             nums_dict=nums_dict,
+             batch_ptr=batch_ptr,
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+index 5286d9008d..7b3f66813a 100644
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -16,6 +16,7 @@ hidden. Prefer utility functions defined elsewhere and call them from here,
+ instead of embedding feature-specific logic directly.
+ """
+ 
++import os
+ import functools
+ import gc
+ import time
+@@ -197,6 +198,7 @@ from vllm.v1.worker.utils import (
+ from vllm.v1.worker.workspace import lock_workspace, use_workspace_lane
+ 
+ logger = init_logger(__name__)
++_GDN_TRACE_R = os.environ.get("VLLM_GDN_REPLAY_TRACE", "0") == "1"
+ 
+ 
+ class GPUModelRunner(LoRAModelRunnerMixin):
+@@ -1907,6 +1909,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+             allow_skip_drafts=scheduler_output.skip_drafts,
+         )
+ 
++        if _GDN_TRACE_R and batch_desc.num_tokens > 0 and num_reqs <= 2:
++            logger.info(
++                "GDN dispatch trace: num_reqs=%d num_tokens=%d uniform_tok_count=%s -> cg_mode=%s desc_tokens=%s desc_reqs=%s",
++                num_reqs, num_toks, uniform_tok_count,
++                batch_desc.cg_mode, batch_desc.num_tokens, batch_desc.num_reqs,
++            )
+         if batch_desc.num_tokens == 0:
+             # All DP ranks have zero tokens to run.
+             empty_output = self.kv_connector.no_forward(scheduler_output)
+diff --git a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
+index d97672d163..014e6afe9d 100644
+--- a/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
++++ b/vllm/v1/worker/gpu/model_states/mamba_hybrid.py
+@@ -1,5 +1,6 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++import os
+ from dataclasses import dataclass
+ from typing import Any
+ 
+@@ -9,6 +10,7 @@ import torch.nn as nn
+ 
+ from vllm.config import VllmConfig
+ from vllm.config.compilation import CUDAGraphMode
++from vllm.logger import init_logger
+ from vllm.model_executor.layers.mamba.mamba_utils import MambaStateCopyFuncsByType
+ from vllm.triton_utils import tl, triton
+ from vllm.utils.torch_utils import async_tensor_h2d
+@@ -42,11 +44,16 @@ from vllm.v1.worker.replayssm_utils import initialize_replayssm_ring_trackers
+ from vllm.v1.worker.utils import AttentionGroup
+ 
+ 
++logger = init_logger(__name__)
++_REPLAY_TRACE = os.environ.get("VLLM_GDN_REPLAY_TRACE", "0") == "1"
++
++
+ @dataclass
+ class MambaHybridAttnMetadata(ModelSpecificAttnMetadata):
+     is_prefilling: torch.Tensor
+     num_accepted_tokens: torch.Tensor | None = None
+     num_decode_draft_tokens_cpu: torch.Tensor | None = None
++    replay_flags_cpu: torch.Tensor | None = None
+ 
+     def get_extra_common_attn_kwargs(
+         self, kv_cache_group_id: int, num_reqs: int
+@@ -66,7 +73,7 @@ class MambaHybridAttnMetadata(ModelSpecificAttnMetadata):
+             ),
+         ):
+             return {}
+-        return {
++        kwargs = {
+             "num_accepted_tokens": None
+             if self.num_accepted_tokens is None
+             else self.num_accepted_tokens[:num_reqs],
+@@ -74,6 +81,13 @@ class MambaHybridAttnMetadata(ModelSpecificAttnMetadata):
+             if self.num_decode_draft_tokens_cpu is None
+             else self.num_decode_draft_tokens_cpu[:num_reqs],
+         }
++        if getattr(attn_metadata_builder, "supports_replay", False):
++            kwargs["replay_flags_cpu"] = (
++                None
++                if self.replay_flags_cpu is None
++                else self.replay_flags_cpu[:num_reqs]
++            )
++        return kwargs
+ 
+ 
+ class MambaHybridModelState(DefaultModelState):
+@@ -92,6 +106,27 @@ class MambaHybridModelState(DefaultModelState):
+             self.max_num_reqs, dtype=torch.int32, device=self.device
+         )
+         self._replayssm_query_start_loc: torch.Tensor | None = None
++        # GDN replay mode (single SSM state write per MTP decode step). CPU-side
++        # state only: which requests ran their last step in replay mode.
++        self._replay_enabled = (
++            os.environ.get("VLLM_GDN_REPLAY", "1") != "0"
++            and vllm_config.num_speculative_tokens == 2
++        )
++        # number of pending (uncommitted) replay steps per request: 0..3
++        self._replay_unc = np.zeros(self.max_num_reqs, dtype=np.int8)
++        # lazy commit: the state is committed every K-th replay step (K=1: every
++        # step, i.e. T2-016 behaviour; 2: T2-018; 3 (default): T2-019). The
++        # kernel supports K <= 3 (three pending pages).
++        self._replay_k = max(1, min(3, int(os.environ.get("VLLM_GDN_LAZY", "3"))))
++        self._replay_flags_np: np.ndarray | None = None
++        self._replay_stats = np.zeros(32, dtype=np.int64)
++        self._replay_steps = 0
++        self._replay_blk = np.full(self.max_num_reqs, -1, dtype=np.int64)
++        self._replay_cross = 0
++        self._replay_capped = 0
++        self._replay_short = 0
++        self._replay_window = 0
++        self._replay_log_every = int(os.environ.get("VLLM_GDN_REPLAY_LOG_EVERY", "0"))
+         # Pre-copy prefix-cache state (V2). The migration of each request's
+         # mamba state across block boundaries runs as a fused GPU kernel reusing
+         # the postprocess copy machinery, so the per-step src columns and the
+@@ -125,6 +160,8 @@ class MambaHybridModelState(DefaultModelState):
+         super().add_request(req_index, new_req_data)
+         # Must reset the speculative acceptance count in this idx which could be stale.
+         self.num_accepted_tokens_gpu[req_index].fill_(1)
++        self._replay_unc[req_index] = 0
++        self._replay_blk[req_index] = -1
+         if self._align_mode:
+             # Seed the running state block from the resumed/prefilled position.
+             # The column is in mamba blocks. cache_config.block_size is the
+@@ -207,6 +244,12 @@ class MambaHybridModelState(DefaultModelState):
+         Copy from the worker's previous live column to its actual new column.
+         ReplaySSM also migrates its shared trackers. Dummy runs skip this.
+         """
++        self._replay_flags_np = None
++        # num_draft_tokens_per_req is None when no row of the batch has drafts
++        # (e.g. the capped last step at max_model_len): the pending rows of the
++        # previous replay step must still be flushed, so always decide.
++        if self._replay_enabled:
++            self._decide_replay(input_batch)
+         if not self._align_mode:
+             return
+         num_reqs = input_batch.num_reqs
+@@ -250,6 +293,118 @@ class MambaHybridModelState(DefaultModelState):
+             input_batch.idx_mapping,
+         )
+ 
++    def _decide_replay(self, input_batch: InputBatch) -> None:
++        """Per-request replay flags from CPU-known data only (async-safe).
++
++        bit0: run this step in replay mode (no per-token state stores; committed
++              state kept in the home slot, new rows stored as pending rows).
++        bit1: the previous step ran in replay mode: replay its accepted rows first.
++        A step is replay-eligible only if the whole batch takes the fused decode
++        path and no mamba block boundary can be crossed (or read by the pre-copy /
++        post-process kernels) around it, judged on the CPU upper bound of seq_len.
++        """
++        n = input_batch.num_reqs
++        S = self.vllm_config.num_speculative_tokens + 1
++        idx = input_batch.idx_mapping_np[:n]
++        sched = input_batch.num_scheduled_tokens[:n]
++        ndraft = (
++            input_batch.num_draft_tokens_per_req[:n]
++            if input_batch.num_draft_tokens_per_req is not None
++            else np.zeros(n, dtype=np.int32)
++        )
++        prefilling = input_batch.is_prefilling_np[:n]
++        if input_batch.prefill_runs_as_decode_np is not None:
++            prefilling = prefilling & ~input_batch.prefill_runs_as_decode_np[:n]
++        is_decode = ~prefilling & (sched > 0) & (sched <= S)
++        all_spec = bool(is_decode.all()) and n > 0
++        unc = self._replay_unc[idx]
++        last = unc > 0
++        eligible = np.zeros(n, dtype=np.bool_)
++        if all_spec:
++            B = self.cache_config.mamba_block_size
++            U = input_batch.seq_lens_cpu_upper_bound[:n].numpy().astype(np.int64)
++            K = 3
++            lo = U - S - K * (S - 1)
++            hi = U + 3 * S + 3
++            # a multiple of B in (lo, hi]
++            crossing = (hi // B) > (lo // B)
++            eligible = (sched == S) & ~crossing
++        # unc==0: commit step (flags 1); unc==1: lazy step (7: replay page A, no
++        # commit, rows to page B) unless lazy is off (3); unc==2: commit step
++        # that replays both pages (11). Non-eligible rows flush (2 / 10).
++        # flags: bit0 replay mode, bit1 replay pending rows first, bit2 lazy,
++        # bits 3-4 = number of pending steps - 1.
++        lazy_now = eligible & (unc >= 1) & (unc < self._replay_k)
++        flags = (
++            eligible.astype(np.int32)
++            + 2 * last.astype(np.int32)
++            + 4 * lazy_now.astype(np.int32)
++            + 8 * np.maximum(unc.astype(np.int32) - 1, 0)
++        )
++        new_unc = np.where(eligible, np.where(lazy_now, unc + 1, 1), 0).astype(np.int8)
++        if self._replay_log_every and n > 0:
++            blk = (input_batch.seq_lens_cpu_upper_bound[:n].numpy().astype(np.int64) - 1) // self.cache_config.mamba_block_size
++            prev = self._replay_blk[idx]
++            self._replay_cross += int(((prev >= 0) & (blk > prev)).sum())
++            self._replay_blk[idx] = blk
++            if all_spec:
++                self._replay_window += int(crossing.sum())
++            # rows scheduled with fewer than S tokens (drafts capped, e.g. near
++            # max_model_len) and, of those, the ones that flush pending rows
++            self._replay_short += int((sched < S).sum())
++            self._replay_capped += int(((sched < S) & (flags >= 2)).sum())
++        if self._replay_log_every and input_batch.num_draft_tokens_per_req is None:
++            # batches where no row has drafts: previously skipped the decision
++            nl = int(last.sum())
++            self._replay_nodraft_steps = getattr(self, "_replay_nodraft_steps", 0) + 1
++            self._replay_nodraft_last = getattr(self, "_replay_nodraft_last", 0) + (
++                1 if nl else 0
++            )
++            if nl:
++                logger.info(
++                    "GDN replay: no-draft batch with %d row(s) flushing pending rows "
++                    "(no-draft steps %d, of those with last_replay rows %d)",
++                    nl,
++                    self._replay_nodraft_steps,
++                    self._replay_nodraft_last,
++                )
++        self._replay_unc[idx] = new_unc
++        self._replay_flags_np = flags
++        if _REPLAY_TRACE:
++            for j in range(n):
++                logger.info(
++                    "GDN replay trace step=%d req=%d idx=%d U=%d sched=%d draft=%d "
++                    "last=%d eligible=%d flags=%d",
++                    self._replay_steps,
++                    j,
++                    int(idx[j]),
++                    int(input_batch.seq_lens_cpu_upper_bound[j]),
++                    int(sched[j]),
++                    int(ndraft[j]),
++                    int(last[j]),
++                    int(eligible[j]),
++                    int(flags[j]),
++                )
++            self._replay_steps += 1
++        if self._replay_log_every:
++            self._replay_stats += np.bincount(flags, minlength=32)
++            self._replay_steps += 1
++            if self._replay_steps % self._replay_log_every == 0:
++                logger.info(
++                    "GDN replay flag counts (row-steps) after %d steps: "
++                    "%s (block-index advances of U: %d, "
++                    "rows in boundary window: %d, rows with <S tokens: %d, "
++                    "of those flushing pending rows: %d)",
++                    self._replay_steps,
++                    " ".join(
++                        f"{i}={c}" for i, c in enumerate(self._replay_stats.tolist()) if c
++                    ),
++                    self._replay_cross,
++                    self._replay_window,
++                    self._replay_short,
++                    self._replay_capped,
++                )
++
+     def prepare_attn(
+         self,
+         input_batch: InputBatch,
+@@ -340,10 +495,18 @@ class MambaHybridModelState(DefaultModelState):
+                 for group_idx, builder in aligned_index_builders:
+                     builder.mamba_aligned_state_indices = all_group_indices[group_idx]
+ 
++        replay_flags_cpu = None
++        if self._replay_flags_np is not None and not for_capture:
++            replay_flags_cpu = torch.zeros(num_reqs, dtype=torch.int32)
++            replay_flags_cpu[: input_batch.num_reqs] = torch.from_numpy(
++                self._replay_flags_np
++            )
++            self._replay_flags_np = None
+         mamba_attn_metadata = MambaHybridAttnMetadata(
+             is_prefilling=is_prefilling,
+             num_accepted_tokens=num_accepted_tokens,
+             num_decode_draft_tokens_cpu=num_decode_draft_tokens_cpu,
++            replay_flags_cpu=replay_flags_cpu,
+         )
+         attn_metadata = build_attn_metadata(
+             attn_groups=attn_groups,
+diff --git a/vllm/v1/worker/gpu/spec_decode/eagle/utils.py b/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
+index 8cba9af864..d5f6dba7f6 100644
+--- a/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
++++ b/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
+@@ -1,16 +1,21 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++import os
+ from typing import Literal
+ 
+ import torch
+ import torch.nn as nn
+ 
+ from vllm.config import VllmConfig, replace
+-from vllm.distributed.parallel_state import get_pp_group
++from vllm.distributed.parallel_state import get_pp_group, get_tp_group
++from vllm.logger import init_logger
+ from vllm.lora.layers.base import BaseLayerWithLoRA
+ from vllm.model_executor.layers.quantization.online.lm_head import (
++    _quantize_copy,
+     quantized_lm_head_copy,
+ )
++from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
++from vllm.utils.torch_utils import set_default_torch_dtype
+ from vllm.model_executor.model_loader import get_model
+ from vllm.model_executor.model_loader.utils import get_draft_load_config
+ from vllm.model_executor.models.utils import PPMissingLayer
+@@ -72,6 +77,77 @@ def share_target_lm_head(
+     return head
+ 
+ 
++logger = init_logger(__name__)
++
++# Draft-only argmax over the first N token ids. Byte-level BPE ids follow merge
++# order, a frequency proxy of the tokenizer's own training data (not of any
++# benchmark): for Qwen3.5+ tokenizers, ids < 98304 are the base vocabulary
++# (99.6% of tokens of vLLM's docs, 99.95% of its Python sources); 98K-151K are
++# CJK merges. Drafts only propose: verification stays full-vocab and exact, so
++# a draft outside the subset just costs an acceptance. 0 disables.
++_DRAFT_TOP_VOCAB = int(os.environ.get("VLLM_DRAFT_TOP_VOCAB", "98304"))
++
++
++@torch.no_grad()
++def reduced_draft_top_head(
++    target_lm_head: nn.Module, num_rows: int, quantization: str | None
++) -> nn.Module | None:
++    """A TP-sharded lm_head over global token ids [0, num_rows), quantized like
++    the draft head. Used only for the drafter's local-argmax (greedy) path.
++
++    Rows each rank needs may live in another rank's shard of the target head;
++    they are broadcast once from that rank at load time.
++    """
++    if not isinstance(target_lm_head, ParallelLMHead) or num_rows <= 0:
++        return None
++    if num_rows >= target_lm_head.org_vocab_size:
++        return None
++    tp = get_tp_group()
++    ws, rank = tp.world_size, tp.rank_in_group
++    if num_rows % (ws * 64):
++        return None
++    src = target_lm_head.weight.data
++    dtype, dim = src.dtype, src.shape[1]
++    tgt_start = target_lm_head.shard_indices.org_vocab_start_index
++    tgt_rows = target_lm_head.shard_indices.org_vocab_end_index - tgt_start
++    # Every rank has the same shard size of the target (padded vocab / ws).
++    per = num_rows // ws
++    owners = [(r * per) // tgt_rows for r in range(ws)]
++    if any(((r + 1) * per - 1) // tgt_rows != owners[r] for r in range(ws)):
++        return None
++    with set_default_torch_dtype(dtype), torch.device(src.device):
++        small = ParallelLMHead(
++            num_rows,
++            dim,
++            params_dtype=dtype,
++            org_num_embeddings=num_rows,
++            padding_size=64,
++            prefix="draft_top_head",
++        )
++    assert small.weight.shape[0] == per
++    for r in range(ws):
++        owner = owners[r]
++        lo = r * per - owner * tgt_rows
++        if owner == rank:
++            buf = src[lo : lo + per].contiguous()
++        else:
++            buf = torch.empty(per, dim, dtype=dtype, device=src.device)
++        if owner != r:
++            tp.broadcast(buf, src=owner)
++        if r == rank:
++            small.weight.data.copy_(buf)
++        del buf
++    with torch.device(src.device):
++        head = small if quantization is None else _quantize_copy(small, quantization)
++    logger.info(
++        "Draft argmax over token ids [0, %d) (%d rows per rank, %s).",
++        num_rows,
++        per,
++        quantization or "unquantized",
++    )
++    return head
++
++
+ def get_target_lm_head(target_model: nn.Module, target_language_model: nn.Module):
+     """The target's lm_head — from get_language_model() for
+     *ForConditionalGeneration targets, else the top-level module."""
+@@ -147,6 +223,19 @@ def load_eagle_model(target_model: nn.Module, vllm_config: VllmConfig) -> nn.Mod
+         get_target_lm_head(target_model, target_language_model),
+         speculative_config.draft_lm_head_quantization,
+     )
++    if (
++        draft_head is not None
++        and speculative_config.use_local_argmax_reduction
++        and _DRAFT_TOP_VOCAB > 0
++    ):
++        top_head = reduced_draft_top_head(
++            get_target_lm_head(target_model, target_language_model),
++            _DRAFT_TOP_VOCAB,
++            speculative_config.draft_lm_head_quantization,
++        )
++        if top_head is not None:
++            # Not a registered submodule: weight loading and reload never see it.
++            object.__setattr__(eagle_model, "_draft_top_head", top_head)
+     if draft_head is not None:
+         # MTP layers route logits through layer.shared_head.head, not
+         # eagle_model.lm_head, so the per-layer copies need fixing up too.

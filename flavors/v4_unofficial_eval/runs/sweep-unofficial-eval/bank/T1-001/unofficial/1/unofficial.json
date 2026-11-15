@@ -1,0 +1,51 @@
+{
+ "record": "T1-001",
+ "n": 1,
+ "head": "BASE",
+ "prompts": 200,
+ "requested_by": "leader-1",
+ "team": "T1",
+ "started": "2026-11-15T05:10:52+00:00",
+ "key_b": {
+  "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}'",
+  "prompts": 200,
+  "eval_sh": "c35852d"
+ },
+ "key_a": {
+  "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "serve_args": "",
+  "prompts": 200,
+  "eval_sh": "c35852d"
+ },
+ "order": "BB",
+ "stop_below": 622.98,
+ "reference": [
+  625.0720819986664,
+  639.8592401136926
+ ],
+ "reference_cached": [
+  625.0720819986664,
+  639.8592401136926
+ ],
+ "a_new": [],
+ "b": [
+  651.9942937959704,
+  654.2167791250239
+ ],
+ "reference_mean": 632.47,
+ "gain_pct": 3.26,
+ "verdict": "PASS",
+ "gates_failed": [],
+ "gsm8k": null,
+ "long_request": true,
+ "p99": {
+  "p99_ttft_ms": 1241.0,
+  "p99_tpot_ms": 41.9
+ },
+ "mtp_acceptance": [
+  2.347,
+  2.359
+ ],
+ "ended": "2026-11-15T05:18:26+00:00"
+}

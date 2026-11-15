@@ -1,0 +1,28 @@
+{
+ "record": "T2-003",
+ "n": 1,
+ "head": "T1-001",
+ "prompts": 200,
+ "requested_by": "leader-2",
+ "team": "T2",
+ "started": "2026-11-15T05:24:42+00:00",
+ "key_b": {
+  "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}'\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+  "prompts": 200,
+  "eval_sh": "c35852d"
+ },
+ "key_a": {
+  "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}'",
+  "prompts": 200,
+  "eval_sh": "c35852d"
+ },
+ "order": "BB",
+ "stop_below": 643.31,
+ "a_new": [],
+ "b": [],
+ "verdict": "failed",
+ "failed_stage": "exit 130",
+ "ended": "2026-11-15T05:34:25+00:00"
+}

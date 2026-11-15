@@ -1,0 +1,2 @@
+ws: note: the diff adds 2 new file(s): csrc/host_all_reduce.cu, vllm/distributed/device_communicators/host_all_reduce.py
+ws: keep logs, results and scratch files outside the code tree (e.g. in the workspace folder), or they end up in the record's change.diff

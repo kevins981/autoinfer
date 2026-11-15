@@ -1,0 +1,19 @@
+{
+  "id": 199,
+  "pid": 2146082,
+  "team": "T4",
+  "agent": "leader-4",
+  "label": "t4-prof-head",
+  "timeout_min": 20.0,
+  "command": [
+    "bash",
+    "agents/leader-4/prof_head.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T13:21:53+00:00",
+  "state": "done",
+  "started": "2026-11-15T13:21:53+00:00",
+  "ended": "2026-11-15T13:24:15+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.37
+}

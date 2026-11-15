@@ -1,0 +1,19 @@
+{
+  "id": 17,
+  "pid": 1651504,
+  "team": "T1",
+  "agent": "t1-w1",
+  "label": "host-ar-fix",
+  "timeout_min": 7.0,
+  "command": [
+    "bash",
+    "agents/t1-w1/stress/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T05:30:48+00:00",
+  "state": "done",
+  "started": "2026-11-15T05:34:56+00:00",
+  "ended": "2026-11-15T05:39:04+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.128
+}

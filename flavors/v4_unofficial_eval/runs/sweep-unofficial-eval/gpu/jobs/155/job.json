@@ -1,0 +1,21 @@
+{
+  "id": 155,
+  "pid": 2031699,
+  "team": "T3",
+  "agent": "leader-3",
+  "label": "t3-prof-head-graph",
+  "timeout_min": 15.0,
+  "command": [
+    "env",
+    "TRACE=graph",
+    "bash",
+    "agents/leader-3/jobs/prof_head.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T11:33:42+00:00",
+  "state": "done",
+  "started": "2026-11-15T11:38:30+00:00",
+  "ended": "2026-11-15T11:40:34+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.076
+}

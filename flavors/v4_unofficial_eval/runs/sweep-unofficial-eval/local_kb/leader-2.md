@@ -1,0 +1,65 @@
+# leader-2 (T2) working notes
+- Scripts: agents/leader-2/{onestep,seq,layer,prefill}.py (nsys sqlite step analyses).
+- Baseline node-trace decode step (48 rows): ~38.5-40 ms: Marlin 18.6, AR 8.2 (132x61us), AG 1.68 (target 0.96 + drafts 0.33x2),
+  lm_heads 4.3 (target ampere 1.59, draft cutlass 1.37 x2), GDN 3.66 (76us x48), norms .47, attn .5, conv .19.
+- Per GDN layer in situ: qkvz 57us, out 32, gate_up 141, down 62, AR 62 x2, GDN 76. ncu isolated: 53.6/25.9/115/60.
+- GDN MTP kernel writes 3 per-position states (spec_state_indices [reqs,3]) + reads 1: ~100 MB/layer/GPU.
+- Marlin M>64 re-reads weights per 64 rows (mixed steps: marlin ms ~ 19 * ceil(M/64)) ; compute floor (bf16 165TF) ~ M*24.3GF/165T.
+- Existing flags: draft_lm_head_quantization=fp8, use_local_argmax_reduction, enable_batch_sharded_sampling (qwen3_5 supports compute_logits_local).
+- Worker t2-w1: task 1 = L2-prefetch microbench (6 GPU-min allowance).
+- HEAD moved to T1-001 (draft FP8 head + local argmax, +3.26% unofficial). T2-001 (W1 flag on BASE) cancelled (job 7); rebased as T2-002, eval running.
+- t2-w1 L2 microbench (job 6, agents/t2-w1/l2/): prefetch at 62 CTAs inside a 58us sleep window: qkvz 50->20us, gate_up 112->92 (X=32MB); X>~40MB hurts. 126 CTAs worse. Next: in-situ with real NCCL (task 2).
+- W4 idea: speculative_config attention_backend=TRITON_ATTN for drafter only (supports in-place draft metadata update); FLASHINFER doesn't.
+- KR1 upper bound (job 16, agents/t2-w1/l2/gdn_bench.py): chain GDN->out_proj->gate_up per layer 252 -> 200.6 us with 1 store vs 3 (GDN 77.9->37.4, Marlin 86.4->80.7 from less write drain). Build approved (worker, 10 GPU-min).
+- PL1 gentle (job 15): 16 CTAs X=32 join: 416 vs baseline 453-475 us/layer (drifting baseline); 62 CTAs hurts AR. Interleaved repeat pending.
+- HEAD T1-004 (batch-sharded sampling). W1 now T2-004 (cap 512) eval queued.
+- Ruling on --no-enable-prefix-caching pending (manager asked human); don't submit records depending on it.
+- PL1 implemented in ws t2-pl1 (l2_prefetch.py + hooks around input/post_attention norm forward_fused in qwen3_5 model). diff: agents/leader-2/pl1.diff. Waiting for T2-004 promotion decision to file record.
+- RULING: --no-enable-prefix-caching NOT allowed. KR1 must support align mode: proposed per-request mode (3-store near block boundaries, replay otherwise).
+- T2-004 CONFIRMED official 728.8 tok/s (+14.6% over BASE, chain T1-001->T1-004->T2-004). T2-005 (PL1) eval running.
+- T2-005 (PL1) PASS +2.30% vs T2-004; sent to manager.
+- PL1 on T1-005 host AR: T2-006 -1.82% (1 start), T2-007 (24MB/12CTA) -1.54% (1 start). Parked.
+- KR1 parked (job 39: corruption at layers 17/40, cause unknown; ~13.8 GPU-min). Worker: file bank/T2-009 (KR1 parked) + profile HEAD T1-005 (5 GPU-min).
+- SP1 k=3 (T2-008): acceptance 2.724 but -7.34% (1 start), TTFT p99 gate fail. Dropped.
+- T2-010 (drafter TRITON_ATTN): OOM at startup. Dropped. Worker task 6: Marlin config sweep at M=48.
+
+## SM4 (T2-011), 2026-11-15
+- Ruling 2 already allows reduced draft vocab (non-benchmark source). T1 left SM4 to T2.
+- Tokenizer id structure (CPU, vLLM docs 598K tok / py 1.43M tok): ids<65536: 96.7/97.3%; <98304: 99.63/99.95%; 98K-151K ~0 (CJK merges); >151643 added multilingual + specials (<|im_end|>, </think> outside subset: ~1-2 draft misses/request).
+- Built in ws t2-sm4 (on T1-005): reduced_draft_top_head in eagle/utils.py, TP-sharded [0,98304) via one broadcast; LocalArgmaxMixin uses obj attr _draft_top_head. Env VLLM_DRAFT_TOP_VOCAB (default 98304).
+- unofficial_eval T2-011 --long launched.
+- T2-011 unofficial PASS +0.52% (acc 2.337 vs 2.354), promoted to HEAD (unconfirmed). Worker told to build on T2-011.
+- T2-012 Marlin 128x64 first for m_blocks 2-3: PASS +0.85% vs T2-011 (acc 2.340). Sent to manager.
+- Task 8: Humming = Marlin plateau; T2-013 null. Worker wrote ~/.humming by accident (deleted, reported).
+- Task 9: small mixed steps CPU-bound; FLA chain 0.30 ms CPU vs 0.048 ms GPU per layer (job 64), ~50 us Triton python path per launch, 6 launches/layer. Task 10: fast launch path + buffer reuse -> T2-014 (napkin ~1.6%).
+- T2-014 FLA fast launch: null (-0.1% over 4 starts). Resync requested at 14.3 GPU-min.
+- Resync 1: +60 GPU-min (balance ~74). ~/.humming re-creations traced to t1-w1 jobs 63/82 (likely lazy import at server start); rule: export HOME into agent folder in own job scripts; never import humming.
+- Task 11 (t2-w1): KR1 v2: no device flags; CPU-side replay_from_prev per request; align mode via one-step-ahead 3-write fallback near block boundaries/slot changes; checkpoints (design, unit, shadow 0 mismatches, bench) budget 20 GPU-min.
+- HEAD -> T1-010 (no-sync FlashInfer metadata, +1.89%). KR1 to rebase onto it before bench. T1 takes W1b and revisits T1-006 for >512 steps; GDN files are T2's (agreed with leader-1). T1 also saw nsys gaps ~10x larger than the real gain.
+- T1-012 CONFIRMED 785.3 official; chain incl. T2-011, T2-012 borne out (both T2 wins confirmed). T2-015 (KR1 v2) unofficial_eval --long --gsm8k running.
+- T2-015 KR1 v2: PASS +2.44% vs T1-012 (acc 2.345 = HEAD), GSM8K 94.0, 128K pass. Sent to manager.
+- T2-015 promoted to HEAD (unconfirmed). Task 12: re-profile HEAD (t2-w1.kr4) for re-ranking.
+- Task 13 (manager condition on T2-015): job 103 c=16 graph greedy ON vs OFF differ in 5/16 (near-tie flips both ways); ns flush unreachable (0); T<3 fused flush ran (9). Shadow OOM. Asked manager to hold confirmation. Next: c=1 OFF/ON/OFF determinism test.
+- Job 104 c=1 OFF/ON/OFF: OFF deterministic; ON differs at final token at max_model_len in 2/16 (logprob -1.65 at T=0). Real bug. Recommended revert of T2-015 to manager. Task 14: root cause GPU-free.
+- T2-015 REVERTED by manager; HEAD = T1-012 (confirmed 785.3). Fix + resubmit as new record on T1-012.
+- T1-010 disables split-KV (attention 16->77 us/call, +1 ms/step); T1 now restoring split exactly (init tmp to (0,-inf)). T1-012 Marlin +14 ms in >512 steps is expected (K=2 chunks).
+- KR1 bug root cause (job 114): _decide_replay skipped when runner sets num_draft_tokens_per_req=None (no row has drafts, model_runner.py:1483-1489) -> pending rows ignored. Fix: always decide. Gate: c=1 graph ON vs job-104 OFF, 16/16 bitwise; then T2-016 on T1-012.
+- T1-015 (split-KV fix, from our job 101 finding) PASS +1.29% vs T1-012, pending promotion; T2-016 must rebase if HEAD moves.
+- T2-016 (KR1 fixed) PASS +3.53% vs T1-015, sent to manager. Balance 32.6.
+- T2-016 promoted HEAD. MTP layer GEMMs already FP8 (only norms/gates/fc bf16): drafter quantization not worth it. Task 15: KE1b decode GEMM prototype (gate_up, gate >=8% at M=48), <=3 GPU-min phase 1.
+- T1 suspects T1-012 disables fused AR+norm deferral model-wide (mixed<=512 regression); T1 to A/B and gate it.
+- Task 15 KE1b: NO-GO. Marlin gate_up 840-871 GB/s vs read ceiling ~903 GB/s (jobs 121-122); Triton prototype no better; layout blocker (no memory for 2nd weight copy). File T2-017 null. Task 16: GDN byte accounting GPU-free.
+- Task 16: GDN kernel at/below DRAM floor (53 MB/38us = 1.4 TB/s, L2 absorbs). Closed. Task 17: lazy commit K=2 (napkin ~0.6% by KR1 scaling), <=10 GPU-min incl. unit + c=1 gate; T2-018.
+- T1 job 127: Marlin after GDN +13us in-situ on T2-016 (was +30) = state write drain; supports T2-018 napkin. Mixed<=512 AR delta: deferral theory refuted, unexplained.
+- T2-018 lazy commit K=2: PASS +1.60% vs T2-016 (napkin 0.6%). Sent to manager. Balance 22.7.
+- Humming re-allowed (with workspace env.sh + check ~/.humming); not useful to us (T2-013).
+- T2-018 promoted HEAD.
+- T2-018 HEAD; manager running official eval of chain. Task 18: lazy K=3 (T2-019), <=4 GPU-min gates, napkin +0.3-0.5%.
+- T2-018 CONFIRMED 838.0 official (+31.8% over BASE); T2-016 and T2-018 borne out.
+- T2-019 K=3: negative -0.59% vs T2-018 (both starts below). K=2 stays. Balance 16.8. Moving to close-out (update-5, writeup).
+- Wrote update-5 and T2-writeup.md.
+- Spar T2-1 (closing): withdrew 2 assumptions. (1) AR "PCIe floor" = floor of serial write-then-read; host_ar_kernel is per-block write->flag->wait->read, no up/down overlap; duplex pipelining could give ~25 us vs 40 (~6%), untested; offered to T1. (2) Tree spec (branch at pos 2, top-2): replay design makes GDN branching ~free; break-even needs pos-2 top-2 coverage ~0.73 (vs top-1 0.55); cheap test = log drafter top-2 vs target argmax in a greedy run. Also: mixed<=512 AR growth may be rank skew (needs both-rank traces).
+- AR duplex lead: T1 already measured (jobs 40-46): write 22, read 22, concurrent 30 us (partial duplex 1.45x); pipelined variants within noise; realistic floor ~35 vs 43 us. Closed for T2 (should have checked T1 update-2 first).
+- Task 19: Marlin M=64 +2.2 ms/step (+7%), break-even top-2 cov ~0.75-0.8; coverage run failed twice (JIT, IndexError), 4.2 GPU-min; declined 3rd retry. T2-020 measurement-only. Balance ~12.8. HEAD now T1-016.
+- T2-020 filed (measurement only). Team work complete; awaiting manager closure.
+- T2-020 coverage measured (job 151): pos2|d1 top-1 0.711, top-2 0.815; tree best +3.5-4.1% < 7% row cost -> no. Closing T2. Balance 11.3.

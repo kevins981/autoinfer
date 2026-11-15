@@ -1,0 +1,19 @@
+{
+  "id": 20,
+  "pid": 1661830,
+  "team": "T1",
+  "agent": "t1-w1",
+  "label": "ovl",
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "agents/t1-w1/ovl/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T05:39:59+00:00",
+  "state": "done",
+  "started": "2026-11-15T05:44:45+00:00",
+  "ended": "2026-11-15T05:44:51+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.106
+}

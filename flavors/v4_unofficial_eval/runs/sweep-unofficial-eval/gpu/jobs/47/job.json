@@ -1,0 +1,19 @@
+{
+  "id": 47,
+  "pid": 1752515,
+  "team": "T1",
+  "agent": "t1-w1",
+  "label": "gemm-survey",
+  "timeout_min": 3.0,
+  "command": [
+    "bash",
+    "agents/t1-w1/gemm/job5.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T07:00:21+00:00",
+  "state": "done",
+  "started": "2026-11-15T07:00:21+00:00",
+  "ended": "2026-11-15T07:00:33+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.213
+}

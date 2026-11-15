@@ -1,0 +1,18 @@
+{
+  "id": 43,
+  "pid": 1742068,
+  "team": "T2",
+  "agent": "t2-w1",
+  "label": "head-prof",
+  "timeout_min": 14.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/agents/t2-w1/head_prof/run_prof.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/agents/t2-w1/head_prof",
+  "submitted": "2026-11-15T06:51:41+00:00",
+  "state": "done",
+  "started": "2026-11-15T06:52:03+00:00",
+  "ended": "2026-11-15T06:56:48+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.74
+}

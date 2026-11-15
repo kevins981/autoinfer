@@ -1,0 +1,18 @@
+{
+  "id": 142,
+  "pid": 1993956,
+  "team": "T1",
+  "agent": "t1-w1",
+  "label": "t1-w1-w8a16-off",
+  "timeout_min": 3.0,
+  "command": [
+    "agents/t1-w1/w8a16/job_off.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T11:00:49+00:00",
+  "state": "done",
+  "started": "2026-11-15T11:00:50+00:00",
+  "ended": "2026-11-15T11:00:59+00:00",
+  "exit_code": 1,
+  "gpu_minutes": 0.153
+}

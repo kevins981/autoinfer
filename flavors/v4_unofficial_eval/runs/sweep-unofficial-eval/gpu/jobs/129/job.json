@@ -1,0 +1,21 @@
+{
+  "id": 129,
+  "pid": 1974902,
+  "team": "MGR",
+  "agent": "manager",
+  "label": "official:T2-018",
+  "timeout_min": 20.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/workspaces/eval-T2-018-1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/bank/T2-018/official/1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/bank/T2-018/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T10:37:58+00:00",
+  "state": "done",
+  "started": "2026-11-15T10:37:59+00:00",
+  "ended": "2026-11-15T10:46:10+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 8.192
+}

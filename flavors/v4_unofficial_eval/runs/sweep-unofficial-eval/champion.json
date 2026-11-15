@@ -1,0 +1,43 @@
+{
+ "confirmed": {
+  "id": "T3-004",
+  "official": 908.504,
+  "official_n": 1,
+  "time": "2026-11-15T14:08:25+00:00"
+ },
+ "chain": [],
+ "reverted": [
+  {
+   "id": "T2-015",
+   "team": "T2",
+   "why": "exactness bug: at max_model_len after a replay step, greedy output differs from VLLM_GDN_REPLAY=0 (job 104, c=1 OFF/ON/OFF: OFF1==OFF2 16/16; ON differs on 2/16 at position 2048, req 12 picks a non-argmax token). Found and reported by T2.",
+   "time": "2026-11-15T09:39:00+00:00"
+  }
+ ],
+ "history": [
+  "start: BASE confirmed at 635.9 tok/s (official #1)",
+  "2026-11-15T05:18: T1-001 promoted to HEAD (+3.26% over BASE, unofficial #1)",
+  "2026-11-15T05:34: T1-004 promoted to HEAD (+1.61% over T1-001, unofficial #1)",
+  "2026-11-15T06:00: T2-004 promoted to HEAD (+4.49% over T1-004, unofficial #1)",
+  "2026-11-15T06:10: T2-004 CONFIRMED: official 728.8 tok/s (expected 697.2, +4.5%, tolerance 3.1%; +14.6% over BASE)",
+  "2026-11-15T06:20: T1-005 promoted to HEAD (+5.07% over T2-004, unofficial #1)",
+  "2026-11-15T06:32: T1-005 CONFIRMED: official 760.8 tok/s (expected 765.7, -0.6%, tolerance 2.2%; +4.4% over T2-004)",
+  "2026-11-15T07:09: T2-011 promoted to HEAD (+0.52% over T1-005, unofficial #1)",
+  "2026-11-15T07:34: T2-012 promoted to HEAD (+0.85% over T2-011, unofficial #1)",
+  "2026-11-15T08:34: T1-010 promoted to HEAD (+1.89% over T2-012, unofficial #1)",
+  "2026-11-15T09:02: T1-012 promoted to HEAD (+0.52% over T1-010, unofficial #1)",
+  "2026-11-15T09:13: T1-012 CONFIRMED: official 785.3 tok/s (expected 789.9, -0.6%, tolerance 3.4%; +3.2% over T1-005)",
+  "2026-11-15T09:20: T2-015 promoted to HEAD (+2.44% over T1-012, unofficial #1)",
+  "2026-11-15T09:39: reverted T2-015 (exactness bug: at max_model_len after a replay step, greedy output differs from VLLM_GDN_REPLAY=0 (job 104, c=1 OFF/ON/OFF: OFF1==OFF2 16/16; ON differs on 2/16 at position 2048, req 12 picks a non-argmax token). Found and reported by T2.); HEAD = T1-012",
+  "2026-11-15T10:03: T1-015 promoted to HEAD (+1.29% over T1-012, unofficial #1)",
+  "2026-11-15T10:13: T2-016 promoted to HEAD (+3.53% over T1-015, unofficial #1)",
+  "2026-11-15T10:37: T2-018 promoted to HEAD (+1.60% over T2-016, unofficial #1)",
+  "2026-11-15T10:46: T2-018 CONFIRMED: official 838.0 tok/s (expected 836.7, +0.2%, tolerance 3.1%; +6.7% over T1-012)",
+  "2026-11-15T11:17: T1-016 promoted to HEAD (+0.34% over T2-018, unofficial #1)",
+  "2026-11-15T11:47: T1-017 promoted to HEAD (+3.01% over T1-016, unofficial #1)",
+  "2026-11-15T12:40: T1-019 promoted to HEAD (+2.12% over T1-017, unofficial #1)",
+  "2026-11-15T12:48: T1-019 CONFIRMED: official 897.5 tok/s (expected 884.5, +1.5%, tolerance 3.1%; +7.1% over T2-018)",
+  "2026-11-15T13:05: T3-004 promoted to HEAD (+2.11% over T1-019, unofficial #1)",
+  "2026-11-15T14:08: T3-004 CONFIRMED: official 908.5 tok/s (expected 916.4, -0.9%, tolerance 2.2%; +1.2% over T1-019)"
+ ]
+}

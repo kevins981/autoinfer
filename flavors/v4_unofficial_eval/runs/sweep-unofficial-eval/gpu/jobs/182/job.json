@@ -1,0 +1,19 @@
+{
+  "id": 182,
+  "pid": 2093726,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "t1-019-gsm8k-ab",
+  "timeout_min": 12.0,
+  "command": [
+    "bash",
+    "agents/leader-1/gsmab19.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T12:34:23+00:00",
+  "state": "done",
+  "started": "2026-11-15T12:34:23+00:00",
+  "ended": "2026-11-15T12:39:08+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.746
+}

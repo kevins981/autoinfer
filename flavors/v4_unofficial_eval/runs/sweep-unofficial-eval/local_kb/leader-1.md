@@ -1,0 +1,110 @@
+# leader-1 (T1) working notes
+## Phase 1 done 2026-11-15: reports/T1-sweep/1..6 + reports/T1-sweep.md
+## Key numbers (BASE, nsys_c16, GPU0, decode M=48)
+- step ~38.5-40 ms: Marlin 18.6 | AR 8.2 (135 x 60us, RING_LL) | AG 1.7 (target 960us, draft 2x330) | lm_head 4.3 (target 1.6, draft 2x1.37) | GDN 3.7+0.2 | attn ~0.5-0.9 | small ~1.5 | idle 1.4
+- Marlin per layer at M=48 (us): GDN layer in_proj 59 / out_proj 32 / gate_up 142 / down 60; attn layer qkv 62 / o 27 / gate_up 120 / down 57. 0.9 TB/s floor would save ~4.5 ms/step.
+- prefill-containing steps: mean 195 ms (437 rows): Marlin 92 (weight re-read per 64 rows, per T2), AR 66.6 (~520 us/call).
+- official time split: decode ~83 s, prefill-containing ~61 s of 143.2 s.
+## Scripts: agents/leader-1/step_kernels.py (per-kernel per step), step_seq.py (kernel sequence of one step)
+## Records
+- T1-001: flags fp8 draft head + local argmax draft (unofficial_eval --long launched)
+## Worker t1-w1: task 1 = AR microbench (NCCL variants + custom host-mapped one-shot AR), 8 GPU-min
+## AR microbench (t1-w1, job 3, 2.4 GPU-min; agents/t1-w1/ar/)
+- NCCL default M=48 60us, M=256 211us, M=2048 1476us; tuning (Simple/nch4/buffsize) <= ~10%. Host path ceiling ~13-14 GB/s (not 25).
+- custom host-pinned one-shot: M=16 20us, M=48 48us, M=96 82us; ties at 256, loses >=512. Bitwise == NCCL.
+- flashinfer PCIe IPC AR: fails (no peer access).
+- => X1 revised: decode ~1.6 ms/step (~4%), not 15%. Profile prefill ARs (~520us at ~437 rows) are ~1.5x the isolated NCCL (~350us): contention/nsys?
+- => L2-prefetch-during-AR gains relative weight (AR stays ~48us of HBM idle each).
+- t1-w1 task 2: integrate custom AR into vLLM (cutoff 128 rows) -> T1-002.
+- T1-001 promoted to HEAD (+3.26%). T1-003 = k=3 drafts on T1-001 (launched)
+- T1-003 k=3: negative 1 start -4.89%, accept 2.708 (p3 0.38), TTFT p99 2060 fail. Revisit after AR work.
+- T1-004 batch-sharded sampling: PASS +1.61% vs T1-001 -> sent to manager
+- T1-002 filed (host AR, grid fixed 4), unofficial_eval --long running.
+- Overlap feasibility (t1-w1 job 20): NCCL AR on side stream hides 74% behind bf16 GEMMs; host-AR spinning hides less. DBO with DP=1: 1.5-2 weeks, GDN align-mode state blocker -> skip. Chosen: chunked RowParallel GEMM+AR pipeline (K=2, eager, rows>=192), napkin 2.5-5%. First: nsys rank-skew check (is the 520us AR wire time or peer wait?).
+- Skew analysis (t1-w1, skew2.py): prefill AR time = ~29 ms transfer + ~38 ms waiting; GPU0 runs the same kernels ~12% slower on compute-bound Marlin (+8.5 ms/prefill step), decode only +3%. Device asymmetry (clocks/thermals?). Framework's asymmetric-split row (alpha != 0.5) becomes real but napkin small (~1%). Not building.
+- T1-005 (host AR on T2-004) PASS +5.07% -> HEAD. T2-004 confirmed 728.8 official.
+- T1-006 chunked GEMM+AR: screen negative (job 37). Host AR floor (task 4): write 22, read 22, overlapped 30, full AR 45-48 us at M=48; no design >=8us better -> AR kernel closed. AR+norm fusion parked (~1.5-2%, 2-3 days, needs GSM8K).
+- Task 5 (t1-w1): decode GEMM kernel survey (Marlin configs, triton W8A8 block fp8), 3 GPU-min cap.
+- Task 5 result: Marlin at M=48 is 1.07-1.14x a cold read floor (microbench job 48); Triton W8A8 block slower; only Marlin/Humming/Triton on sm89. R3 closed (<=~1 ms/step). nsys in-situ Marlin ~2.7 ms/step above microbench (unexplained: nsys? contention? clocks?).
+- L2 prefetch = T2 (T2-005 PASS on NCCL; negative on host AR T2-006/007).
+- Task 6: AR+add+RMSNorm fusion into host AR (t1-w1 ws), then unofficial_eval --gsm8k.
+- T1-007 AR+norm fusion: screen negative -1.6% (jobs 53/54, separate jobs).
+- Spar T1-1 (sparring/): beliefs: 'more spec can't pay' rested on 1 stale start -> T1-008 (k=3 on T2-011) running. GPU0 SM clock 2235 MHz vs GPU1 2655-2670 under load (gpu_clocks.csv; memory clocks equal) -> explains 12% compute skew. Overlapping-residency MLP split (50/50 decode, 46/54 prefill, +0.75 GB on GPU1) priced ~1.5-2%, deferred (budget). 'within 1.3x of floor => only small wins' = unsupported inference.
+- T1-008 k=3 on T2-011: negative 1 start -6.26%, accept 2.68; TTFT p99 1910. Task 7 (t1-w1): nsys A/B k=2 vs k=3 decomposition.
+- GPU0 clock cap (2235) only in task/baseline era; today both ~2670 (job 58 skew: none). MLP split dropped.
+- next idea: TRACE=graph profile of HEAD to measure true decode-step idle (node trace said 3.5 ms/step). Async scheduling seems default-on (MRv2).
+- T1-009 fusion grid16: +0.28% mean, within noise (job 63). Parked.
+- Task 9 (job 65, TRACE=graph on T2-012): decode idle 2.56 ms/33.9 ms real (CPU-bound): ~2.1 ms before each target graph (16 eager prep kernels launched slowly) + 0.3 ms between draft graphs; a blocking pageable D2H (4-64 B) between draft graph 1 and 2 holds the CPU ~28 ms. Task 10: find/remove that sync so async scheduling can hide prep (up to ~6%).
+- Task 10 result: blocking D2H = flashinfer.py:1698 seq_lens.cpu() in FlashInferMetadataBuilder.build (spec>0). Inexact probe (upper-bound lens, job 76): decode 33.9 -> 30.2 ms (-11%), idle 2.56 -> 0.15. Task 11: exact fix = plan with upper bound + overwrite device indptr/last_page_len from GPU seq_lens; garbage-KV test; ABBA; cap 8.
+- RULE: in own GPU job scripts export HOME=$AUTOINFER_RUN/agents/<name>/home (vLLM lazy humming import creates ~/.humming). Told t1-w1.
+- Task 11 result: exact no-sync FI decode metadata (plan on UB, overwrite device lens, split-KV disabled in that mode). Bitwise vs exact no-split; garbage test ok; ABBA job 84 +1.1% (both pairs). Filed T1-010; unofficial_eval --gsm8k --long launched. Mixed-step idle remaining 5.4 ms (prefill target builds) = next.
+- Task 12 (GPU-free, t1-w1): mixed-step idle 7.5 ms/116.6 ms = thousands of small launch gaps from eager GDN chunk kernels (48 layers x ~10), no single sync >=2 ms; prefill .cpu() fix <=0.8 ms. Bound ~0.3-1% real. Closed. Only lever: fewer eager launches per GDN layer (kernel fusion project).
+- T1-010 PASS +1.89% vs T2-012 (753.9/751.3 vs 738.7), GSM8K 92.8, 128K pass -> sent to manager
+- T1-010 promoted to HEAD.
+- Task 13 decode budget (agents/t1-w1/budget/budget.md): step 29.55 = target graph 27.68 + eager lm_head/SendRecv/sampling 2.16 + drafts 1.70 + idle 0.14. Gaps: Marlin 17.64 vs 12.09 floor (GDN gate_up 138.6us vs 117 in attn layers: anomaly ~1 ms); drafter 0.85 ms of 39x22us 'elementwise'; GDN 3.68 vs 2.4; AR at floor 5.6. Task 14: identify drafter kernels + gate_up anomaly (GPU-free, then <=3 GPU-min microbench).
+- ~/.humming fixed in task/env.sh (HUMMING_*_DIR); HOME workaround optional now.
+- Task 14: drafter gap only ~0.3 ms (misclassified cutlass Kernel2). gate_up: GDN layers 138.6 vs attn 117 vs isolated 109 us; L2-dirty theory refuted (job 89). Same effect on out_proj/down. Potential ~1.5-2 ms/step if cause found. Task 15: in-graph microbench with real GDN kernel/host AR before gate_up + clocks log; carveout theory (cap 1 GPU-min).
+- Task 15 (job 90): in-graph GDN/AR/norm before gate_up doesn't reproduce (104-111 us); clocks fine; carveout moot. Task 16: TLB test (scattered slots, 48 state buffers, 30+ weight sets), cap 0.5.
+- Task 16 (job 91): TLB/scattered-state not reproduced; gate_up in-situ excess cause unknown -> parked.
+- Next idea: cap max_num_batched_tokens 512 (T2 W1b, untested in bank?). Default 2048. Asked leader-2. TTFT p99 headroom 1146 vs 1609 limit.
+- T1-011 = HEAD + --max-num-batched-tokens 512 (unofficial --long running). Task 17: rebase T1-006 chunked GEMM+AR (eager, rows>=192) on T1-010 (prefill NCCL AR 33% of >512 steps per T2). leader-2 owns GDN files (KR1 v2).
+- T1-011 cap 512: negative -1.05% (2 starts), TTFT p99 1262. Dropped. T1-012 filed (chunked AR on T1-010).
+- T1-012 chunked AR on T1-010: PASS +0.52% (755.7/757.3 vs 752.6), GSM8K 93.6, TPOT p99 40.1. Sent to manager.
+- T1-012 promoted (HEAD). Manager running official eval of chain. update-3 written. T1-009 incompatible with T1-012 (deferral off).
+- T1-012 CONFIRMED official 785.3 (+3.2% over T1-005 760.8, +23.5% over BASE); chain T2-011,T2-012,T1-010,T1-012.
+- Task 18 (job 99): target lm_head F.linear s1688 splitK 1589us (0.80 TB/s); addmm/transposed/cublasLt 1437-1440 (s16816); Triton 1388. Not bitwise (0.0625). Task 19: addmm zero-bias for lm_head rows<=128 (~0.15 ms/step, ~0.3% total).
+- HEAD -> T2-015 (GDN single-write, +2.44%). Task 19 rebased to T2-015.
+- T2-015 reverted -> HEAD T1-012. T1-013 eval cancelled (job 106); rebasing lm_head change onto T1-012 as T1-014.
+- leader-2 (job 101): decode attention 76.6 vs 16.4 us/call on T1-010 (split-KV disabled) = +1 ms/step. Task 20: restore split-KV exactly under UB plan (cap 6). T1-014 lm_head on T1-012 eval running.
+- T1-014 lm_head addmm: negative -1.29% (2 starts). Dropped.
+- Task 20: exact split-KV under UB plan (3 triton fixups). ABBA job 113 +2.2%. Filed T1-015, unofficial --gsm8k --long.
+- T1-015 PASS +1.29% vs T1-012 (766.0/766.6 vs 756.5). Sent. Balance 11.3.
+- T1-015 promoted HEAD. update-4 written. Balance 11.3.
+- Task 21 (job 117): decode period 32.63->31.66 profiled; graphs flat since T2-011. writeup written. Balance 9.4.
+- Resync 2: +40 (balance 49.4), manager funds GDN GEMM-excess diagnostic. Task 22: real weights isolated (64 layers, marlin repack), cap 3.
+- Task 22A (job 119): real weights isolated: GDN=attn=108 us gate_up -> context-induced (+30 us GDN, +9 attn in situ). Next: launch cfg + overlap check (hd/A), node trace+clocks on T2-016, then duplicate-call probe.
+- leader-2: mixed<=512 steps AR 19.9->24.1 ms, elementwise 2.7->4.5 (T1-005 -> T1-012+KR1). Suspect T1-012 global deferral-off. Worker to A/B profile MIN_ROWS 0 vs 192 on T2-016 (cap 5).
+- Job 127 (T2-016): gate_up GDN 121.3 vs attn 108.3 = isolated 108; no overlap, clocks constant 2655. Residual +13us = state write-back from L2 (T2 domain) -> parked. Deferral theory refuted (fused AR+norm never runs). Task 23: why mixed pf<128 steps take ~100 ms (idle 11-41 ms).
+- Task 23: GPU 98% busy; pf<128 steps = real work (Marlin 30.8 vs 16.8 decode: M>64 double pass?; host AR 159us/call at ~100 rows). Shares: decode 65.4%, pf<128 9.6, 128-512 6.6, >512 18.4. Task 24: Marlin M staircase (dispatch read + microbench M 16-512, cap 1). Asked manager if humming allowed now.
+- RULE: humming allowed again: source workspace env.sh, check ~/.humming absent after first job, report if present.
+- HEAD -> T2-018 (GDN lazy commit, +1.60%).
+- T2-018 CONFIRMED 838.0 official (chain T1-015, T2-016, T2-018). T1-015 confirmed.
+- Task 24 (job 130): Marlin re-reads B per 64-row block: gate_up M64 126 -> M65 191 us; Triton W8A8 block better for M>=65 (but needs 2nd weight copy -> blocked by memory). Prize <=512 steps ~1.5% wall. Task 25: exact Marlin L2-reuse ordering (par innermost, remainder folded). HEAD T2-018 (confirmed 838.0).
+- Task 25: Marlin M65-128 is compute/dequant-bound (1.38x bf16 floor), par blocks already concurrent; fold gives ~0; 128-row tile ~0.5-1% wall, not bitwise. Parked.
+- Spar T1-2: 'W8A8 prefill needs 2nd weight copy' withdrawn (assumed); W8A16 Triton on checkpoint layout never measured. Net = prefill saving - 0.42*decode slowdown. Task 26: Triton W8A16 M16-64 vs Marlin + W8A8 M768-2048 (cap 2).
+- Task 26 (job 137): Triton W8A16 (own kernel) vs Marlin: M<=32 parity/better (out_proj 16 vs 35!), M=48-64 6-28% slower. W8A8 large M 0.67-0.79x Marlin. Net as-is -2%; if M48 parity, +4%. Task 27: close M48 gap (sub-block reuse), out_proj-only incremental idea.
+- Task 26b (job 141, graph-timed): Triton W8A16 M48 per-layer sum 240.6 vs Marlin 239.5 (parity); out_proj 0.80x; gate_up 1.08x. W8A16 large M ~= Marlin; W8A8 0.70x. Full path est +4.1% wall (upper bound). Task 28: out_proj-only W8A16 record (exact, ~+0.8%), cap 6.
+- Task 28: out_proj Triton W8A16 (t1-w11) ABBA +1.03% (job 144). Filed T1-016; unofficial --gsm8k.
+- Task 29: gate_up/down config sweep, mid-M W8A16 tuning, prepare W8A8 large-M route (flag VLLM_W8A8_PREFILL_MIN_M), cap 2.
+- T1-016 PASS +0.34% vs T2-018 (808.9/808.7 vs 806.1), TPOT p99 48.7. Sent.
+- T1-016 promoted HEAD.
+- Task 29 (job 147): gate_up W8A16 M48 1.014x Marlin; M65-96 Triton wins; M>=128 W8A16 loses 4-25% (needs W8A8). Task 30: thresholds microbench + full build (gate_up,down,out_proj on ckpt layout; W8A8 above per-shape thresholds), 3-arm ABBA, cap 8.
+- Job 149 thresholds: W8A8 wins gate_up M>=128, down/out M>=160; savings -14 ms at M=512, -38 at 1024, -68 at 2048 per step (3 shapes). W8A8 rel err 2-3% max (needs gsm8k). Task 30 building t1-w12.
+- T2 closed (writeup reports/T2-writeup.md). T3 opened (sweep, 80 GPU-min).
+- Task 30: T1-017 (gate_up,down,out W8A16 + W8A8 >= thresholds) quick C ~+5%. Filed; unofficial --gsm8k --long.
+- T1-017 PASS +3.01% vs T1-016 (831.0/835.3 vs 808.8), GSM8K 93.6, 128K pass. Sent. Balance 16.5.
+- Task 31: W8A8 config tuning (tune8.py) on copy of t1-w12, cap 3.
+- Manager: T1-017 needs same-job GSM8K-250 A/B (bf16 ref VLLM_W8A8_PREFILL=0 vs W8A8), within 2.0 pts. Job queued (agents/leader-1/gsmab/job.sh).
+- Task 31 (job 156): tuned W8A8 configs 13-26% faster than default everywhere (t1-w13). Next: thresholds M64-128 microbench, then file T1-018 (configs + thresholds). Needs own FP8 GSM8K A/B too.
+- Job 157 FP8 GSM8K A/B T1-017: ref 93.2 vs W8A8 93.6 -> pass. Balance 10.3.
+- T1-017 promoted HEAD.
+- Resync 3: +30 (balance ~40). update-5 written.
+- T1-018 filed (tuned W8A8 configs + thresholds 80), unofficial --gsm8k --long running; GSM8K A/B script agents/leader-1/gsmab18.sh ready. Task 32: remaining Marlin GEMMs (qkv/in_proj/drafter) prep.
+- leader-3 (T3) map done; T3 testing --prefill-schedule-interval; told them qkvz/qkv are ours. Task 32 plan: qkvz (8192x5120, 48 layers) + qkv (7168x5120, 17) = 21% of Marlin bytes; est +0.8%; job7 approved (cap 3), ws t1-w14.
+- T1-018 negative -6.1% (TTFT p99 2559): runtime Triton JIT of w8a8 configs (warmup only M%16==0). Fix warmup -> new record.
+- Job 163: qkvz/qkv W8A16 0.85-1.02x Marlin (decode ok); tuned W8A8 15-26% vs default; numerics ok. t1-w14 = T1-018 + qkvz/qkv + full warmup (every config x M%16 / not). job8 (0 runtime compiles check) approved cap 1.5.
+- job8 (jobs 166-179): 0 post-warmup compiles in t1-w14 (needed real-path warmup at key/key+1). Filed T1-019 (tuned W8A8 + thr 80 + qkvz/qkv + warmup); unofficial --gsm8k --long running. GSM A/B script gsmab19.sh ready.
+- T1-019 PASS +2.12% vs T1-017 (854.4/847.1 vs 833.1), TPOT p99 31.6, 0 JIT. GSM A/B job launched.
+- Job 182 FP8 GSM A/B T1-019: 93.2 vs 93.6 pass. Balance 24.5. Sent to manager.
+- Task 33: W8A8 at decode M (16-64) tuned microbench, cap 1.
+- T1-019 promoted HEAD.
+- Task 33 (job 184): W8A8 loses at M=48 (gate_up 1.28x) -> keep 80. Task 34: bandwidth-optimise own W8A16 kernel at M<=64 (target ~0.92 TB/s; sum 15.0 -> ~13.2 ms/step possible), cap 2.
+- T1-019 CONFIRMED 897.5 official (+41.1% BASE); chain T1-016, T1-017, T1-019.
+- Task 34 (jobs 187-190): W8A16 kernel at 0.77-0.90 TB/s; best configs -0.37 ms/step at M=48 (~0.9% wall). Task 35: table + BK256 path record.
+- HEAD -> T3-004 (T3 target local argmax +2.11%). Task 35 to build on T3-004.
+- Task 35 (job 192): t1-w15 (on T1-019) table+BK256+splitK down: -0.11 ms/step at M48 (~0.3% wall), 0 JIT, deterministic. Rebase to T3-004 as t1-w16, then one unofficial eval.
+- T1-020 mixed -0.31% (within noise). Parked. Balance 18.7. Moving to close-out.
+- Spar T1-3: per-accepted-token floor not established; k=3 revisit (acc 2.33->2.7, TTFT headroom now). Threshold: k=3+tuned M64 PASS -> continue; else close. Task 36: tune M=64 W8A16 (BM=64) + k=3 ws t1-w17.
+- Task 36 (job 196): M=64 tune only -0.23 ms (17.05 ms; compute/dequant-bound). T1-021 = k=3 + M64 table on T3-004, unofficial --long running. Napkin predicts ~-2%.
+- T1-021 k=3: -10.24% (1 start), acc 2.673, TTFT p99 1663 fail. Decision rule -> close T1.
+- update-6 + writeup updated.

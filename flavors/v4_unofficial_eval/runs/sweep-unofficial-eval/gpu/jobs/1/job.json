@@ -1,0 +1,24 @@
+{
+  "id": 1,
+  "pid": 1614992,
+  "team": "MGR",
+  "agent": "manager",
+  "label": "unofficial-ref:BASE",
+  "timeout_min": 8.0,
+  "command": [
+    "env",
+    "TRIALS=2",
+    "PROMPTS=200",
+    "GATES=none",
+    "/scratch/kevinsong/learning/autoinfer/tasks/qwen38-27b-fp8-2x4090/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/workspaces/uo-BASE-ref",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/unofficial/ref-BASE-20261115-050005"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T05:00:05+00:00",
+  "state": "done",
+  "started": "2026-11-15T05:00:05+00:00",
+  "ended": "2026-11-15T05:08:02+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 7.956
+}

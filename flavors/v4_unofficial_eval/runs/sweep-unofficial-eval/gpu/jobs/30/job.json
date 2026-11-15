@@ -1,0 +1,19 @@
+{
+  "id": 30,
+  "pid": 1687318,
+  "team": "T1",
+  "agent": "t1-w1",
+  "label": "chunk-dbg2",
+  "timeout_min": 5.0,
+  "command": [
+    "bash",
+    "agents/t1-w1/chunk/dbg.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T06:01:23+00:00",
+  "state": "done",
+  "started": "2026-11-15T06:19:59+00:00",
+  "ended": "2026-11-15T06:21:38+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.637
+}

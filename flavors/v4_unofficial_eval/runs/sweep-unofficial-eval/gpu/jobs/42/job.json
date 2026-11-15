@@ -1,0 +1,19 @@
+{
+  "id": 42,
+  "pid": 1741172,
+  "team": "T1",
+  "agent": "t1-w1",
+  "label": "ar-flagstride",
+  "timeout_min": 2.0,
+  "command": [
+    "bash",
+    "agents/t1-w1/ar/job4.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T06:51:10+00:00",
+  "state": "done",
+  "started": "2026-11-15T06:52:00+00:00",
+  "ended": "2026-11-15T06:52:02+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.037
+}

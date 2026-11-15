@@ -1,0 +1,18 @@
+{
+  "id": 111,
+  "pid": 1923650,
+  "team": "T1",
+  "agent": "t1-w1",
+  "label": "t1-w1-split",
+  "timeout_min": 2.0,
+  "command": [
+    "agents/t1-w1/split/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T09:47:39+00:00",
+  "state": "done",
+  "started": "2026-11-15T09:47:39+00:00",
+  "ended": "2026-11-15T09:47:53+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.23
+}

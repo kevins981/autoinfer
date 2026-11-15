@@ -1,0 +1,841 @@
+diff --git a/csrc/gdn/fused_gdn_decode_kernel.cu b/csrc/gdn/fused_gdn_decode_kernel.cu
+index 5e606ffd7f..a0d2fdf9fc 100644
+--- a/csrc/gdn/fused_gdn_decode_kernel.cu
++++ b/csrc/gdn/fused_gdn_decode_kernel.cu
+@@ -147,7 +147,123 @@ __device__ __forceinline__ Sum2 warp_reduce_sum_pair(float x, float y) {
+   return {x, y};
+ }
+ 
+-template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate>
++// ---- Replay-mode support (single state write per step) -------------------
++// Rows of the previous step (L2-normalised k fp32, v bf16, decay, beta) are
++// cached as raw bytes inside the dead state page of window column 1.
++constexpr int kReplayMaxRows = 3;
++constexpr int kRowBytes = 784;  // 128*4 + 128*2 + 8 (+16B alignment pad)
++
++template <typename StateT>
++__device__ __forceinline__ unsigned char* replay_rows_base(
++    StateT* state, int col1_slot, int value_head, int64_t state_slot_stride) {
++  return reinterpret_cast<unsigned char*>(
++      state + static_cast<int64_t>(col1_slot) * state_slot_stride +
++      static_cast<int64_t>(value_head) * kDimV * kDimK);
++}
++
++// One delta-rule row update of the register-resident state tile (same
++// arithmetic as the token loop of the decode kernel).
++__device__ __forceinline__ void replay_row_update(
++    float (&h)[kRowsPerWarp][4], const float4 k4, float decay, float beta,
++    const float (&v_rows)[kRowsPerWarp]) {
++  const float k_values[4] = {k4.x, k4.y, k4.z, k4.w};
++  float dot_hk[kRowsPerWarp] = {0.0f, 0.0f, 0.0f, 0.0f};
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      h[row][i] *= decay;
++      dot_hk[row] += h[row][i] * k_values[i];
++    }
++  }
++  const Sum2 dot_hk_01 = warp_reduce_sum_pair(dot_hk[0], dot_hk[1]);
++  const Sum2 dot_hk_23 = warp_reduce_sum_pair(dot_hk[2], dot_hk[3]);
++  const float reduced_hk[kRowsPerWarp] = {dot_hk_01.x, dot_hk_01.y,
++                                          dot_hk_23.x, dot_hk_23.y};
++#pragma unroll
++  for (int row = 0; row < kRowsPerWarp; ++row) {
++    const float delta = (v_rows[row] - reduced_hk[row]) * beta;
++#pragma unroll
++    for (int i = 0; i < 4; ++i) {
++      h[row][i] += k_values[i] * delta;
++    }
++  }
++}
++
++// Applies the pending rows (if any) of every request to its column-0 state and
++// switches the request back to the old format (flag = 0). eff_accepted[req] is
++// the accepted count the old-format kernels must use afterwards.
++template <typename StateT>
++__global__ __launch_bounds__(kThreads) void gdn_replay_flush_kernel(
++    const int* __restrict__ state_indices,
++    const int* __restrict__ num_accepted_tokens, StateT* __restrict__ state,
++    int* __restrict__ replay_flag, int* __restrict__ eff_accepted, int HV,
++    int state_indices_width, int64_t state_slot_stride) {
++  const int request = blockIdx.x;
++  const int value_head = blockIdx.y;
++  const int tid = threadIdx.x;
++  const int lane = tid & 31;
++  const int warp = tid >> 5;
++  const int col0 = state_indices[request * state_indices_width];
++  const int accepted = num_accepted_tokens[request];
++  if (col0 <= 0) {
++    if (value_head == 0 && tid == 0) eff_accepted[request] = accepted;
++    return;
++  }
++  const int pending = *reinterpret_cast<volatile const int*>(&replay_flag[col0 * 2]);
++  if (value_head == 0 && tid == 0) {
++    eff_accepted[request] = pending > 0 ? 1 : accepted;
++  }
++  if (pending <= 0) return;
++  const int col1 = state_indices[request * state_indices_width + 1];
++  const int replay_count = min(max(accepted, 0), pending);
++  const unsigned char* rows =
++      replay_rows_base(state, col1, value_head, state_slot_stride);
++  StateT* s0 = state + static_cast<int64_t>(col0) * state_slot_stride +
++               value_head * kDimV * kDimK;
++  const int k_base = lane * 4;
++  for (int chunk = 0; chunk < kNumChunks; ++chunk) {
++    float h[kRowsPerWarp][4];
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) {
++      const int value = chunk * kChunkV + warp + row * kWarps;
++      const float4 sv = load_state4(s0 + value * kDimK + k_base);
++      h[row][0] = sv.x; h[row][1] = sv.y; h[row][2] = sv.z; h[row][3] = sv.w;
++    }
++    for (int i = 0; i < replay_count; ++i) {
++      const unsigned char* r = rows + i * kRowBytes;
++      const float4 k4 = *reinterpret_cast<const float4*>(r + k_base * 4);
++      const float2 db = *reinterpret_cast<const float2*>(r + 768);
++      float v_rows[kRowsPerWarp];
++#pragma unroll
++      for (int row = 0; row < kRowsPerWarp; ++row) {
++        const int value = chunk * kChunkV + warp + row * kWarps;
++        v_rows[row] = __bfloat162float(
++            reinterpret_cast<const __nv_bfloat16*>(r + 512)[value]);
++      }
++      replay_row_update(h, k4, db.x, db.y, v_rows);
++    }
++#pragma unroll
++    for (int row = 0; row < kRowsPerWarp; ++row) {
++      const int value = chunk * kChunkV + warp + row * kWarps;
++      store_state4(s0 + value * kDimK + k_base,
++                   make_float4(h[row][0], h[row][1], h[row][2], h[row][3]));
++    }
++  }
++  __syncthreads();
++  if (tid == 0) {
++    __threadfence();
++    const int old = atomicAdd(&replay_flag[col0 * 2 + 1], 1);
++    if (old == HV - 1) {
++      replay_flag[col0 * 2 + 1] = 0;
++      replay_flag[col0 * 2] = 0;
++      __threadfence();
++    }
++  }
++}
++
++template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate,
++          bool Replay>
+ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+     const __nv_bfloat16* __restrict__ mixed_qkv,
+     const __nv_bfloat16* __restrict__ a, const __nv_bfloat16* __restrict__ b,
+@@ -158,7 +274,7 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+     const void* __restrict__ norm_weight, __nv_bfloat16* __restrict__ out,
+     int H, int HV, int state_indices_width, int dt_bias_type,
+     bool norm_weight_is_bf16, float scale, float norm_eps,
+-    GdnDecodeStrides strides) {
++    GdnDecodeStrides strides, int* __restrict__ replay_flag) {
+   const int request = blockIdx.x;
+   const int value_head = blockIdx.y;
+   const int tid = threadIdx.x;
+@@ -172,10 +288,25 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+   }
+ 
+   const int accepted = num_accepted_tokens[request];
+-  const int source_slot =
++  int source_slot =
+       accepted > 0 && accepted <= state_indices_width
+           ? state_indices[request * state_indices_width + accepted - 1]
+           : 0;
++  int replay_count = 0;
++  int col0 = 0;
++  bool store_col0 = false;
++  if constexpr (Replay) {
++    col0 = state_indices[request * state_indices_width];
++    if (col0 > 0 && accepted > 0 && accepted <= state_indices_width) {
++      const int pending =
++          *reinterpret_cast<volatile const int*>(&replay_flag[col0 * 2]);
++      if (pending > 0) {
++        source_slot = col0;
++        replay_count = min(accepted, pending);
++      }
++    }
++    store_col0 = source_slot > 0 && (source_slot != col0 || replay_count > 0);
++  }
+   if (source_slot <= 0 || num_tokens > kMaxMtpTokens) {
+     for (int linear = tid; linear < num_tokens * kDimV; linear += kThreads) {
+       const int token = bos + linear / kDimV;
+@@ -195,6 +326,30 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+   __shared__ __nv_bfloat16 shared_out[kMaxMtpTokens][kDimV];
+   __shared__ float shared_decay[kMaxMtpTokens];
+   __shared__ float shared_beta[kMaxMtpTokens];
++  __shared__ float replay_k[kReplayMaxRows][kDimK];
++  __shared__ __nv_bfloat16 replay_v[kReplayMaxRows][kDimV];
++  __shared__ float replay_decay[kReplayMaxRows];
++  __shared__ float replay_beta[kReplayMaxRows];
++  unsigned char* rows_base = nullptr;
++  if constexpr (Replay) {
++    rows_base = replay_rows_base(
++        state, state_indices[request * state_indices_width + 1], value_head,
++        strides.state_slot);
++    for (int idx = tid; idx < replay_count * kDimK; idx += kThreads) {
++      const int i = idx / kDimK;
++      const int d = idx % kDimK;
++      const unsigned char* r = rows_base + i * kRowBytes;
++      replay_k[i][d] = *reinterpret_cast<const float*>(r + d * 4);
++      replay_v[i][d] =
++          reinterpret_cast<const __nv_bfloat16*>(r + 512)[d];
++    }
++    if (tid < replay_count) {
++      const float2 db = *reinterpret_cast<const float2*>(
++          rows_base + tid * kRowBytes + 768);
++      replay_decay[tid] = db.x;
++      replay_beta[tid] = db.y;
++    }
++  }
+ 
+   StateT* source_state =
+       state + static_cast<int64_t>(source_slot) * strides.state_slot +
+@@ -274,6 +429,30 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+       h[row][3] = state_value.w;
+     }
+ 
++    if constexpr (Replay) {
++      for (int i = 0; i < replay_count; ++i) {
++        const float4 rk4 =
++            *reinterpret_cast<const float4*>(&replay_k[i][k_base]);
++        float v_rows[kRowsPerWarp];
++#pragma unroll
++        for (int row = 0; row < kRowsPerWarp; ++row) {
++          v_rows[row] =
++              __bfloat162float(replay_v[i][chunk * kChunkV + rows[row]]);
++        }
++        replay_row_update(h, rk4, replay_decay[i], replay_beta[i], v_rows);
++      }
++      if (store_col0) {
++        StateT* dst0 = state + static_cast<int64_t>(col0) * strides.state_slot +
++                       value_head * kDimV * kDimK;
++#pragma unroll
++        for (int row = 0; row < kRowsPerWarp; ++row) {
++          const int value = chunk * kChunkV + rows[row];
++          store_state4(dst0 + value * kDimK + k_base,
++                       make_float4(h[row][0], h[row][1], h[row][2], h[row][3]));
++        }
++      }
++    }
++
+     for (int t = 0; t < num_tokens; ++t) {
+       const float4 q4 = *reinterpret_cast<const float4*>(&shared_q[t][k_base]);
+       const float4 k4 = *reinterpret_cast<const float4*>(&shared_k[t][k_base]);
+@@ -321,7 +500,7 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+       }
+ 
+       const int destination_slot =
+-          state_indices[request * state_indices_width + t];
++          Replay ? 0 : state_indices[request * state_indices_width + t];
+       if (destination_slot > 0) {
+         StateT* destination_state =
+             state +
+@@ -338,6 +517,30 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+   }
+   __syncthreads();
+ 
++  if constexpr (Replay) {
++    for (int idx = tid; idx < num_tokens * kDimK; idx += kThreads) {
++      const int i = idx / kDimK;
++      const int d = idx % kDimK;
++      unsigned char* r = rows_base + i * kRowBytes;
++      *reinterpret_cast<float*>(r + d * 4) = shared_k[i][d];
++      reinterpret_cast<__nv_bfloat16*>(r + 512)[d] = shared_v[i][d];
++    }
++    if (tid < num_tokens) {
++      *reinterpret_cast<float2*>(rows_base + tid * kRowBytes + 768) =
++          make_float2(shared_decay[tid], shared_beta[tid]);
++    }
++    __syncthreads();
++    if (tid == 0) {
++      __threadfence();
++      const int old = atomicAdd(&replay_flag[col0 * 2 + 1], 1);
++      if (old == HV - 1) {
++        replay_flag[col0 * 2 + 1] = 0;
++        replay_flag[col0 * 2] = num_tokens;
++        __threadfence();
++      }
++    }
++  }
++
+   if (warp < num_tokens) {
+     const int t = warp;
+     float output_values[4];
+@@ -373,7 +576,8 @@ __global__ __launch_bounds__(kThreads, 2) void gdn_decode_post_conv_mtp_kernel(
+   }
+ }
+ 
+-template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate>
++template <typename StateT, int ValueHeadsPerKeyHead, bool SigmoidGate,
++          bool Replay>
+ void launch_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a_log,
+     torch::stable::Tensor const& dt_bias,
+@@ -383,7 +587,8 @@ void launch_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor& state, torch::stable::Tensor const& norm_weight,
+     torch::stable::Tensor& out, const __nv_bfloat16* a, const __nv_bfloat16* b,
+     const __nv_bfloat16* output_gate, int num_key_heads, int num_value_heads,
+-    double scale, double norm_eps, GdnDecodeStrides strides) {
++    double scale, double norm_eps, GdnDecodeStrides strides,
++    int* replay_flag) {
+   using torch::headeronly::ScalarType;
+ 
+   const auto dt_bias_scalar_type = dt_bias.scalar_type();
+@@ -398,7 +603,8 @@ void launch_gdn_decode_post_conv_mtp(
+       get_current_cuda_stream(mixed_qkv.get_device_index());
+   const int num_requests = static_cast<int>(state_indices.size(0));
+   const dim3 grid(num_requests, num_value_heads);
+-  gdn_decode_post_conv_mtp_kernel<StateT, ValueHeadsPerKeyHead, SigmoidGate>
++  gdn_decode_post_conv_mtp_kernel<StateT, ValueHeadsPerKeyHead, SigmoidGate,
++                                  Replay>
+       <<<grid, kThreads, 0, stream>>>(
+           static_cast<const __nv_bfloat16*>(mixed_qkv.data_ptr()), a, b,
+           static_cast<const float*>(a_log.data_ptr()), dt_bias.data_ptr(),
+@@ -410,7 +616,8 @@ void launch_gdn_decode_post_conv_mtp(
+           num_key_heads, num_value_heads,
+           static_cast<int>(state_indices.size(1)), dt_bias_type,
+           norm_weight.scalar_type() == ScalarType::BFloat16,
+-          static_cast<float>(scale), static_cast<float>(norm_eps), strides);
++          static_cast<float>(scale), static_cast<float>(norm_eps), strides,
++          replay_flag);
+   const cudaError_t error = cudaGetLastError();
+   STD_TORCH_CHECK(error == cudaSuccess,
+                   "GDN decode MTP post-conv kernel launch failed: ",
+@@ -419,7 +626,7 @@ void launch_gdn_decode_post_conv_mtp(
+ 
+ }  // namespace
+ 
+-void fused_gdn_decode_post_conv_mtp(
++static void fused_gdn_decode_post_conv_mtp_impl(
+     torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
+     torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
+     torch::stable::Tensor const& dt_bias,
+@@ -428,8 +635,12 @@ void fused_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor const& num_accepted_tokens,
+     torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
+     torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
+-    double scale, double norm_eps, const std::string& output_gate_activation) {
++    double scale, double norm_eps, const std::string& output_gate_activation,
++    torch::stable::Tensor* replay_flag_tensor) {
+   using torch::headeronly::ScalarType;
++  const bool replay = replay_flag_tensor != nullptr;
++  int* replay_flag =
++      replay ? static_cast<int*>(replay_flag_tensor->data_ptr()) : nullptr;
+ 
+   STD_TORCH_CHECK(
+       mixed_qkv.is_cuda() && mixed_qkv.scalar_type() == ScalarType::BFloat16,
+@@ -553,13 +764,34 @@ void fused_gdn_decode_post_conv_mtp(
+   const auto* b_ptr = static_cast<const __nv_bfloat16*>(b.data_ptr());
+   const auto* output_gate_ptr =
+       static_cast<const __nv_bfloat16*>(output_gate.data_ptr());
++  if (replay) {
++    STD_TORCH_CHECK(state_indices.size(1) >= 2 &&
++                        state_indices.size(1) <= kReplayMaxRows,
++                    "replay mode needs 2 <= state_indices width <= 3");
++    STD_TORCH_CHECK(replay_flag_tensor->is_cuda() &&
++                        replay_flag_tensor->scalar_type() == ScalarType::Int &&
++                        replay_flag_tensor->is_contiguous() &&
++                        replay_flag_tensor->dim() == 2 &&
++                        replay_flag_tensor->size(1) == 2,
++                    "replay_flag must be a contiguous CUDA int32 [blocks, 2]");
++  }
+   const auto launch = [&]<typename StateT, int ValueHeadsPerKeyHead,
+                           bool SigmoidGate>() {
+-    launch_gdn_decode_post_conv_mtp<StateT, ValueHeadsPerKeyHead, SigmoidGate>(
+-        mixed_qkv, a_log, dt_bias, state_indices, cu_seqlens,
+-        num_accepted_tokens, state, norm_weight, out, a_ptr, b_ptr,
+-        output_gate_ptr, num_key_heads, num_value_heads, scale, norm_eps,
+-        strides);
++    if (replay) {
++      launch_gdn_decode_post_conv_mtp<StateT, ValueHeadsPerKeyHead,
++                                      SigmoidGate, true>(
++          mixed_qkv, a_log, dt_bias, state_indices, cu_seqlens,
++          num_accepted_tokens, state, norm_weight, out, a_ptr, b_ptr,
++          output_gate_ptr, num_key_heads, num_value_heads, scale, norm_eps,
++          strides, replay_flag);
++    } else {
++      launch_gdn_decode_post_conv_mtp<StateT, ValueHeadsPerKeyHead,
++                                      SigmoidGate, false>(
++          mixed_qkv, a_log, dt_bias, state_indices, cu_seqlens,
++          num_accepted_tokens, state, norm_weight, out, a_ptr, b_ptr,
++          output_gate_ptr, num_key_heads, num_value_heads, scale, norm_eps,
++          strides, nullptr);
++    }
+   };
+   const auto dispatch_state_type = [&]<int ValueHeadsPerKeyHead>() {
+     if (state_scalar_type == ScalarType::Float) {
+@@ -595,3 +827,92 @@ void fused_gdn_decode_post_conv_mtp(
+       break;
+   }
+ }
++
++void fused_gdn_decode_post_conv_mtp(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
++    torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
++    double scale, double norm_eps, const std::string& output_gate_activation) {
++  fused_gdn_decode_post_conv_mtp_impl(
++      mixed_qkv, a, b, a_log, dt_bias, state_indices, cu_seqlens,
++      num_accepted_tokens, state, output_gate, norm_weight, out, scale,
++      norm_eps, output_gate_activation, nullptr);
++}
++
++// Replay variant: one state write per step; see gdn_replay_flush_kernel.
++void fused_gdn_decode_post_conv_mtp_replay(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
++    torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
++    torch::stable::Tensor& replay_flag, double scale, double norm_eps,
++    const std::string& output_gate_activation) {
++  fused_gdn_decode_post_conv_mtp_impl(
++      mixed_qkv, a, b, a_log, dt_bias, state_indices, cu_seqlens,
++      num_accepted_tokens, state, output_gate, norm_weight, out, scale,
++      norm_eps, output_gate_activation, &replay_flag);
++}
++
++void gdn_replay_flush(torch::stable::Tensor const& state_indices,
++                      torch::stable::Tensor const& num_accepted_tokens,
++                      torch::stable::Tensor& state,
++                      torch::stable::Tensor& replay_flag,
++                      torch::stable::Tensor& eff_accepted) {
++  using torch::headeronly::ScalarType;
++  STD_TORCH_CHECK(state.scalar_type() == ScalarType::Float ||
++                      state.scalar_type() == ScalarType::BFloat16,
++                  "state must be float32 or bfloat16");
++  STD_TORCH_CHECK(state_indices.is_cuda() && state_indices.dim() == 2 &&
++                      state_indices.size(1) >= 2 &&
++                      state_indices.size(1) <= kReplayMaxRows &&
++                      state_indices.is_contiguous() &&
++                      state_indices.scalar_type() == ScalarType::Int,
++                  "state_indices must be contiguous int32 [N, 2..3]");
++  STD_TORCH_CHECK(num_accepted_tokens.is_cuda() &&
++                      num_accepted_tokens.scalar_type() == ScalarType::Int &&
++                      num_accepted_tokens.numel() >= state_indices.size(0),
++                  "num_accepted_tokens must be CUDA int32 [>=N]");
++  STD_TORCH_CHECK(eff_accepted.is_cuda() &&
++                      eff_accepted.scalar_type() == ScalarType::Int &&
++                      eff_accepted.numel() >= state_indices.size(0),
++                  "eff_accepted must be CUDA int32 [>=N]");
++  STD_TORCH_CHECK(state.dim() == 4 && state.size(2) == kDimV &&
++                      state.size(3) == kDimK,
++                  "state must have shape [slots, HV, 128, 128]");
++  const int num_requests = static_cast<int>(state_indices.size(0));
++  if (num_requests == 0) return;
++  const int hv = static_cast<int>(state.size(1));
++  torch::stable::accelerator::DeviceGuard const device_guard(
++      state.get_device_index());
++  const cudaStream_t stream = get_current_cuda_stream(state.get_device_index());
++  const dim3 grid(num_requests, hv);
++  if (state.scalar_type() == ScalarType::Float) {
++    gdn_replay_flush_kernel<float><<<grid, kThreads, 0, stream>>>(
++        static_cast<const int*>(state_indices.data_ptr()),
++        static_cast<const int*>(num_accepted_tokens.data_ptr()),
++        static_cast<float*>(state.data_ptr()),
++        static_cast<int*>(replay_flag.data_ptr()),
++        static_cast<int*>(eff_accepted.data_ptr()), hv,
++        static_cast<int>(state_indices.size(1)), state.stride(0));
++  } else {
++    gdn_replay_flush_kernel<__nv_bfloat16><<<grid, kThreads, 0, stream>>>(
++        static_cast<const int*>(state_indices.data_ptr()),
++        static_cast<const int*>(num_accepted_tokens.data_ptr()),
++        static_cast<__nv_bfloat16*>(state.data_ptr()),
++        static_cast<int*>(replay_flag.data_ptr()),
++        static_cast<int*>(eff_accepted.data_ptr()), hv,
++        static_cast<int>(state_indices.size(1)), state.stride(0));
++  }
++  const cudaError_t error = cudaGetLastError();
++  STD_TORCH_CHECK(error == cudaSuccess, "GDN replay flush launch failed: ",
++                  cudaGetErrorString(error));
++}
+diff --git a/csrc/ops.h b/csrc/ops.h
+index 81a0065c98..f37465a317 100644
+--- a/csrc/ops.h
++++ b/csrc/ops.h
+@@ -451,6 +451,22 @@ void fused_gdn_decode_post_conv_mtp(
+     torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
+     torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
+     double scale, double norm_eps, const std::string& output_gate_activation);
++void fused_gdn_decode_post_conv_mtp_replay(
++    torch::stable::Tensor const& mixed_qkv, torch::stable::Tensor const& a,
++    torch::stable::Tensor const& b, torch::stable::Tensor const& a_log,
++    torch::stable::Tensor const& dt_bias,
++    torch::stable::Tensor const& state_indices,
++    torch::stable::Tensor const& cu_seqlens,
++    torch::stable::Tensor const& num_accepted_tokens,
++    torch::stable::Tensor& state, torch::stable::Tensor const& output_gate,
++    torch::stable::Tensor const& norm_weight, torch::stable::Tensor& out,
++    torch::stable::Tensor& replay_flag,
++    double scale, double norm_eps, const std::string& output_gate_activation);
++void gdn_replay_flush(torch::stable::Tensor const& state_indices,
++                      torch::stable::Tensor const& num_accepted_tokens,
++                      torch::stable::Tensor& state,
++                      torch::stable::Tensor& replay_flag,
++                      torch::stable::Tensor& eff_accepted);
+ 
+ #endif
+ 
+diff --git a/csrc/torch_bindings.cpp b/csrc/torch_bindings.cpp
+index 78ae89a646..2dbde917d6 100644
+--- a/csrc/torch_bindings.cpp
++++ b/csrc/torch_bindings.cpp
+@@ -573,6 +573,16 @@ STABLE_TORCH_LIBRARY_FRAGMENT(_C, ops) {
+       "Tensor! state, Tensor output_gate, Tensor norm_weight, Tensor! out, "
+       "float scale, float norm_eps=1e-5, "
+       "str output_gate_activation='silu') -> ()");
++  ops.def(
++      "fused_gdn_decode_post_conv_mtp_replay("
++      "Tensor mixed_qkv, Tensor a, Tensor b, Tensor A_log, Tensor dt_bias, "
++      "Tensor state_indices, Tensor cu_seqlens, Tensor num_accepted_tokens, "
++      "Tensor! state, Tensor output_gate, Tensor norm_weight, Tensor! out, "
++      "Tensor! replay_flag, float scale, float norm_eps=1e-5, "
++      "str output_gate_activation='silu') -> ()");
++  ops.def(
++      "gdn_replay_flush(Tensor state_indices, Tensor num_accepted_tokens, "
++      "Tensor! state, Tensor! replay_flag, Tensor! eff_accepted) -> ()");
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+@@ -907,6 +917,9 @@ STABLE_TORCH_LIBRARY_IMPL(_C, CUDA, ops) {
+ #ifdef VLLM_ENABLE_FUSED_GDN_DECODE
+   ops.impl("fused_gdn_decode_post_conv_mtp",
+            TORCH_BOX(&fused_gdn_decode_post_conv_mtp));
++  ops.impl("fused_gdn_decode_post_conv_mtp_replay",
++           TORCH_BOX(&fused_gdn_decode_post_conv_mtp_replay));
++  ops.impl("gdn_replay_flush", TORCH_BOX(&gdn_replay_flush));
+ #endif
+ 
+ #ifdef VLLM_ENABLE_FUSED_KDA_CHUNK
+diff --git a/vllm/_custom_ops.py b/vllm/_custom_ops.py
+index 00fe25c0f4..6f9bbecbcb 100644
+--- a/vllm/_custom_ops.py
++++ b/vllm/_custom_ops.py
+@@ -3210,6 +3210,57 @@ def fused_gdn_decode_post_conv_mtp(
+     return out
+ 
+ 
++def fused_gdn_decode_post_conv_mtp_replay(
++    mixed_qkv: torch.Tensor,
++    a: torch.Tensor,
++    b: torch.Tensor,
++    A_log: torch.Tensor,
++    dt_bias: torch.Tensor,
++    state_indices: torch.Tensor,
++    cu_seqlens: torch.Tensor,
++    num_accepted_tokens: torch.Tensor,
++    state: torch.Tensor,
++    output_gate: torch.Tensor,
++    norm_weight: torch.Tensor,
++    out: torch.Tensor,
++    replay_flag: torch.Tensor,
++    scale: float = 128**-0.5,
++    norm_eps: float = 1e-5,
++    output_gate_activation: str = "silu",
++) -> torch.Tensor:
++    torch.ops._C.fused_gdn_decode_post_conv_mtp_replay(
++        mixed_qkv,
++        a,
++        b,
++        A_log,
++        dt_bias,
++        state_indices,
++        cu_seqlens,
++        num_accepted_tokens,
++        state,
++        output_gate,
++        norm_weight,
++        out,
++        replay_flag,
++        scale,
++        norm_eps,
++        output_gate_activation,
++    )
++    return out
++
++
++def gdn_replay_flush(
++    state_indices: torch.Tensor,
++    num_accepted_tokens: torch.Tensor,
++    state: torch.Tensor,
++    replay_flag: torch.Tensor,
++    eff_accepted: torch.Tensor,
++) -> None:
++    torch.ops._C.gdn_replay_flush(
++        state_indices, num_accepted_tokens, state, replay_flag, eff_accepted
++    )
++
++
+ def concat_and_cache_mla(
+     kv_c: torch.Tensor,
+     k_pe: torch.Tensor,
+diff --git a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+index bdea28e11a..180e951a22 100644
+--- a/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
++++ b/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+@@ -884,6 +884,24 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         if self.speculative_config is not None:
+             logger.info_once("GDN spec decode kernel: %s", self.gdn_decode_kernel)
+ 
++        # Single-state-write (replay) MTP decode: only with the fused CUDA
++        # kernel and without Mamba prefix caching ('none' cache mode).
++        num_spec_tokens = (
++            self.speculative_config.num_speculative_tokens
++            if self.speculative_config is not None
++            else None
++        )
++        self._gdn_replay = bool(
++            self.enable_fused_gdn_spec_decode
++            and os.environ.get("VLLM_GDN_REPLAY", "1") != "0"
++            and vllm_config.cache_config.mamba_cache_mode == "none"
++            and num_spec_tokens in (1, 2)
++            and hasattr(torch.ops._C, "fused_gdn_decode_post_conv_mtp_replay")
++        )
++        self._gdn_replay_flag: torch.Tensor | None = None
++        if self._gdn_replay:
++            logger.info_once("GDN MTP decode: single-state-write replay mode enabled")
++
+         compilation_config = get_current_vllm_config().compilation_config
+         if prefix in compilation_config.static_forward_context:
+             raise ValueError(f"Duplicate layer name: {prefix}")
+@@ -1787,6 +1805,10 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+ 
+         assert isinstance(attn_metadata, GDNAttentionMetadata)
+ 
++        replay_eff_accepted = None
++        if self._gdn_replay:
++            replay_eff_accepted = self._gdn_replay_flush(attn_metadata)
++
+         if (
+             self.enable_packed_recurrent_decode
+             and attn_metadata.spec_sequence_masks is None
+@@ -1978,7 +2000,11 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+                         + 1  # type: ignore[attr-defined]
+                     ],
+                     ssm_state_indices=spec_state_indices_tensor,
+-                    num_accepted_tokens=num_accepted_tokens,
++                    num_accepted_tokens=(
++                        replay_eff_accepted
++                        if replay_eff_accepted is not None
++                        else num_accepted_tokens
++                    ),
+                     use_qk_l2norm_in_kernel=True,
+                 )
+             )
+@@ -2298,6 +2324,102 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         )
+         return
+ 
++    def _get_gdn_replay_flag(self) -> torch.Tensor:
++        flag = self._gdn_replay_flag
++        if flag is None:
++            if torch.cuda.is_current_stream_capturing():
++                raise RuntimeError(
++                    "GDN replay flag must be allocated before CUDA graph capture"
++                )
++            ssm_state = self.kv_cache[1]
++            flag = torch.zeros(
++                ssm_state.shape[0], 2, dtype=torch.int32, device=ssm_state.device
++            )
++            self._gdn_replay_flag = flag
++        return flag
++
++    def _gdn_replay_flush(
++        self, attn_metadata: GDNAttentionMetadata
++    ) -> torch.Tensor | None:
++        """Apply pending replay rows so the old-format kernels see a plain
++        state. Returns the accepted-token counts to use for the spec rows."""
++        flag = self._get_gdn_replay_flag()
++        ssm_state = self.kv_cache[1]
++        eff_spec = None
++        spec_idx = attn_metadata.spec_state_indices_tensor
++        spec_acc = attn_metadata.num_accepted_tokens
++        if spec_idx is not None and spec_acc is not None:
++            eff_spec = torch.empty_like(spec_acc)
++            ops.gdn_replay_flush(spec_idx, spec_acc, ssm_state, flag, eff_spec)
++        all_idx = attn_metadata.replay_state_indices
++        all_acc = attn_metadata.replay_accepted_all
++        if all_idx is not None and all_acc is not None:
++            eff_all = torch.empty_like(all_acc)
++            ops.gdn_replay_flush(all_idx, all_acc, ssm_state, flag, eff_all)
++        return eff_spec
++
++    def _gdn_replay_debug_old(
++        self, mixed_qkv, a, b, output_gate, core_attn_out, state_indices,
++        cu_seqlens, num_accepted_tokens, num_requests,
++    ):
++        dbg_layers = os.environ.get("VLLM_GDN_REPLAY_DEBUG_LAYERS", "0").split(",")
++        if not any(f"layers.{x}." in self.prefix for x in dbg_layers):
++            return None
++        flag = self._get_gdn_replay_flag()
++        real = self.kv_cache[1]
++        if getattr(self, "_dbg_shadow", None) is None:
++            self._dbg_shadow = real.clone()
++        sh = self._dbg_shadow
++        idx = state_indices[:num_requests]
++        acc = num_accepted_tokens[:num_requests]
++        idx_c = idx.cpu().tolist()
++        f0 = [int(flag[c[0], 0]) if c[0] > 0 else -1 for c in idx_c]
++        self._dbg_f0 = f0
++        for r, c in enumerate(idx_c):
++            if c[0] > 0 and f0[r] == 0:
++                for col in c:
++                    sh[col] = real[col]
++        out_old = torch.empty_like(core_attn_out)
++        ops.fused_gdn_decode_post_conv_mtp(
++            mixed_qkv=mixed_qkv, a=a, b=b, A_log=self.A_log, dt_bias=self.dt_bias,
++            state_indices=idx, cu_seqlens=cu_seqlens[: num_requests + 1],
++            num_accepted_tokens=acc, state=sh, output_gate=output_gate,
++            norm_weight=self.norm.weight, out=out_old,
++            scale=self.head_k_dim**-0.5, norm_eps=self.layer_norm_epsilon,
++            output_gate_activation=self.norm.activation,
++        )
++        return out_old
++
++    def _gdn_replay_debug_cmp(
++        self, out_old, core_attn_out, state_indices, cu_seqlens,
++        num_accepted_tokens, num_requests,
++    ):
++        n = int(cu_seqlens[num_requests])
++        ok = torch.equal(out_old[:n], core_attn_out[:n])
++        self._dbg_n = getattr(self, "_dbg_n", 0) + 1
++        f0 = self._dbg_f0
++        self._dbg_pend = getattr(self, "_dbg_pend", 0) + sum(1 for x in f0 if x > 0)
++        self._dbg_rows = getattr(self, "_dbg_rows", 0) + len(f0)
++        if self._dbg_n % 100 == 0:
++            logger.warning(
++                "GDN replay dbg %s: steps=%d bad=%d rows=%d pending_rows=%d",
++                self.prefix, self._dbg_n, getattr(self, "_dbg_bad", 0),
++                self._dbg_rows, self._dbg_pend,
++            )
++        if not ok and getattr(self, "_dbg_bad", 0) < 15:
++            self._dbg_bad = getattr(self, "_dbg_bad", 0) + 1
++            qs = cu_seqlens[: num_requests + 1].cpu().tolist()
++            bad_rows = [
++                r for r in range(num_requests)
++                if not torch.equal(out_old[qs[r]:qs[r + 1]], core_attn_out[qs[r]:qs[r + 1]])
++            ]
++            logger.warning(
++                "GDN replay MISMATCH step %d bad_rows=%s f0=%s acc=%s idx=%s",
++                self._dbg_n, bad_rows, self._dbg_f0,
++                num_accepted_tokens[:num_requests].cpu().tolist(),
++                state_indices[:num_requests].cpu().tolist(),
++            )
++
+     def _forward_core_decode_spec_fused_norm(
+         self,
+         mixed_qkv: torch.Tensor,
+@@ -2362,6 +2484,37 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
+         assert num_accepted_tokens is not None
+ 
+         num_requests = attn_metadata.num_spec_decodes
++        dbg_out = None
++        if self._gdn_replay and os.environ.get("VLLM_GDN_REPLAY_DEBUG") == "1":
++            dbg_out = self._gdn_replay_debug_old(
++                mixed_qkv, a, b, output_gate, core_attn_out, state_indices,
++                cu_seqlens, num_accepted_tokens, num_requests,
++            )
++        if self._gdn_replay:
++            ops.fused_gdn_decode_post_conv_mtp_replay(
++                mixed_qkv=mixed_qkv,
++                a=a,
++                b=b,
++                A_log=self.A_log,
++                dt_bias=self.dt_bias,
++                state_indices=state_indices[:num_requests],
++                cu_seqlens=cu_seqlens[: num_requests + 1],
++                num_accepted_tokens=num_accepted_tokens[:num_requests],
++                state=self.kv_cache[1],
++                output_gate=output_gate,
++                norm_weight=self.norm.weight,
++                out=core_attn_out,
++                replay_flag=self._get_gdn_replay_flag(),
++                scale=self.head_k_dim**-0.5,
++                norm_eps=self.layer_norm_epsilon,
++                output_gate_activation=self.norm.activation,
++            )
++            if dbg_out is not None:
++                self._gdn_replay_debug_cmp(
++                    dbg_out, core_attn_out, state_indices, cu_seqlens,
++                    num_accepted_tokens, num_requests,
++                )
++            return
+         fused_mtp_decode_impl()(
+             mixed_qkv=mixed_qkv,
+             a=a,
+diff --git a/vllm/v1/attention/backends/gdn_attn.py b/vllm/v1/attention/backends/gdn_attn.py
+index f28b3e42ad..fac99406c8 100644
+--- a/vllm/v1/attention/backends/gdn_attn.py
++++ b/vllm/v1/attention/backends/gdn_attn.py
+@@ -119,6 +119,9 @@ class GDNAttentionMetadata:
+     non_spec_token_indx: torch.Tensor | None = None
+ 
+     num_accepted_tokens: torch.Tensor | None = None  # shape: [batch,]
++    # Whole-batch view (all requests, spec or not) used by the GDN replay flush.
++    replay_state_indices: torch.Tensor | None = None  # [reqs, num_spec+1]
++    replay_accepted_all: torch.Tensor | None = None  # [reqs]
+     uniform_spec_sequence_length: int | None = None  # None for ragged batches
+ 
+     # Pre-computed FLA chunk metadata (avoids GPU->CPU sync in prepare_chunk_indices)
+@@ -337,6 +340,7 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
+         fast_build: bool = False,
+     ) -> GDNAttentionMetadata:
+         m = common_attn_metadata
++        full_num_accepted_tokens = num_accepted_tokens
+ 
+         query_start_loc = m.query_start_loc
+         query_start_loc_cpu = m.query_start_loc_cpu
+@@ -714,6 +718,18 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
+             spec_token_indx=spec_token_indx,
+             non_spec_token_indx=non_spec_token_indx,
+             num_accepted_tokens=num_accepted_tokens,
++            replay_state_indices=(
++                block_table_tensor[: m.num_reqs, : self.num_spec + 1]
++                if self.num_spec > 0
++                and full_num_accepted_tokens is not None
++                and block_table_tensor.size(1) >= self.num_spec + 1
++                else None
++            ),
++            replay_accepted_all=(
++                full_num_accepted_tokens[: m.num_reqs]
++                if full_num_accepted_tokens is not None
++                else None
++            ),
+             uniform_spec_sequence_length=uniform_spec_sequence_length,
+             nums_dict=nums_dict,
+             batch_ptr=batch_ptr,
+diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runner.py
+index c2de73d98d..9168a8f1ca 100644
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -1167,6 +1167,18 @@ class GPUModelRunner(
+         """Zero the KV cache memory for the given block IDs."""
+         if hasattr(self, "_kv_block_zeroer"):
+             self._kv_block_zeroer.zero_block_ids(block_ids)
++        # GDN replay mode: a freshly allocated page must start with no
++        # pending replay rows (flag = 0) in every GDN layer.
++        if block_ids:
++            ids = None
++            for layer in self.compilation_config.static_forward_context.values():
++                flag = getattr(layer, "_gdn_replay_flag", None)
++                if flag is not None:
++                    if ids is None:
++                        ids = torch.tensor(
++                            block_ids, dtype=torch.int64, device=flag.device
++                        )
++                    flag[ids] = 0
+ 
+     # Note: used for model runner override.
+     def _sync_device(self) -> None:

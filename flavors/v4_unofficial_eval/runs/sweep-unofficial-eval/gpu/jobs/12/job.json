@@ -1,0 +1,21 @@
+{
+  "id": 12,
+  "pid": 1639795,
+  "team": "T1",
+  "agent": "t1-w1",
+  "label": "host-ar-head",
+  "timeout_min": 9.0,
+  "command": [
+    "bash",
+    "agents/t1-w1/job2/run2.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/workspaces/t1-w1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/agents/t1-w1/job2/out2"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T05:21:02+00:00",
+  "state": "done",
+  "started": "2026-11-15T05:24:31+00:00",
+  "ended": "2026-11-15T05:29:10+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.663
+}

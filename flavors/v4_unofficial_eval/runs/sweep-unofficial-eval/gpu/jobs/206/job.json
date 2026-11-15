@@ -1,0 +1,19 @@
+{
+  "id": 206,
+  "pid": 2172149,
+  "team": "T5",
+  "agent": "t5-w1",
+  "label": "t5w1-dump",
+  "timeout_min": 8.0,
+  "command": [
+    "bash",
+    "dump_job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/agents/t5-w1",
+  "submitted": "2026-11-15T13:46:53+00:00",
+  "state": "done",
+  "started": "2026-11-15T13:48:03+00:00",
+  "ended": "2026-11-15T13:49:34+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.509
+}

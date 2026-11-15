@@ -1,0 +1,23 @@
+{
+  "id": 174,
+  "pid": 2070348,
+  "team": "T3",
+  "agent": "leader-3",
+  "label": "t3-psi-generic",
+  "timeout_min": 20.0,
+  "command": [
+    "bash",
+    "agents/leader-3/jobs/psi_generic.sh",
+    "1",
+    "4",
+    "8",
+    "16"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval",
+  "submitted": "2026-11-15T12:08:18+00:00",
+  "state": "done",
+  "started": "2026-11-15T12:08:18+00:00",
+  "ended": "2026-11-15T12:20:25+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 12.121
+}

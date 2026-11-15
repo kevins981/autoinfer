@@ -1,0 +1,15 @@
+{
+ "id": "T4-1",
+ "team": "T4",
+ "by": "leader-4",
+ "backend": "codex",
+ "model": "gpt-6.1-sol",
+ "effort": "high",
+ "work": "/scratch/kevinsong/learning/autoinfer/.cache/sparring_work/sweep-unofficial-eval-T4-1-1794749772",
+ "sid_new": "0b955533-09b7-4cbd-8b8a-6172957938dc",
+ "session": "01a1df6c-34f9-7f61-92b5-3a46e6d8d29b",
+ "state": "ended",
+ "turns": 5,
+ "started": "2026-11-15T13:36:12.786894+00:00",
+ "ended": "2026-11-15T13:39:25.354351+00:00"
+}

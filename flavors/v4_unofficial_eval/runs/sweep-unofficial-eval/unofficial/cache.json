@@ -1,0 +1,739 @@
+{
+ "BASE": [
+  {
+   "tps": 625.0720819986664,
+   "key": {
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "serve_args": "",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "unofficial/ref-BASE-20261115-050005",
+   "time": "2026-11-15T05:08:02+00:00"
+  },
+  {
+   "tps": 639.8592401136926,
+   "key": {
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "serve_args": "",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "unofficial/ref-BASE-20261115-050005",
+   "time": "2026-11-15T05:08:02+00:00"
+  }
+ ],
+ "T1-001": [
+  {
+   "tps": 651.9942937959704,
+   "key": {
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-001/unofficial/1",
+   "time": "2026-11-15T05:18:26+00:00"
+  },
+  {
+   "tps": 654.2167791250239,
+   "key": {
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-001/unofficial/1",
+   "time": "2026-11-15T05:18:26+00:00"
+  }
+ ],
+ "T1-003": [
+  {
+   "tps": 621.1520726120723,
+   "key": {
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-003/unofficial/1",
+   "time": "2026-11-15T05:23:10+00:00"
+  }
+ ],
+ "T1-004": [
+  {
+   "tps": 656.2920964358025,
+   "key": {
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-004/unofficial/1",
+   "time": "2026-11-15T05:33:31+00:00"
+  },
+  {
+   "tps": 670.9606872166842,
+   "key": {
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-004/unofficial/1",
+   "time": "2026-11-15T05:33:31+00:00"
+  }
+ ],
+ "T2-004": [
+  {
+   "tps": 695.5243412139237,
+   "key": {
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-004/unofficial/1",
+   "time": "2026-11-15T05:44:22+00:00"
+  },
+  {
+   "tps": 691.3340740753387,
+   "key": {
+    "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-004/unofficial/1",
+   "time": "2026-11-15T05:44:22+00:00"
+  }
+ ],
+ "T1-002": [
+  {
+   "tps": 684.591160259907,
+   "key": {
+    "diff_sha256": "e7d7be560510e02db060157bd611905e9d5638959d2ca8f015dd826854dc84dc",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-002/unofficial/1",
+   "time": "2026-11-15T05:50:02+00:00"
+  },
+  {
+   "tps": 687.7395954767841,
+   "key": {
+    "diff_sha256": "e7d7be560510e02db060157bd611905e9d5638959d2ca8f015dd826854dc84dc",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-002/unofficial/1",
+   "time": "2026-11-15T05:50:02+00:00"
+  }
+ ],
+ "T2-005": [
+  {
+   "tps": 706.7099848048471,
+   "key": {
+    "diff_sha256": "623f8e8365ac7f4d4c3ba244d3a180d2d72262a2855ac1e31e74780bb84bcea3",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-005/unofficial/1",
+   "time": "2026-11-15T06:14:27+00:00"
+  },
+  {
+   "tps": 712.0583106657947,
+   "key": {
+    "diff_sha256": "623f8e8365ac7f4d4c3ba244d3a180d2d72262a2855ac1e31e74780bb84bcea3",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-005/unofficial/1",
+   "time": "2026-11-15T06:14:27+00:00"
+  }
+ ],
+ "T1-005": [
+  {
+   "tps": 731.3160915820007,
+   "key": {
+    "diff_sha256": "e7d7be560510e02db060157bd611905e9d5638959d2ca8f015dd826854dc84dc",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-005/unofficial/1",
+   "time": "2026-11-15T06:19:58+00:00"
+  },
+  {
+   "tps": 725.907044951651,
+   "key": {
+    "diff_sha256": "e7d7be560510e02db060157bd611905e9d5638959d2ca8f015dd826854dc84dc",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-005/unofficial/1",
+   "time": "2026-11-15T06:19:58+00:00"
+  }
+ ],
+ "T2-006": [
+  {
+   "tps": 715.3336295185211,
+   "key": {
+    "diff_sha256": "894f08a1e8c566ffd9aa4e2875fa9b8dab99a35297da7d65bb48c16cf871d467",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-006/unofficial/1",
+   "time": "2026-11-15T06:34:45+00:00"
+  }
+ ],
+ "T2-007": [
+  {
+   "tps": 717.3997606468462,
+   "key": {
+    "diff_sha256": "4e150d41f9397bcbfb6d36807acd296233237efe45e0f953939abf2a77e2f22d",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-007/unofficial/1",
+   "time": "2026-11-15T06:45:41+00:00"
+  }
+ ],
+ "T2-008": [
+  {
+   "tps": 675.1073104311935,
+   "key": {
+    "diff_sha256": "e7d7be560510e02db060157bd611905e9d5638959d2ca8f015dd826854dc84dc",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-008/unofficial/1",
+   "time": "2026-11-15T06:51:59+00:00"
+  }
+ ],
+ "T2-011": [
+  {
+   "tps": 731.2624420353792,
+   "key": {
+    "diff_sha256": "7c7a4340447c00fb85f3edbe39fbb31bf9dee7d34fcb891676a6782e29c9b953",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-011/unofficial/1",
+   "time": "2026-11-15T07:08:40+00:00"
+  },
+  {
+   "tps": 733.5474326772513,
+   "key": {
+    "diff_sha256": "7c7a4340447c00fb85f3edbe39fbb31bf9dee7d34fcb891676a6782e29c9b953",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-011/unofficial/1",
+   "time": "2026-11-15T07:08:40+00:00"
+  }
+ ],
+ "T1-008": [
+  {
+   "tps": 686.5757905459922,
+   "key": {
+    "diff_sha256": "7c7a4340447c00fb85f3edbe39fbb31bf9dee7d34fcb891676a6782e29c9b953",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-008/unofficial/1",
+   "time": "2026-11-15T07:23:53+00:00"
+  }
+ ],
+ "T2-012": [
+  {
+   "tps": 736.868216569929,
+   "key": {
+    "diff_sha256": "e64a417a1e926354c898ee52aa13e04f2f68a281cd32f95ed56804e394ac8827",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-012/unofficial/1",
+   "time": "2026-11-15T07:34:01+00:00"
+  },
+  {
+   "tps": 740.4333790607437,
+   "key": {
+    "diff_sha256": "e64a417a1e926354c898ee52aa13e04f2f68a281cd32f95ed56804e394ac8827",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-012/unofficial/1",
+   "time": "2026-11-15T07:34:01+00:00"
+  }
+ ],
+ "T2-014": [
+  {
+   "tps": 734.2380729778115,
+   "key": {
+    "diff_sha256": "1f263ca456c6c547622d7dedcbb600db73f78ea3a0498575c404f94f6400c4a0",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-014/unofficial/1",
+   "time": "2026-11-15T08:04:00+00:00"
+  },
+  {
+   "tps": 740.8859798016381,
+   "key": {
+    "diff_sha256": "1f263ca456c6c547622d7dedcbb600db73f78ea3a0498575c404f94f6400c4a0",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-014/unofficial/1",
+   "time": "2026-11-15T08:04:00+00:00"
+  },
+  {
+   "tps": 737.3925573494187,
+   "key": {
+    "diff_sha256": "1f263ca456c6c547622d7dedcbb600db73f78ea3a0498575c404f94f6400c4a0",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-014/unofficial/2",
+   "time": "2026-11-15T08:09:22+00:00"
+  },
+  {
+   "tps": 738.9049062029625,
+   "key": {
+    "diff_sha256": "1f263ca456c6c547622d7dedcbb600db73f78ea3a0498575c404f94f6400c4a0",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-014/unofficial/2",
+   "time": "2026-11-15T08:09:22+00:00"
+  }
+ ],
+ "T1-010": [
+  {
+   "tps": 753.859438075687,
+   "key": {
+    "diff_sha256": "66a4c8287909fb5f4cae2543e038bdb8127346d644fe529c40ba406b5bfb806b",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-010/unofficial/1",
+   "time": "2026-11-15T08:34:00+00:00"
+  },
+  {
+   "tps": 751.3371974706703,
+   "key": {
+    "diff_sha256": "66a4c8287909fb5f4cae2543e038bdb8127346d644fe529c40ba406b5bfb806b",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-010/unofficial/1",
+   "time": "2026-11-15T08:34:00+00:00"
+  }
+ ],
+ "T1-011": [
+  {
+   "tps": 743.0517165202734,
+   "key": {
+    "diff_sha256": "66a4c8287909fb5f4cae2543e038bdb8127346d644fe529c40ba406b5bfb806b",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'\n--max-num-batched-tokens 512",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-011/unofficial/1",
+   "time": "2026-11-15T08:51:43+00:00"
+  },
+  {
+   "tps": 746.3654754252916,
+   "key": {
+    "diff_sha256": "66a4c8287909fb5f4cae2543e038bdb8127346d644fe529c40ba406b5bfb806b",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'\n--max-num-batched-tokens 512",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-011/unofficial/1",
+   "time": "2026-11-15T08:51:43+00:00"
+  }
+ ],
+ "T1-012": [
+  {
+   "tps": 755.7284242199127,
+   "key": {
+    "diff_sha256": "d80e27c904aa73755a22a8afffd29fd470c9d19c8dfe9ce43ed364bd3f6f9e8b",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-012/unofficial/1",
+   "time": "2026-11-15T09:02:15+00:00"
+  },
+  {
+   "tps": 757.2891843901245,
+   "key": {
+    "diff_sha256": "d80e27c904aa73755a22a8afffd29fd470c9d19c8dfe9ce43ed364bd3f6f9e8b",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-012/unofficial/1",
+   "time": "2026-11-15T09:02:15+00:00"
+  }
+ ],
+ "T2-015": [
+  {
+   "tps": 766.778124777507,
+   "key": {
+    "diff_sha256": "c5b6ab37447d9e6db9a45e8234eeda9d75bd7979c543855a71aafa8a3dccc21d",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-015/unofficial/1",
+   "time": "2026-11-15T09:19:52+00:00"
+  },
+  {
+   "tps": 783.1593936988063,
+   "key": {
+    "diff_sha256": "c5b6ab37447d9e6db9a45e8234eeda9d75bd7979c543855a71aafa8a3dccc21d",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-015/unofficial/1",
+   "time": "2026-11-15T09:19:52+00:00"
+  }
+ ],
+ "T1-014": [
+  {
+   "tps": 748.1142588479977,
+   "key": {
+    "diff_sha256": "a1e1d521b6389e5309cf0a0aeca063df8c63e5528d6f7af688a188ffb54c25fe",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-014/unofficial/1",
+   "time": "2026-11-15T09:45:40+00:00"
+  },
+  {
+   "tps": 745.3186236459142,
+   "key": {
+    "diff_sha256": "a1e1d521b6389e5309cf0a0aeca063df8c63e5528d6f7af688a188ffb54c25fe",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-014/unofficial/1",
+   "time": "2026-11-15T09:45:40+00:00"
+  }
+ ],
+ "T1-015": [
+  {
+   "tps": 766.0395341903122,
+   "key": {
+    "diff_sha256": "3da9b849157ae4ba641d13b9754cff43d7030179c2f4d9c042e2bba24941fb7e",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-015/unofficial/1",
+   "time": "2026-11-15T10:02:49+00:00"
+  },
+  {
+   "tps": 766.5505488164417,
+   "key": {
+    "diff_sha256": "3da9b849157ae4ba641d13b9754cff43d7030179c2f4d9c042e2bba24941fb7e",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-015/unofficial/1",
+   "time": "2026-11-15T10:02:49+00:00"
+  }
+ ],
+ "T2-016": [
+  {
+   "tps": 794.2842252219011,
+   "key": {
+    "diff_sha256": "67c7d1d3051e92c8dba4f01c83627570f46e5095771c0b4ef588d9e6908c6696",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-016/unofficial/1",
+   "time": "2026-11-15T10:13:05+00:00"
+  },
+  {
+   "tps": 792.4520862562192,
+   "key": {
+    "diff_sha256": "67c7d1d3051e92c8dba4f01c83627570f46e5095771c0b4ef588d9e6908c6696",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-016/unofficial/1",
+   "time": "2026-11-15T10:13:05+00:00"
+  }
+ ],
+ "T2-018": [
+  {
+   "tps": 811.781902424599,
+   "key": {
+    "diff_sha256": "509d5ba75b2af6ee07b12b77ad689ada0d3b2a70da173172ef60878fa98ab89f",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-018/unofficial/1",
+   "time": "2026-11-15T10:36:54+00:00"
+  },
+  {
+   "tps": 800.3633107317662,
+   "key": {
+    "diff_sha256": "509d5ba75b2af6ee07b12b77ad689ada0d3b2a70da173172ef60878fa98ab89f",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-018/unofficial/1",
+   "time": "2026-11-15T10:36:54+00:00"
+  }
+ ],
+ "T2-019": [
+  {
+   "tps": 799.6387736719761,
+   "key": {
+    "diff_sha256": "aff481b469eaa064bb8961b5f28a3030b27b298678b0513b2081ece20019f741",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-019/unofficial/1",
+   "time": "2026-11-15T10:55:40+00:00"
+  },
+  {
+   "tps": 803.0172844419635,
+   "key": {
+    "diff_sha256": "aff481b469eaa064bb8961b5f28a3030b27b298678b0513b2081ece20019f741",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T2-019/unofficial/1",
+   "time": "2026-11-15T10:55:40+00:00"
+  }
+ ],
+ "T1-016": [
+  {
+   "tps": 808.8981371467986,
+   "key": {
+    "diff_sha256": "01beda8e62e86b4aee03afec47d003a47e21a75e6510830a9742edeb30d17391",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-016/unofficial/1",
+   "time": "2026-11-15T11:16:40+00:00"
+  },
+  {
+   "tps": 808.7324992847213,
+   "key": {
+    "diff_sha256": "01beda8e62e86b4aee03afec47d003a47e21a75e6510830a9742edeb30d17391",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-016/unofficial/1",
+   "time": "2026-11-15T11:16:40+00:00"
+  }
+ ],
+ "T1-017": [
+  {
+   "tps": 830.9956347156894,
+   "key": {
+    "diff_sha256": "47069838bd31851f04364ff53757937cc10027c7b270c35c38694300dc7565ba",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-017/unofficial/1",
+   "time": "2026-11-15T11:38:29+00:00"
+  },
+  {
+   "tps": 835.2666549399653,
+   "key": {
+    "diff_sha256": "47069838bd31851f04364ff53757937cc10027c7b270c35c38694300dc7565ba",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-017/unofficial/1",
+   "time": "2026-11-15T11:38:29+00:00"
+  }
+ ],
+ "T1-018": [
+  {
+   "tps": 782.3332326020367,
+   "key": {
+    "diff_sha256": "984b8f2fe36d31f3f8ae12ab8c977d5d8d639bada9d50647286d647ab2532846",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-018/unofficial/1",
+   "time": "2026-11-15T11:50:32+00:00"
+  }
+ ],
+ "T3-002": [
+  {
+   "tps": 845.7042838417455,
+   "key": {
+    "diff_sha256": "47069838bd31851f04364ff53757937cc10027c7b270c35c38694300dc7565ba",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'\n--prefill-schedule-interval 8",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T3-002/unofficial/1",
+   "time": "2026-11-15T12:04:45+00:00"
+  },
+  {
+   "tps": 839.1455430830326,
+   "key": {
+    "diff_sha256": "47069838bd31851f04364ff53757937cc10027c7b270c35c38694300dc7565ba",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'\n--prefill-schedule-interval 8",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T3-002/unofficial/1",
+   "time": "2026-11-15T12:04:45+00:00"
+  }
+ ],
+ "T3-003": [
+  {
+   "tps": 826.8563697887154,
+   "key": {
+    "diff_sha256": "011bdcffa85b798925a0b5e921c259402165bc91bb6f8147a64a7ababd68325e",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T3-003/unofficial/1",
+   "time": "2026-11-15T12:25:53+00:00"
+  },
+  {
+   "tps": 827.3513930572597,
+   "key": {
+    "diff_sha256": "011bdcffa85b798925a0b5e921c259402165bc91bb6f8147a64a7ababd68325e",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T3-003/unofficial/1",
+   "time": "2026-11-15T12:25:53+00:00"
+  }
+ ],
+ "T1-019": [
+  {
+   "tps": 854.4221278326664,
+   "key": {
+    "diff_sha256": "0fc730a363baa3afc6a55aa8023dfa7476423a93f7be1817c4ca4c98150eda3f",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-019/unofficial/1",
+   "time": "2026-11-15T12:34:11+00:00"
+  },
+  {
+   "tps": 847.1461531106991,
+   "key": {
+    "diff_sha256": "0fc730a363baa3afc6a55aa8023dfa7476423a93f7be1817c4ca4c98150eda3f",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-019/unofficial/1",
+   "time": "2026-11-15T12:34:11+00:00"
+  }
+ ],
+ "T3-004": [
+  {
+   "tps": 863.0134225307419,
+   "key": {
+    "diff_sha256": "0e2a3752765c1f8c9bb7fc13eb87caf5a4d6bd80831c7e6b49c2b97f3b10ff13",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T3-004/unofficial/1",
+   "time": "2026-11-15T13:04:43+00:00"
+  },
+  {
+   "tps": 874.4536786517788,
+   "key": {
+    "diff_sha256": "0e2a3752765c1f8c9bb7fc13eb87caf5a4d6bd80831c7e6b49c2b97f3b10ff13",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T3-004/unofficial/1",
+   "time": "2026-11-15T13:04:43+00:00"
+  }
+ ],
+ "T1-020": [
+  {
+   "tps": 862.2675929818213,
+   "key": {
+    "diff_sha256": "a07d59b3b35cbb6d0d246f96653587a32ce0ed8f0ee44bf1af0c556a3e0bb9f9",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-020/unofficial/1",
+   "time": "2026-11-15T13:12:21+00:00"
+  },
+  {
+   "tps": 869.8787177484351,
+   "key": {
+    "diff_sha256": "a07d59b3b35cbb6d0d246f96653587a32ce0ed8f0ee44bf1af0c556a3e0bb9f9",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-020/unofficial/1",
+   "time": "2026-11-15T13:12:21+00:00"
+  }
+ ],
+ "T1-021": [
+  {
+   "tps": 779.7759401005401,
+   "key": {
+    "diff_sha256": "e9f7d2982324208e578e8c4fe01fc9db849f2d9cbaca643e1663ae7f15d1af9a",
+    "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling\n--compilation-config '{\"max_prefill_cudagraph_capture_tokens\":512}'",
+    "prompts": 200,
+    "eval_sh": "c35852d"
+   },
+   "source": "T1-021/unofficial/1",
+   "time": "2026-11-15T13:19:11+00:00"
+  }
+ ]
+}

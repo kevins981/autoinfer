@@ -1,0 +1,18 @@
+{
+  "id": 59,
+  "pid": 1783477,
+  "team": "T2",
+  "agent": "t2-w1",
+  "label": null,
+  "timeout_min": 2.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/agents/t2-w1/m6/jobh.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/sweep-unofficial-eval/agents/t2-w1/m6",
+  "submitted": "2026-11-15T07:35:30+00:00",
+  "state": "done",
+  "started": "2026-11-15T07:38:55+00:00",
+  "ended": "2026-11-15T07:39:03+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.147
+}

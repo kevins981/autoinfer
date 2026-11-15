@@ -1,0 +1,22 @@
+team:         T2
+builds_on:    T2-018
+performance:  measurement only, no change.diff. Coverage measured (job 151): tree does not pay (best +3.5-4.1% vs >=7% row cost).
+summary:
+  hypothesis: A small speculation tree (1 draft at position 1, drafter top-2 at position 2, 4 verify rows instead of 3) pays if P(target argmax at pos 2 in drafter top-2 | d1 accepted) exceeds today's top-1 acceptance (~0.55) by more than the cost of one extra verify row.
+  change:     None to the engine. Env-gated logger (VLLM_TREE_STATS=1) in workspace t2-w1.tree (built on T2-018): speculator.py `_tree_record` (drafter top-2 per step via torch.topk on the draft head, TP all-gather), model_runner.py `_tree_log` (GPU counters: pos1 top1/top2 hits, d1-accepted rows with pos2 top1/top2 hits, rejected-at-1 top2 hits, sanity). Logs "TREE STATS" every 25 steps. Run script: agents/t2-w1/tree/job2.sh (server only, 100 prompts, c=16, T2-018 serve args).
+  results:    Observed:
+    (1) Marlin FP8 at M=48 vs M=64, L2-flushed, per-layer us (job 145, agents/t2-w1/tree/marlin_m64.py): qkvz 50.0->55.2; attn_qkv 45.8->51.8; out 21.8->25.7; gate_up 106.3->120.3; down 54.8->61.6. Sum over the layer-type mix ~ +2.2 ms/step (about 7.2% of the ~30.6 ms decode step). Marlin's tile-config list changes at 4 m-blocks: M<=48 (2-3 m-blocks) uses the mid_batch list, M=64 (4 m-blocks) the large_batch list, so the 4th row is not a cheap extra 16 rows of an already-streamed weight tile.
+    (2) Coverages: NOT MEASURED.
+        Job 145 (3.3 GPU-min, over its 2-min budget): the first logger called get_top_k_tokens, which triggers a FlashInfer top_k JIT compile inside the job; the server never became ready. Fix: plain torch.topk.
+        Job 148 (0.9 GPU-min): `_tree_log` indexed sampled_token_ids[:, 1] during warmup, where the tensor has 1 column; IndexError on both TP ranks, engine init died. Fix: return early unless sampled has >=3 columns (py_compile OK, untested on GPU).
+    Task 19 GPU total 4.2 GPU-min. Leader declined a third run (no-retry rule).
+  conclusion: Interpretation: Napkin break-even: Marlin alone ~+7.2% of step; plus the 4th row's other costs (attention, drafter/lm_head/sampling, ~1/3 more row work; GDN replay branching is cheap) -> the tree needs roughly 0.75-0.8 position-2 top-2 coverage given d1 accepted, versus ~0.55 top-1 today (leader's earlier estimate 0.73 before the non-Marlin cost). Top-2 would need to lift coverage by ~0.2-0.25 absolute; plausible only if the drafter's second choice is often right at position 2, which is unknown. Verdict: unproven, leaning no (needs a high bar, and a tree also needs tree-attention/GDN branch support which is not built). A future team can get the coverage with one ~1.8 GPU-min run of agents/t2-w1/tree/job2.sh on t2-w1.tree (logger fixed there, ready).
+validity:     No engine change in the bank record; logger is env-gated and read-only. Prefix caching untouched.
+
+## Addendum: coverage run (job 151, 1.6 GPU-min, t2-w1.tree, T2-018 serve args, c=16, 100 prompts, greedy)
+Observed (TP0 == TP1; 650 logged steps, 180 skipped because the batch composition changed vs the previous step, so 7410 scored rows; sanity "draft in own top-2" = 7410/7410, so the logger's top-2 is consistent with the drafter): bench 749.6 tok/s with logger (not comparable to eval), mean MTP acceptance length 2.357.
+- Position 1: target argmax == drafter top-1: 5843/7410 = 0.789; in drafter top-2: 6565/7410 = 0.886.
+- Position 2, given d1 accepted (5843 rows): == drafter top-1: 4152/5843 = 0.711; in drafter top-2: 4763/5843 = 0.815. (full-accept ns==3 = 4152.)
+- Rejected-at-1 rows (1567): target token in drafter top-2 at position 1: 722 (46%); top-1 hits 0 by definition.
+Interpretation: the 0.55 / 0.77 expectation was too low; the real top-1 at position 2 is already 0.71. The tree (top-2 at position 2) adds 0.104 absolute coverage: 4763-4152 = 611 extra accepted tokens over 7410 rows = +0.082 tokens/step on 2.357 = +3.5% tokens/step at best. Cost of the 4th row: Marlin alone +7.2% of step (measured), plus non-Marlin row cost. Net about -4% or worse even before tree-attention/GDN branching support. For break-even position-2 top-2 coverage would need ~0.93 (0.711 + 0.072*2.357/0.789), not 0.75-0.8 (that range was against the wrong 0.55 baseline; against the measured 0.711 it is already exceeded in coverage terms but the gain is too small to pay the row). A tree at position 1 instead (+722 tokens, +4.1%) is also below the ~7% row cost.
+Verdict: NO. A 4-row tree does not pay on this setup.

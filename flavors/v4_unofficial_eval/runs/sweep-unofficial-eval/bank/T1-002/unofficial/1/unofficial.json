@@ -1,0 +1,51 @@
+{
+ "record": "T1-002",
+ "n": 1,
+ "head": "T1-004",
+ "prompts": 200,
+ "requested_by": "leader-1",
+ "team": "T1",
+ "started": "2026-11-15T05:39:39+00:00",
+ "key_b": {
+  "diff_sha256": "e7d7be560510e02db060157bd611905e9d5638959d2ca8f015dd826854dc84dc",
+  "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling",
+  "prompts": 200,
+  "eval_sh": "c35852d"
+ },
+ "key_a": {
+  "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "serve_args": "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"draft_lm_head_quantization\":\"fp8\",\"use_local_argmax_reduction\":true}' --enable-batch-sharded-sampling",
+  "prompts": 200,
+  "eval_sh": "c35852d"
+ },
+ "order": "BB",
+ "stop_below": 653.67,
+ "reference": [
+  656.2920964358025,
+  670.9606872166842
+ ],
+ "reference_cached": [
+  656.2920964358025,
+  670.9606872166842
+ ],
+ "a_new": [],
+ "b": [
+  684.591160259907,
+  687.7395954767841
+ ],
+ "reference_mean": 663.63,
+ "gain_pct": 3.4,
+ "verdict": "PASS",
+ "gates_failed": [],
+ "gsm8k": null,
+ "long_request": true,
+ "p99": {
+  "p99_ttft_ms": 1228.4,
+  "p99_tpot_ms": 45.9
+ },
+ "mtp_acceptance": [
+  2.349,
+  2.342
+ ],
+ "ended": "2026-11-15T05:50:02+00:00"
+}

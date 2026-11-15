@@ -1,0 +1,27 @@
+{"t": "2026-11-15T04:59:03+00:00", "event": "open", "team": "MGR", "type": "manager", "by": "human"}
+{"t": "2026-11-15T04:59:21+00:00", "event": "grant", "team": "MGR", "kind": "extension", "minutes": 6.0, "by": "manager", "note": "BASE reference unofficial eval"}
+{"t": "2026-11-15T04:59:28+00:00", "event": "open", "team": "T1", "type": "sweep", "by": "manager"}
+{"t": "2026-11-15T04:59:28+00:00", "event": "grant", "team": "T1", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-15T04:59:28+00:00", "event": "grant", "team": "T1", "kind": "start", "minutes": 60.0, "by": "manager", "note": "sweep team start"}
+{"t": "2026-11-15T04:59:28+00:00", "event": "open", "team": "T2", "type": "sweep", "by": "manager"}
+{"t": "2026-11-15T04:59:28+00:00", "event": "grant", "team": "T2", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-15T04:59:28+00:00", "event": "grant", "team": "T2", "kind": "start", "minutes": 60.0, "by": "manager", "note": "sweep team start"}
+{"t": "2026-11-15T04:59:44+00:00", "event": "grant", "team": "MGR", "kind": "extension", "minutes": 4.0, "by": "manager", "note": "BASE reference eval needs up to 8 GPU-min timeout"}
+{"t": "2026-11-15T07:40:42+00:00", "event": "grant", "team": "T1", "kind": "extension", "minutes": 60.0, "by": "manager", "note": "resync 1: 3 confirmed wins (T1-001, T1-004, T1-005)"}
+{"t": "2026-11-15T08:10:09+00:00", "event": "grant", "team": "T2", "kind": "extension", "minutes": 60.0, "by": "manager", "note": "resync 1: wins T2-004 (confirmed), T2-011, T2-012"}
+{"t": "2026-11-15T10:08:39+00:00", "event": "grant", "team": "T1", "kind": "extension", "minutes": 40.0, "by": "manager", "note": "resync 2: wins T1-010, T1-012 (confirmed), T1-015; fund the GDN GEMM-excess diagnostic"}
+{"t": "2026-11-15T11:22:28+00:00", "event": "close", "team": "T2", "by": "manager", "note": "closed on its own recommendation: map exhausted by measurement (decode GEMM at 0.93-0.96 of read ceiling, GDN headroom closed, K=3 lazy commit negative, tree spec settled negative T2-020, duplex AR closed by T1 data). 5 confirmed wins."}
+{"t": "2026-11-15T11:22:37+00:00", "event": "open", "team": "T3", "type": "sweep", "by": "manager"}
+{"t": "2026-11-15T11:22:37+00:00", "event": "grant", "team": "T3", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-15T11:22:37+00:00", "event": "grant", "team": "T3", "kind": "start", "minutes": 60.0, "by": "manager", "note": "sweep team start (replaces T2)"}
+{"t": "2026-11-15T11:47:28+00:00", "event": "grant", "team": "T1", "kind": "extension", "minutes": 30.0, "by": "manager", "note": "resync 3: wins T1-016, T1-017 since resync 2"}
+{"t": "2026-11-15T13:20:15+00:00", "event": "close", "team": "T1", "by": "manager", "note": "closed on its own recommendation after a pre-set decision rule (sparring T1-3): T1-021 (3 drafts, current code) -10.24%, TTFT gate failed; remaining map at measured limits or high-risk. 11 wins, all confirmed."}
+{"t": "2026-11-15T13:20:16+00:00", "event": "open", "team": "T4", "type": "sweep", "by": "manager"}
+{"t": "2026-11-15T13:20:16+00:00", "event": "grant", "team": "T4", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-15T13:20:16+00:00", "event": "grant", "team": "T4", "kind": "start", "minutes": 60.0, "by": "manager", "note": "sweep team start (replaces T1)"}
+{"t": "2026-11-15T13:25:26+00:00", "event": "close", "team": "T3", "by": "manager", "note": "closed on its own recommendation after sparring T3-1 covered closing: T3-005 (ba GEMM off critical path), job 198 mixed-step model, T3-006 copy-engine AR no-go (1.8x worse). 1 win (T3-004, HEAD)."}
+{"t": "2026-11-15T13:25:26+00:00", "event": "open", "team": "T5", "type": "sweep", "by": "manager"}
+{"t": "2026-11-15T13:25:26+00:00", "event": "grant", "team": "T5", "kind": "seed", "minutes": 20.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-15T13:25:26+00:00", "event": "grant", "team": "T5", "kind": "start", "minutes": 60.0, "by": "manager", "note": "sweep team start (replaces T3)"}
+{"t": "2026-11-15T14:00:33+00:00", "event": "close", "team": "T5", "by": "manager", "note": "run wrap-up (human): no win; C1 lossless AR offline gate passed (0.77 of raw, bitwise on 160 files, T5-001); kernel not built."}
+{"t": "2026-11-15T14:00:56+00:00", "event": "close", "team": "T4", "by": "manager", "note": "run wrap-up (human): no win; T4-001 split-chain mixed step with per-half host AR built (eager + graph, 128K pass) but correctness unresolved (hidden-state diffs at 531/1159 rows); microbench ~4% wall."}

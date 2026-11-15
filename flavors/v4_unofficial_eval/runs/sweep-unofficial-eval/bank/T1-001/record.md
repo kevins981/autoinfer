@@ -1,0 +1,11 @@
+team:         T1
+builds_on:    BASE
+performance:  unofficial: PASS +3.26% vs BASE (652.0 / 654.2 vs 632.5), 128K pass
+summary:
+  hypothesis: the two draft steps spend ~1.37 ms each on a bf16 full-vocab lm_head read (1.27 GB/GPU) and ~0.33 ms each all-gathering full draft logits (BASE profile, task/baseline/nsys_c16, GPU0 decode step at M=48). An FP8 copy of the draft lm_head halves the read (-~1.37 ms/step) and local argmax + (max,idx) merge removes the logits all-gathers (-~0.66 ms/step): napkin ~2 ms of a ~38.5-40 ms decode step, ~3% end to end (T1 sweep R6a + R1-draft, reports/T1-sweep/6-ranking.md).
+  change:     serve args only: --speculative-config {"method":"mtp","num_speculative_tokens":2,"draft_lm_head_quantization":"fp8","use_local_argmax_reduction":true}. Both are existing vLLM options (Model Runner V2 speculator; Qwen3.5 MTP implements get_top_tokens).
+  results:    Observed: unofficial #1 PASS, B 652.0/654.2 tok/s vs HEAD reference mean 632.5 (+3.26%); MTP acceptance 2.353 (BASE official 2.345); p99 TTFT 1241 ms, TPOT 41.9 ms; 128K request pass. Server logs confirm 'Quantized a fp8 copy of the lm_head (124160 x 5120 per rank)' and 'Using local argmax reduction for draft token generation'.
+  conclusion: Interpretation: gain matches the napkin (~2 ms of a ~39 ms decode step, ~3%) with acceptance unchanged, so the mechanism is the cheaper draft head + removed draft logits all-gathers, not a change in tokens/step.
+validity:     Draft-side only. Ruling 1 (task_definition.md) allows the FP8 draft lm_head inside the MTP drafter; the target's lm_head, activations and verification are unchanged (exact greedy verification against the bf16 target head), so output = target's output; only acceptance length may change. Local argmax: argmax over the vocab split combined as (max, index) is the same argmax as over gathered logits (draft only, greedy draft sampling is BASE's setting). Memory: adds a ~0.64 GB/GPU FP8 head copy -> run with --long. No benchmark-specific behavior.
+
+unofficial #1 (2026-11-15T05:18): PASS: +3.26% vs HEAD BASE (B 652.0 / 654.2 vs reference mean 632.5 over 2 starts, 0 run in this job; 200 prompts); 128K pass, p99 TTFT 1241 ms / TPOT 41.9 ms, MTP acceptance 2.353 (unofficial/1/unofficial.json)

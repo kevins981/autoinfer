@@ -1,0 +1,406 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0b5accbe87..485be0bdc3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -473,6 +473,7 @@ if(VLLM_GPU_LANG STREQUAL "CUDA" OR VLLM_GPU_LANG STREQUAL "HIP")
+     "csrc/custom_all_gather_reduce_scatter.cu"
+     "csrc/custom_all_gather_reduce_scatter_ops.cpp"
+     "csrc/custom_all_reduce.cu"
++    "csrc/host_all_reduce.cu"
+     "csrc/fused_deepseek_v4_qnorm_rope_kv_insert_kernel.cu"
+     "csrc/fused_kimi_k3_mla_key_concat_kv_cache_kernel.cu")
+ 
+diff --git a/csrc/host_all_reduce.cu b/csrc/host_all_reduce.cu
+new file mode 100644
+index 0000000000..d766e0d349
+--- /dev/null
++++ b/csrc/host_all_reduce.cu
+@@ -0,0 +1,139 @@
++// One-shot 2-rank all-reduce through pinned host memory (for machines without GPU P2P).
++// Each rank writes its input to its slot in a shared (cudaHostRegister'ed) host buffer, publishes
++// a per-block sequence flag, waits for the peer's flag, then reads the peer slot and sums.
++// Slots are double-buffered by sequence parity; the sequence counter lives on the device (one per
++// block, advanced by the kernel itself), so the kernel is CUDA-graph capturable and replayable.
++#include "torch_utils.h"
++
++#include <torch/csrc/stable/macros.h>
++#include <torch/csrc/stable/accelerator.h>
++#include <torch/csrc/stable/tensor.h>
++#include <torch/csrc/stable/ops.h>
++#include <torch/headeronly/core/ScalarType.h>
++#include <torch/csrc/stable/device.h>
++
++#include <cuda_bf16.h>
++#include <cuda_fp16.h>
++#include <cuda_runtime.h>
++#include <stdint.h>
++
++namespace {
++constexpr int kHostArMaxBlocks = 256;
++constexpr int kHostArGrid = 4;  // grid must be constant across calls (see kernel)
++constexpr int kHostArFlagStride = 8;  // uint32 words per flag (32 B)
++
++__device__ __forceinline__ uint4 ldcv(const uint4* p) {
++  uint4 r;
++  asm volatile("ld.global.cv.v4.u32 {%0,%1,%2,%3}, [%4];"
++               : "=r"(r.x), "=r"(r.y), "=r"(r.z), "=r"(r.w)
++               : "l"(p));
++  return r;
++}
++
++template <typename T2> struct Add2;
++template <> struct Add2<__nv_bfloat162> {
++  static __device__ __forceinline__ uint32_t run(uint32_t a, uint32_t b) {
++    __nv_bfloat162 x = *reinterpret_cast<__nv_bfloat162*>(&a);
++    __nv_bfloat162 y = *reinterpret_cast<__nv_bfloat162*>(&b);
++    float2 fx = __bfloat1622float2(x), fy = __bfloat1622float2(y);
++    __nv_bfloat162 r = __floats2bfloat162_rn(fx.x + fy.x, fx.y + fy.y);
++    return *reinterpret_cast<uint32_t*>(&r);
++  }
++};
++template <> struct Add2<__half2> {
++  static __device__ __forceinline__ uint32_t run(uint32_t a, uint32_t b) {
++    __half2 x = *reinterpret_cast<__half2*>(&a);
++    __half2 y = *reinterpret_cast<__half2*>(&b);
++    float2 fx = __half22float2(x), fy = __half22float2(y);
++    __half2 r = __floats2half2_rn(fx.x + fy.x, fx.y + fy.y);
++    return *reinterpret_cast<uint32_t*>(&r);
++  }
++};
++
++template <typename T2>
++__global__ void host_ar_kernel(const uint4* in, uint4* out, uint4* host_data,
++                               volatile uint32_t* flags, uint32_t* ctr,
++                               int rank, int n16, long slot16) {
++  int b = blockIdx.x;
++  uint32_t seq = ctr[b] + 1;
++  int par = seq & 1;
++  uint4* mine = host_data + (long)(par * 2 + rank) * slot16;
++  const uint4* peer = host_data + (long)(par * 2 + (1 - rank)) * slot16;
++  int cs = (n16 + gridDim.x - 1) / gridDim.x;
++  int lo = b * cs, hi = min(n16, lo + cs);
++  for (int i = lo + threadIdx.x; i < hi; i += blockDim.x) mine[i] = in[i];
++  __syncthreads();
++  if (threadIdx.x == 0) {
++    __threadfence_system();
++    flags[(rank * kHostArMaxBlocks + b) * kHostArFlagStride] = seq;
++    while ((int)(flags[((1 - rank) * kHostArMaxBlocks + b) * kHostArFlagStride] -
++                 seq) < 0) {
++    }
++    __threadfence_system();
++    ctr[b] = seq;
++  }
++  __syncthreads();
++  for (int i = lo + threadIdx.x; i < hi; i += blockDim.x) {
++    uint4 p = ldcv(peer + i);
++    uint4 a = in[i];
++    uint4 r;
++    r.x = Add2<T2>::run(a.x, p.x);
++    r.y = Add2<T2>::run(a.y, p.y);
++    r.z = Add2<T2>::run(a.z, p.z);
++    r.w = Add2<T2>::run(a.w, p.w);
++    out[i] = r;
++  }
++}
++}  // namespace
++
++// Registers [ptr, ptr+size) (page-aligned mmap) as mapped pinned memory; returns device pointer.
++int64_t host_ar_register(int64_t ptr, int64_t size) {
++  cudaError_t e = cudaHostRegister(reinterpret_cast<void*>(ptr), size,
++                                   cudaHostRegisterMapped | cudaHostRegisterPortable);
++  STD_TORCH_CHECK(e == cudaSuccess, "cudaHostRegister failed: ",
++                  cudaGetErrorString(e));
++  void* d = nullptr;
++  e = cudaHostGetDevicePointer(&d, reinterpret_cast<void*>(ptr), 0);
++  STD_TORCH_CHECK(e == cudaSuccess, "cudaHostGetDevicePointer failed: ",
++                  cudaGetErrorString(e));
++  return reinterpret_cast<int64_t>(d);
++}
++
++void host_ar_unregister(int64_t ptr) {
++  cudaHostUnregister(reinterpret_cast<void*>(ptr));
++}
++
++// Host buffer layout: [flags: 1 MiB][data: 4 slots of slot_bytes] (slot index = parity*2 + rank).
++void host_ar_all_reduce(torch::stable::Tensor& inp, torch::stable::Tensor& out,
++                        int64_t dev_base, int64_t data_off, int64_t slot_bytes,
++                        torch::stable::Tensor& ctr, int64_t rank, int64_t grid,
++                        int64_t threads) {
++  const torch::stable::accelerator::DeviceGuard device_guard(
++      inp.get_device_index());
++  const cudaStream_t stream = get_current_cuda_stream(inp.get_device_index());
++  STD_TORCH_CHECK(inp.is_contiguous() && out.is_contiguous());
++  STD_TORCH_CHECK(inp.scalar_type() == out.scalar_type());
++  STD_TORCH_CHECK(inp.numel() == out.numel());
++  int64_t nbytes = inp.numel() * inp.element_size();
++  STD_TORCH_CHECK(nbytes % 16 == 0 && nbytes <= slot_bytes,
++                  "host_ar: bad size ", nbytes);
++  // Slot parity comes from the per-block counters, so every call must use the same grid:
++  // otherwise block ranges differ between calls and a rank can overwrite slot bytes the peer
++  // is still reading.
++  STD_TORCH_CHECK(grid == kHostArGrid, "host_ar: grid must be ", kHostArGrid);
++  int n16 = nbytes / 16;
++  auto* data = reinterpret_cast<uint4*>(dev_base + data_off);
++  auto* flags = reinterpret_cast<volatile uint32_t*>(dev_base);
++  auto* c = reinterpret_cast<uint32_t*>(ctr.mutable_data_ptr());
++  auto* ip = reinterpret_cast<const uint4*>(inp.const_data_ptr());
++  auto* op = reinterpret_cast<uint4*>(out.mutable_data_ptr());
++  if (inp.scalar_type() == torch::headeronly::ScalarType::BFloat16) {
++    host_ar_kernel<__nv_bfloat162><<<grid, threads, 0, stream>>>(
++        ip, op, data, flags, c, (int)rank, n16, slot_bytes / 16);
++  } else if (inp.scalar_type() == torch::headeronly::ScalarType::Half) {
++    host_ar_kernel<__half2><<<grid, threads, 0, stream>>>(
++        ip, op, data, flags, c, (int)rank, n16, slot_bytes / 16);
++  } else {
++    STD_TORCH_CHECK(false, "host_ar supports bf16/fp16 only");
++  }
++}
+diff --git a/csrc/ops.h b/csrc/ops.h
+index 81a0065c98..8f7075054a 100644
+--- a/csrc/ops.h
++++ b/csrc/ops.h
+@@ -569,6 +569,13 @@ void selective_scan_fwd(
+     const std::optional<torch::stable::Tensor>& cu_chunk_seqlen,
+     const std::optional<torch::stable::Tensor>& last_chunk_indices);
+ 
++int64_t host_ar_register(int64_t ptr, int64_t size);
++void host_ar_unregister(int64_t ptr);
++void host_ar_all_reduce(torch::stable::Tensor& inp, torch::stable::Tensor& out,
++                        int64_t dev_base, int64_t data_off, int64_t slot_bytes,
++                        torch::stable::Tensor& ctr, int64_t rank, int64_t grid,
++                        int64_t threads);
++
+ using fptr_t = int64_t;
+ fptr_t init_custom_ar(const std::vector<int64_t>& fake_ipc_ptrs,
+                       torch::stable::Tensor& rank_data, int64_t rank,
+diff --git a/csrc/torch_bindings.cpp b/csrc/torch_bindings.cpp
+index 78ae89a646..b6a8c26964 100644
+--- a/csrc/torch_bindings.cpp
++++ b/csrc/torch_bindings.cpp
+@@ -1181,11 +1181,17 @@ STABLE_TORCH_LIBRARY_FRAGMENT(_C_custom_ar, custom_ar) {
+   custom_ar.def("allocate_shared_buffer_and_handle(int size) -> (int, Tensor)");
+   custom_ar.def("open_mem_handle(Tensor mem_handle) -> int");
+   custom_ar.def("free_shared_buffer(int ptr) -> ()");
++  custom_ar.def("host_ar_register(int ptr, int size) -> int");
++  custom_ar.def("host_ar_unregister(int ptr) -> ()");
++  custom_ar.def(
++      "host_ar_all_reduce(Tensor inp, Tensor! out, int dev_base, int data_off, "
++      "int slot_bytes, Tensor ctr, int rank, int grid, int threads) -> ()");
+ }
+ 
+ STABLE_TORCH_LIBRARY_IMPL(_C_custom_ar, CUDA, custom_ar) {
+   custom_ar.impl("init_custom_ar", TORCH_BOX(&init_custom_ar));
+   custom_ar.impl("all_reduce", TORCH_BOX(&all_reduce));
++  custom_ar.impl("host_ar_all_reduce", TORCH_BOX(&host_ar_all_reduce));
+ }
+ 
+ STABLE_TORCH_LIBRARY_IMPL(_C_custom_ar, CPU, custom_ar) {
+@@ -1202,6 +1208,8 @@ STABLE_TORCH_LIBRARY_IMPL(_C_custom_ar, CompositeExplicitAutograd, custom_ar) {
+   custom_ar.impl("allocate_shared_buffer_and_handle",
+                  TORCH_BOX(&allocate_shared_buffer_and_handle));
+   custom_ar.impl("free_shared_buffer", TORCH_BOX(&free_shared_buffer));
++  custom_ar.impl("host_ar_register", TORCH_BOX(&host_ar_register));
++  custom_ar.impl("host_ar_unregister", TORCH_BOX(&host_ar_unregister));
+ }
+ 
+ STABLE_TORCH_LIBRARY_IMPL(_C_cache_ops, CPU, ops) {
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..08d8d60313 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -117,6 +117,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         self.symm_mem_comm: SymmMemCommunicator | None = None
+         self.fi_ar_comm: FlashInferAllReduce | None = None
+         self.fi_pcie_ipc_ar_comm: FlashInferPcieIpcAllReduce | None = None
++        self.host_ar_comm = None
+         self.aiter_ar_comm: AiterCustomAllreduce | None = None
+         self.use_aiter_ag_rs: bool = False
+ 
+@@ -147,6 +148,20 @@ class CudaCommunicator(DeviceCommunicatorBase):
+                 device=self.device,
+             )
+ 
++        if (
++            unique_name.split(":")[0] == "tp"
++            and self.world_size == 2
++            and current_platform.is_cuda()
++            and not envs.VLLM_BATCH_INVARIANT
++        ):
++            from vllm.distributed.device_communicators.host_all_reduce import (
++                HostAllReduce,
++            )
++
++            host_ar = HostAllReduce(group=self.cpu_group, device=self.device)
++            if not host_ar.disabled:
++                self.host_ar_comm = host_ar
++
+         if self.use_aiter_allreduce and self.world_size > 1:
+             self.aiter_ar_comm = AiterCustomAllreduce(
+                 group=self.cpu_group,
+@@ -371,6 +386,8 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             enabled_ar_backends.append("SYMM_MEM")
+         if self.pynccl_comm is not None and not self.pynccl_comm.disabled:
+             enabled_ar_backends.append("PYNCCL")
++        if getattr(self, "host_ar_comm", None) is not None:
++            enabled_ar_backends.insert(0, "HOST_PINNED(small)")
+ 
+         logger.info_once(
+             "Using %s all-reduce backends (in dispatch order) for group "
+@@ -382,6 +399,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         )
+ 
+     def all_reduce(self, input_):
++        host_ar_comm = self.host_ar_comm
++        if host_ar_comm is not None and host_ar_comm.should_use(input_):
++            return host_ar_comm.all_reduce(input_)
+         fi_ar_comm = self.fi_ar_comm
+         use_fi_ar = (
+             fi_ar_comm is not None
+diff --git a/vllm/distributed/device_communicators/host_all_reduce.py b/vllm/distributed/device_communicators/host_all_reduce.py
+new file mode 100644
+index 0000000000..0734d9ac46
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_all_reduce.py
+@@ -0,0 +1,142 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Two-rank all-reduce through pinned host memory, for PCIe machines without GPU P2P.
++
++Each rank writes its tensor into a slot of a shared /dev/shm buffer (registered as mapped pinned
++memory in both processes), publishes a per-block sequence flag, waits for the peer's flag, reads
++the peer's slot and sums.  Used only for small tensors (default <= 128*5120*2 bytes, env
++VLLM_HOST_AR_MAX_BYTES; 0 disables); everything else stays on NCCL.  The sequence counters live
++on the device and are advanced by the kernel, so calls are CUDA-graph capturable/replayable.
++Both ranks must issue the same sequence of host-AR calls (they do: dispatch depends only on
++shape/dtype, which are identical across TP ranks).
++"""
++
++import atexit
++import ctypes
++import mmap
++import os
++import uuid
++
++import torch
++import torch.distributed as dist
++from torch.distributed import ProcessGroup
++
++import vllm._custom_ops  # noqa: F401  (loads the _C_custom_ar ops)
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++_FLAGS_BYTES = 1 << 20
++_DEFAULT_MAX_BYTES = 128 * 5120 * 2
++_GRID = 4  # fixed block count (see all_reduce); enforced in csrc/host_all_reduce.cu
++
++
++class HostAllReduce:
++    def __init__(self, group: ProcessGroup, device: int | str | torch.device) -> None:
++        self.disabled = True
++        self.max_bytes = int(os.environ.get("VLLM_HOST_AR_MAX_BYTES", _DEFAULT_MAX_BYTES))
++        if self.max_bytes <= 0:
++            return
++        if not isinstance(group, ProcessGroup):
++            return
++        self.group = group
++        self.device = torch.device(device)
++        self.world_size = dist.get_world_size(group)
++        self.rank = dist.get_rank(group)
++        if self.world_size != 2:
++            return
++        from vllm.distributed.device_communicators.custom_all_reduce import _can_p2p
++
++        if _can_p2p(self.rank, self.world_size):
++            return  # P2P works: NCCL / custom all-reduce are the better choice
++        self.max_bytes = (self.max_bytes // 16) * 16
++        self.slot_bytes = self.max_bytes
++        self.total = _FLAGS_BYTES + 4 * self.slot_bytes
++        self.total = (self.total + 4095) // 4096 * 4096
++        ranks = dist.get_process_group_ranks(group)
++        # Rank 0 creates the shm file (zero-filled) and broadcasts its name.
++        name = [None]
++        if self.rank == 0:
++            name[0] = f"/dev/shm/vllm_host_ar_{os.getpid()}_{uuid.uuid4().hex}"
++            with open(name[0], "wb") as f:
++                f.truncate(self.total)
++        dist.broadcast_object_list(name, src=ranks[0], group=group)
++        self.path = name[0]
++        f = open(self.path, "r+b")
++        self._mm = mmap.mmap(f.fileno(), self.total)
++        f.close()
++        self._buf = ctypes.c_char.from_buffer(self._mm)
++        addr = ctypes.addressof(self._buf)
++        with torch.cuda.device(self.device):
++            self.dev_base = torch.ops._C_custom_ar.host_ar_register(addr, self.total)
++            self._addr = addr
++            self.ctr = torch.zeros(256, dtype=torch.int32, device=self.device)
++        # Both ranks have the file mapped: unlink it now so nothing is left behind on crashes.
++        dist.barrier(group=group)
++        if self.rank == 0:
++            try:
++                os.unlink(self.path)
++            except OSError:
++                pass
++        atexit.register(self.destroy)
++        self.disabled = False
++        ok = self._self_test()
++        if not ok:
++            self.disabled = True
++            logger.error("Host all-reduce self-test FAILED; disabled.")
++        else:
++            logger.info(
++                "Host-pinned all-reduce enabled (tp rank %d, <= %d bytes, self-test: bitwise OK).",
++                self.rank,
++                self.max_bytes,
++            )
++
++    def _self_test(self) -> bool:
++        ok = True
++        for rows in (1, 48):
++            xs = []
++            for r in range(2):
++                g = torch.Generator(device="cpu").manual_seed(1234 + r)
++                xs.append(
++                    (torch.randn(rows, 5120, generator=g) * 3).to(torch.bfloat16)
++                )
++            ref = (xs[0] + xs[1]).to(self.device)
++            x = xs[self.rank].to(self.device)
++            for _ in range(3):  # repeated calls exercise the sequence/parity logic
++                out = self.all_reduce(x)
++                torch.cuda.synchronize(self.device)
++                ok = ok and bool(torch.equal(out, ref))
++        flag = torch.tensor([int(ok)], dtype=torch.int32)
++        dist.all_reduce(flag, op=dist.ReduceOp.MIN, group=self.group)
++        return bool(flag.item())
++
++    def should_use(self, inp: torch.Tensor) -> bool:
++        if self.disabled or not inp.is_cuda:
++            return False
++        if inp.dtype not in (torch.bfloat16, torch.float16):
++            return False
++        nbytes = inp.numel() * inp.element_size()
++        return nbytes % 16 == 0 and 0 < nbytes <= self.max_bytes and inp.is_contiguous()
++
++    def all_reduce(self, inp: torch.Tensor) -> torch.Tensor:
++        out = torch.empty_like(inp)
++        nbytes = inp.numel() * inp.element_size()
++        # The grid MUST be constant across calls: slot parity comes from per-block sequence
++        # counters, and a call's block ranges must line up with the previous call's.
++        grid, threads = _GRID, 1024
++        torch.ops._C_custom_ar.host_ar_all_reduce(
++            inp, out, self.dev_base, _FLAGS_BYTES, self.slot_bytes,
++            self.ctr, self.rank, grid, threads,
++        )
++        return out
++
++    def destroy(self) -> None:
++        if getattr(self, "disabled", True) and not hasattr(self, "_mm"):
++            return
++        self.disabled = True
++        try:
++            torch.ops._C_custom_ar.host_ar_unregister(self._addr)
++            del self._buf
++            self._mm.close()
++        except Exception:
++            pass
++        del self._mm

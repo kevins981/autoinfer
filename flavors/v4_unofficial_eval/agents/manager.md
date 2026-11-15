@@ -64,20 +64,20 @@ initialize():
 ```python
 open_teams():                       # at the start, and whenever a team closes (keep CONFIG's count)
     for each new team (ids T1, T2, ...; never reuse an id):
-        gpu team open <team> --type sweep                   # grants the opening 30 automatically
+        gpu team open <team> --type sweep                   # grants the opening 45 automatically
         agent start leader-<k> --role leader_sweep --team <team> --task-file <f>
             # if CONFIG has model slots: add --slot <S> (a replacement team takes the slot of the
             # team it replaces); don't pass --model.
             # the first task is short: team id and type; the framework folder (CONFIG's `sweep
             # framework` line, one line, without describing it); the unofficial and official champions (record ids
-            # + numbers, from champion.md); its grant (30); the other open sweep teams (names
+            # + numbers, from champion.md); its grant (45); the other open sweep teams (names
             # only); where things are (task/, task_definition.md, assumption_ledger.md, focus.md,
             # champion.md, bank/, shared_kb.md, reports/, announcements.md; its prompt says when
             # to read which). Speed of light: if CONFIG's `speed of light` line is on and
             # task/SPEED_OF_LIGHT.md exists, point to it (one line, no comment).
             # NO direction, and nothing about what other teams' maps or earlier teams found.
         teams/<team>.md = new track record          # see "Track records"
-        agent announce "team <team> (sweep) opened with 30 GPU-min"
+        agent announce "team <team> (sweep) opened with 45 GPU-min"
 ```
 
 ```python
@@ -106,12 +106,12 @@ handle(resync request):                             # a team asks for more GPU t
         #   wants to close                                                   -> close and replace
         # Re-forecasting is not progress: a forecast that stays as high with nothing new measured
         # counts as none.
-    extend / last chance: gpu grant <team> 30 --kind extension|last-chance --note "<why>"
-                          agent announce "team <team> (sweep) received 30 GPU-min; resync report: reports/<file>"
+    extend / last chance: gpu grant <team> 45 --kind extension|last-chance --note "<why>"
+                          agent announce "team <team> (sweep) received 45 GPU-min; resync report: reports/<file>"
     close and replace:    ask the leader for its write-up (reports/<team>-writeup.md) and last map
                           update; gpu team close <team> --note "<why>";
                           agent stop its leader and workers; open a new sweep team (open_teams()
-                          steps) if the pool still has GPU time for one (30)
+                          steps) if the pool still has GPU time for one (45)
                           agent announce the closure (with the write-up's path) and the new team
     agent remind <leader>                           # after EVERY resync
     save the resync report to reports/<team>-<n>.md; teams/<team>.md += decision

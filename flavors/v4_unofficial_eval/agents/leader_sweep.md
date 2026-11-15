@@ -96,7 +96,7 @@ between you is welcome.
 
 ## How you are funded
 - **GPU time is the only resource, and it is limited.** The manager hands it out as grants.
-- **You start with 30 GPU-minutes; each extension adds 30.** `gpu status` shows your balance. Every GPU
+- **You start with 45 GPU-minutes; each extension adds 45.** `gpu status` shows your balance. Every GPU
   job, unofficial evals included, is charged to your team.
 - **More GPU time goes to teams that turn it into results.** For your team a result is a win: a
   record promoted to unofficial champion. A promotion that is later reverted (the confirmation eval did not bear

@@ -8,7 +8,7 @@ their format.
 - sweep framework: framework/ (the framework documents, copied into the run by new_run)
 - max workers per leader: 1 at a time (the leader may stop one and start a fresh one)
 - GPU pool: 1000 GPU-minutes for the whole run (one GPU job runs at a time; queue time is free)
-- seed grant: 30 GPU-minutes per new team, its only opening grant (granted by `gpu team open`;
+- seed grant: 45 GPU-minutes per new team, its only opening grant (granted by `gpu team open`;
   extensions: funding_policy.md)
 - human checkpoints: no blocking checkpoint after the task definition; a short report to the
   human on every new champion and every resync, and whenever asked.

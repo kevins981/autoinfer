@@ -12,9 +12,9 @@ Every team is a sweep team. CONFIG sets how many are open at all times; a closed
 replaced by a new one while the pool can fund its opening grant.
 
 ## Grant sizes (GPU-minutes)
-- **Opening grant:** 30, granted automatically when a team opens (`gpu team open`). No other
+- **Opening grant:** 45, granted automatically when a team opens (`gpu team open`). No other
   grant at opening.
-- **Extensions (last chances included):** 30 each.
+- **Extensions (last chances included):** 45 each.
 - **The manager's GPU jobs** (BASE reference starts, confirmation evals, ~12 GPU-min each) need no
   grant: MGR is always admitted, and its use is counted in the pool's total.
 
@@ -30,7 +30,7 @@ A team can request a resync at any time.
 
 | What the team shows | Decision |
 |---|---|
-| A win since the last grant (net of reverts) | Extend (30) |
+| A win since the last grant (net of reverts) | Extend (45) |
 | No win, but a measured lead it can name (what it will test next and why the evidence points there) | Last chance: one extension. The team says what it will measure with it |
 | A second last chance in a row | Close the team and open a new one. The closing team writes up what it learned and adds a last map update first |
 | The team recommends closing itself, and its failure hit a hard limit or it already tried a variant aimed at the cause | Close it and open a new one, as above |

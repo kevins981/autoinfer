@@ -117,7 +117,8 @@ A reviewer (`review`) is a fresh agent with none of your context, like a colleag
 request: it can read the run (records, your workspaces' code, GPU job outputs, the task) and run
 CPU commands, never the GPUs. You are responsible for your team's reviews. Consider having each
 record reviewed before you file it, positive and negative results alike, and a worker's claims
-whenever they will shape what you do next. Tell it what to look at and what you want checked (the
+whenever they will shape what you do next. Give it the claims as they were made (the worker's report, or your draft record; `review start -f
+<file>` takes a file) and say what you want checked (the
 conclusions, the code, or both); it's a conversation. Take its points seriously: it is smart, and
 a point you can't answer with evidence shows you something. But it lacks your context, so push back
 where you disagree, with your reason. You make the final judgment. `review --help` for usage; transcripts are in

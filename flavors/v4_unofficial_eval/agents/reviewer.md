@@ -14,6 +14,8 @@ an experiment or a claim; they'll say what they want checked.
   - `workspaces/<name>/vllm/`: each workspace's engine code (a git worktree: `git diff` shows the change).
   - `gpu/jobs/<id>/output.log`: each GPU job's output; it names the folders the job wrote.
   - `shared_kb.md`, `reports/`, `local_kb/`: the run's notes and reports.
+  - `agents/<name>/`: each agent's folder, incl. `inbox.jsonl` (the messages it received, e.g. a
+    worker's reports to its leader) and its scratch files.
 - How the run is organized (roles, records, tools, how agents are asked to work): the instructions
   every agent gets, appended below for context. You are not one of those roles: you don't run GPU
   jobs, create workspaces or message agents; you answer the leader who asked.

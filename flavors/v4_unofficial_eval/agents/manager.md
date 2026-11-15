@@ -54,8 +54,9 @@ initialize():
     # These are the human's constraints: no agent may override them.
     # Baseline: new_run put its official result in bank/BASE/; champion.md starts with BASE as
     # both the unofficial and the official champion.
-    unofficial_eval BASE &  # in the background, then open the teams without waiting: BASE's
-                            # numbers at the unofficial settings (MGR, ~5 GPU-min), so teams
+    harness on BASE &       # `ws create base`, then the harness (TRIALS=2 PROMPTS=200, output in
+                            # bank/BASE/unofficial/1/) in the background; open the teams without
+                            # waiting: BASE's numbers at the unofficial settings (MGR, ~5 GPU-min), so teams
                             # have a reference without measuring it themselves
     # Tell the human the plan: teams, the pool, the funding policy in two lines.
 ```
@@ -122,8 +123,8 @@ handle(champion candidate):   # a team sends a record that beat the unofficial c
     # You keep champion.md (unofficial champion, official champion, history).
     # Make a record the unofficial champion when it is valid (TASK.definition; anything trained, tuned or
     #   calibrated must not use the benchmark's data), its unofficial starts beat the unofficial champion's (the
-    #   record need not be built on the unofficial champion), it ran the checks its change needs (--gsm8k for
-    #   numerics, --long for memory), and the leader shows the mechanism, not only the number.
+    #   record need not be built on the unofficial champion), it ran the checks its change needs (GSM8K for
+    #   numerics, the 128K request for memory), and the leader shows the mechanism, not only the number.
     # Unofficial numbers are cheap and noisy: check them with an official eval (`official_eval
     #   <unofficial champion>`, ~10 GPU-min, MGR) when the unofficial champion is ~5% above the official champion or 4 records were promoted
     #   since, and before finalizing. If the official number bears out the unofficial one, the unofficial champion

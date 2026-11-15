@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """official_eval: the only way a number becomes official (v4: the manager only, to confirm promoted records;
-teams compare with the unofficial champion through `unofficial_eval`).
+teams compare with the unofficial champion through harness/eval.sh with TRIALS=2 PROMPTS=200).
 
 Usage: official_eval <record id> [--timeout MIN]
   e.g. official_eval T1-004
@@ -69,7 +69,7 @@ def main():
 
     if os.environ.get("AUTOINFER_ROLE", "") not in ("manager", ""):
         die("official evals are run by the manager (to confirm promoted records); "
-            "compare a record with the unofficial champion with `unofficial_eval <record id>`", 2)
+            "compare a record with the unofficial champion with the harness (TRIALS=2 PROMPTS=200)", 2)
     run = os.environ.get("AUTOINFER_RUN") or die("AUTOINFER_RUN is not set")
     run = Path(run).resolve()
     rec = run / "bank" / a.record

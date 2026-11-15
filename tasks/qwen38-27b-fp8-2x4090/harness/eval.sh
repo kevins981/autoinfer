@@ -4,10 +4,10 @@
 # GSM8K-250 and the long-request check (one 128K-token request) run once, on the last trial's
 # server. The bench client starts with the server (it waits for it), so its ~13 s of setup
 # overlaps the server's startup. Score = mean over trials (summarize.py).
-# Run inside a GPU job (official_eval does this). Frozen: agents must not modify.
+# Run inside a GPU job (`gpu run`; official_eval and agents both use it). Frozen: agents must not modify.
 # Optional settings (env), defaults = the official eval: PROMPTS=400 per trial; GATES=gsm8k,long
 # (or a subset, or none); STOP_BELOW=0 (>0: stop after trial 1 if it is below this tok/s; writes
-# <out>/stopped_early). The `screen` tool uses PROMPTS=200, its own gates and a stop-loss.
+# <out>/stopped_early). Comparable unofficial numbers: TRIALS=2 PROMPTS=200.
 # usage: eval.sh <workspace dir> <output dir> [extra serve args file]
 # output: <out>/trial<t>/{server.log,startup.txt,bench_c16.json,bench.log,metrics_*.txt,gpu_clocks.csv},
 #         <out>/server_cmd.txt, <out>/gsm8k.{json,log}, <out>/long_request.{json,log}
@@ -18,6 +18,8 @@ GATES=${GATES:-gsm8k,long}
 STOP_BELOW=${STOP_BELOW:-0}
 HARNESS=$(cd "$(dirname "$0")" && pwd)
 TASK=$(basename "$(dirname "$HARNESS")")
+SRC=$(dirname "$(dirname "$HARNESS")")/task_source.json   # a run's copy of the task (run/task/harness)
+[ -f "$SRC" ] && TASK=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["task"])' "$SRC")
 PORT=8100
 mkdir -p "$OUT"
 SRV=; CLK=; BENCH=

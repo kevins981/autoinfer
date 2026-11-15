@@ -32,9 +32,9 @@ NOISE = """- **Noise**: repeat runs on the same inference server vary ~0.5% (CV)
   the less repetition it needs to be convincing. A single start that looks worse can be the
   outlier: record it as a screen negative, not a measured fact (weak negatives recorded as facts
   deter later work wrongly). How codes are measured and compared in this run: the run's
-  instructions (`unofficial_eval`)."""
+  instructions (the harness, 2 starts x 200 prompts)."""
 LIB_NOTE = """# compare against another code measured the same way. To measure a record or a workspace (with
-# extra serve args or env) at the unofficial settings, use `unofficial_eval`.
+# extra serve args or env) at the unofficial settings, run harness/eval.sh with TRIALS=2 PROMPTS=200.
 """
 
 
@@ -75,7 +75,7 @@ def copy_task(run, task):
     """The run's own copy of the task, for agents to read (they stay in their run folder). Trusted
     tools (ws, the official eval) read the original in tasks/, found by task_source.json."""
     shutil.copytree(task, run / "task", symlinks=True)
-    # v4: `unofficial_eval` measures any code; agents compare the numbers. The task's own
+    # v4: agents measure any code with the harness; agents compare the numbers. The task's own
     # comparison protocol (same-job interleaved A/B, abba.sh) is for flavors without it: replace it
     # in the run's copy with the noise facts only.
     (run / "task" / "scripts" / "abba.sh").unlink(missing_ok=True)

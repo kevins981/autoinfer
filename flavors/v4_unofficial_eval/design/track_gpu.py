@@ -3,7 +3,7 @@
 usage: python track_gpu.py <run dir> [<run dir> ...]
 Categories (from each job's command, label and the scripts it runs):
   official   harness/eval.sh with default settings (official_eval)
-  unofficial unofficial_eval jobs (v4)
+  unofficial jobs labeled unofficial:* (v4)
   abba       A/B jobs (abba.sh, directly or inside the job's script)
   profile    nsys / ncu
   other      everything else (microbenchmarks, smoke tests, debugging)

@@ -138,9 +138,11 @@ first: it explains how to use it and how to start.
   what code it contains (a revert also removes the records that build on the reverted one). When
   the unofficial champion moves, your measured numbers stay valid; to beat the new unofficial champion, a change that stacks on it
   must include its code (a new record).
-- **Unofficial evals** (`unofficial_eval <record id>`, in the background, ~5 GPU-min) are how a record competes:
-  two fresh starts of your record; compare with the unofficial champion's numbers (in its
-  record's unofficial/ folder); `--stop-below <tok/s>` skips the second start on a clear loss. Add `--gsm8k` if the change touches numerics, `--long` if it touches memory (CUDA graphs,
+- **Unofficial evals** (the harness with `TRIALS=2 PROMPTS=200` on a workspace made from the record,
+  in the background, ~5 GPU-min; see Tools) are how a record competes: two fresh starts of your
+  record, output in its `unofficial/<n>/`; compare with the unofficial champion's numbers (in its
+  record's unofficial/ folder); `STOP_BELOW=<tok/s>` skips the second start on a clear loss. Add the
+  GSM8K check if the change touches numerics, the 128K check if it touches memory (CUDA graphs,
   KV budget, buffers). A record that clearly beats the unofficial champion, after your validity review, is a
   champion candidate: send the manager the record id, the unofficial line, your validity
   review and the mechanism evidence (a profile or microbenchmark showing the change does what you
@@ -148,6 +150,6 @@ first: it explains how to use it and how to start.
   answer (a promotion arrives as an announcement). Not clear? Measure more or move on. Small gains
   count; the official confirmation of promoted records is the manager's (`official_eval` is
   manager-only). Your workers can measure their own variants the same way before anything is a
-  record (`unofficial_eval --ws <workspace> --label <name> [--env K=V]`).
+  record (the harness on their workspace).
 - **Ask the manager** when the task definition doesn't settle whether something is allowed.
 - **Before closing,** write `reports/<team>-writeup.md` (what you learned) and a last map update.

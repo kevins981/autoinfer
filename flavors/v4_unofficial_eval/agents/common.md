@@ -44,8 +44,7 @@ CHAMPION           # champion.md: two tiers. The unofficial champion =
                    # Between them, the records promoted since the official champion.
                    #                                                                owner: manager
 BANK               # bank/<id>/: every experiment, pass or fail (format below).
-                   # owner: the leader of that team; `unofficial_eval` appends unofficial results and
-                   # official_eval (manager) official results
+                   # owner: the leader of that team; official_eval (manager) adds official results
 SHARED_KB          # shared_kb.md: confirmed understanding of the system, each entry citing
                    # its records.                                                   owner: manager
 MAPS               # reports/<team>-sweep/: each team's own map of the search space (what the space
@@ -96,8 +95,8 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
                   several, e.g. "T1-001 + T2-003" when it combines them)
     performance:  "unofficial: ~+4% vs the unofficial champion" / "unofficial: within noise" / "build failed" /
                   "unofficial: stopped after 1 start, -2.3%"
-                  (`unofficial_eval` appends its result lines below, official_eval its official results;
-                  only those count. Once one lands, the owner may update this line to show it)
+                  (unofficial numbers: the harness, 2 starts x 200 prompts, see Tools; official_eval adds
+                  official results below; only those count)
     summary:
       hypothesis:
       change:     what was done
@@ -106,7 +105,7 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
     validity:     the leader's review of the diff against TASK.definition
   change.diff             # `ws diff <workspace>`: against the task baseline, applies to it directly
   serve_args.txt          # optional: extra server flags the change needs (reviewed for validity)
-  unofficial/<n>/         # written by `unofficial_eval` only
+  unofficial/<n>/         # the record's unofficial measurements (harness output folders)
   official/<n>/           # written by official_eval only (the manager's confirmation evals)
   (optional) profiles/, notes
 ```
@@ -140,13 +139,24 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   run: stop GPU work and tell the manager** (other people share these GPUs; we never compete).
   Exit 76 = your team's balance can't cover the job (or the team is closed): do GPU-free work; a
   leader may request a resync from the manager.
-- `unofficial_eval` (anyone): measures the speed of some code: 2 fresh inference-server starts of
-  200 prompts (the official harness, shorter). `unofficial_eval <record id>` for a record (result
-  saved in the record); `unofficial_eval --ws <workspace> --label L [--env K=V] [--args FILE]` for
-  your own variants before they are records. It only measures: compare with other numbers
-  yourself (the unofficial champion's are in its record). `--stop-below <tok/s>` skips the second
-  start on a clear loss; `--gsm8k` / `--long` add the GSM8K / 128K checks. Any code can compete:
-  it doesn't have to be built on the unofficial champion.
+- **The benchmark harness** (`task/harness/eval.sh`, anyone may run it; never modify it): measures
+  a workspace's speed, each trial on a freshly started inference server. Unofficial numbers, the
+  ones teams compare, use `TRIALS=2 PROMPTS=200` (the official eval uses 2 x 400 + checks):
+  `gpu run --timeout 12 --label unofficial:<name> -- env TRIALS=2 PROMPTS=200 GATES=none
+  STOP_BELOW=0 $AUTOINFER_RUN/task/harness/eval.sh <workspace dir> <output dir> [serve args file]`
+  (absolute paths).
+  `GATES=gsm8k,long` adds the GSM8K / 128K checks; `STOP_BELOW=<tok/s>` skips the second start
+  below that number; extra env vars before the script reach the inference server. The script's
+  header lists everything. Output, per trial (`<out>/trial<t>/`): `bench.log` (vLLM's benchmark
+  report: throughput, TTFT/TPOT/ITL/E2E percentiles, speculative-decoding acceptance per
+  position), `bench_c16.json` (the same + per-request data), `server.log` (the full inference
+  server log, incl. its startup memory/KV lines and a stats line every 10 s: running/waiting
+  requests, KV cache usage), `metrics_{before,after}.txt` (Prometheus), `gpu_clocks.csv`; plus
+  `<out>/server_cmd.txt`, and `gsm8k.*` / `long_request.*` when asked. `python
+  task/harness/summarize.py <out>` writes `<out>/results.json`. A record's measurements go in
+  `bank/<id>/unofficial/<n>/` (run on a workspace made with `ws create --from <id>`); the
+  unofficial champion's are in its record. Any code can compete: it doesn't have to be built on
+  the unofficial champion.
 - `official_eval <record id>` (manager only): official numbers, to confirm a promoted record.
 - `agent`: start, list and stop agents (the manager also uses `agent announce` and `agent remind`).
 - **Run these tools as commands on their own** (`gpu cancel 12`, not `cd … && gpu cancel 12 && …`).
@@ -176,8 +186,8 @@ bank/<id>/                # id = <team>-<nnn>, numbered in order per team, e.g. 
   floating-point reordering, the precision and serving constraints, no benchmark-specific
   tricks). When unsure whether something is allowed, ask your parent before building on it.
 - **Honest numbers.** Report failures, noise and doubts plainly. Quick numbers (short benches,
-  microbenchmarks) are for deciding what to do next; only unofficial_eval results and official
-  numbers count. Know the task's noise (TASK): a small difference is neither a result nor noise
+  microbenchmarks) are for deciding what to do next; only harness results (2 starts x 200 prompts) and
+  official numbers count. Know the task's noise (TASK): a small difference is neither a result nor noise
   until fresh starts settle it. "Below noise" means measure more carefully, not give up: small
   gains count, and they stack. The reverse also holds: **don't spend GPU minutes on a comparison
   already settled:** numbers already in the bank don't need measuring again. Report an

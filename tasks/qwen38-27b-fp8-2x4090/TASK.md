@@ -7,7 +7,7 @@ refine it into the run's `task_definition.md` (correctness, constraints, loophol
 ## Objective and metric
 Maximize **output tokens/s at concurrency 16** on the official benchmark, without changing what
 the model computes.
-- **Official benchmark** (`harness/eval.sh`, run only by `official_eval`): `vllm bench serve`,
+- **Official benchmark** (`harness/eval.sh`; agents may run it, never modify it): `vllm bench serve`,
   ShareGPT (400 prompts, input mean ~260 tokens incl. chat template, output = the reference reply
   length, mean ~228), `/v1/chat/completions`, temperature 0, seed 0, closed loop with 16
   concurrent requests. 2 trials, each on a freshly started server; score = their mean (per-trial

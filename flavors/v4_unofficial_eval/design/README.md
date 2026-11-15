@@ -13,7 +13,7 @@ Measured on framework-eval's data: identical code measured in different jobs dri
 difference 0.74%). So a cached reference is about as good as re-running it.
 
 ## What changed from v3_framework
-- **`unofficial_eval <record>`** (tools/unofficial_eval; runs the task's harness/eval.sh with PROMPTS=200, its own
+- **`unofficial_eval <record>`** (dropped 2026-11-15, see Decision log) (tools/unofficial_eval; runs the task's harness/eval.sh with PROMPTS=200, its own
   gates and a stop-loss; eval.sh's defaults are unchanged): replaces the
   candidate-vs-champion ABBA and the per-candidate official eval. Two fresh starts of the record
   (200 prompts each) against HEAD's **cached** starts: the reference is never re-run. The cache key
@@ -82,3 +82,9 @@ difference 0.74%). So a cached reference is about as good as re-running it.
   - Not done (overkill): a shared check-helper script; `gpu breakdown`; rules on what agents may
     run locally. Considered and left as is for now: shortening manager.md/common.md, the funding
     table, the manager's bookkeeping files.
+- 2026-11-15, human, after sweep-simple-eval: drop `tools/unofficial_eval`. Agents run the task's
+  harness (`eval.sh`, TRIALS=2 PROMPTS=200) themselves via `gpu run`; the common prompt lists the
+  files it produces (bench report, inference server log with its stats lines, metrics) without
+  saying how to read them. Why: the wrapper's one summary line hid the raw data (a run capped at
+  15 of 16 running requests looked normal); rebuilding records from diffs per measurement was
+  extra work the official eval already does.

@@ -56,11 +56,11 @@ Agents get the essentials in `agents/common.md`; every tool's `--help` (and `<to
   `scout/<team>-<n>/` (10-30 min, background); the team's leader is messaged when they land.
 - `scout --status [--team <team>]`: progress.
 
-## `spar`: a sparring partner (any leader)
-- `spar start "<message>"`, `spar send <id> "<message>"` (or `-f <file>`), `spar end <id>`,
-  `spar list`. Synchronous: each call waits for the reply (seconds to minutes; use a long Bash
-  timeout). A fresh partner per conversation; it can't read the run or the code. Transcripts in
-  `sparring/`.
+## `review`: a reviewer (leaders)
+- `review start "<message>"`, `review send <id> "<message>"` (or `-f <file>`), `review list`.
+  Synchronous (minutes; run it in the background or with a long Bash timeout). A fresh codex agent
+  per review (agents/reviewer.md): reads the run and the engine code, runs CPU commands, no GPUs,
+  changes nothing. Transcripts, with the commands it ran, in `reviews/`.
 
 ## `gpu`: the GPU queue (all GPU work goes through it)
 - `gpu run --timeout <min> [--label L] -- <command>`: runs your command with exclusive use of the

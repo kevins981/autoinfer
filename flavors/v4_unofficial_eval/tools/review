@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""review: ask a reviewer to look at an experiment or a claim, like a colleague reviewing a pull
+request. The reviewer is a fresh codex agent (agents/reviewer.md) with none of your context: it can
+read the run (records, workspaces' code, GPU job outputs, the task) and the engine code, and run CPU
+commands; it never uses the GPUs and changes no files. Multi-turn: `send` continues the same
+conversation. Synchronous: each call waits for the reply (often several minutes; run it as a
+background command or with a long Bash timeout).
+
+Usage:
+  review start "<message>"        # a fresh reviewer; prints its id and first reply
+  review start -f <file>          # message from a file
+  review send <id> "<message>"    # continue; prints the reply (also -f <file>)
+  review list                     # this run's reviews
+
+Tell it what to look at (claims, where the evidence and code are) and what you want checked.
+Every turn, and every command the reviewer ran, is saved to $AUTOINFER_RUN/reviews/<team>-<n>.md.
+Model / effort from config.md:  - review: codex gpt-6.1-sol / high
+Spec: flavors/v4_unofficial_eval/design/review.md.
+"""
+import argparse, json, os, re, subprocess, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+TOOLS = Path(__file__).resolve().parent
+FLAVOR = TOOLS.parent
+ROOT = FLAVOR.parent.parent
+CODEX_HOME = ROOT / ".cache" / "codex"
+
+
+def die(msg):
+    print(f"review: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def run_dir():
+    r = os.environ.get("AUTOINFER_RUN") or die("AUTOINFER_RUN is not set")
+    return Path(r).resolve()
+
+
+def config(run):
+    model, effort = "gpt-6.1-sol", "high"
+    cfg = run / "config.md"
+    m = re.search(r"^\s*-\s*review\s*:\s*codex\s+([\w.\[\]-]+)\s*(?:/\s*(\w+))?", cfg.read_text() if cfg.exists() else "", re.M)
+    if m:
+        model, effort = m.group(1), m.group(2) or effort
+    return model, effort
+
+
+def conv_dir(run):
+    d = run / "reviews"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def load(run, cid):
+    f = conv_dir(run) / f"{cid}.json"
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", cid) or not f.exists():
+        die(f"no review {cid} (see `review list`)")
+    return json.loads(f.read_text())
+
+
+def save(run, c):
+    f = conv_dir(run) / f"{c['id']}.json"
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(c, indent=1))
+    tmp.replace(f)
+
+
+def log(run, c, who, text):
+    with open(conv_dir(run) / f"{c['id']}.md", "a") as fh:
+        fh.write(f"\n## {who} ({datetime.now(timezone.utc).strftime('%H:%M:%S')})\n\n{text.strip()}\n")
+
+
+def task_name(run):
+    try:
+        return json.loads((run / "task_source.json").read_text())["task"]
+    except (OSError, ValueError, KeyError):
+        return "?"
+
+
+def first_prompt(run):
+    t = (FLAVOR / "agents" / "reviewer.md").read_text()
+    return (t.replace("$RUN", str(run)).replace("$FLAVOR", str(FLAVOR)).replace("$TASK", task_name(run))
+            .replace("$CACHE_ROOT", os.environ.get("CACHE_ROOT", str(ROOT / ".cache"))))
+
+
+def ask(run, c, text):
+    """One blocking turn; returns (reply, commands the reviewer ran)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("AUTOINFER")}
+    env.update(CODEX_HOME=str(CODEX_HOME), CUDA_VISIBLE_DEVICES="")     # no GPUs
+    last = conv_dir(run) / f".{c['id']}.last.md"
+    last.unlink(missing_ok=True)
+    base = ["-m", c["model"], "-c", f'model_reasoning_effort="{c["effort"]}"', "-c", 'sandbox_mode="read-only"',
+            "--skip-git-repo-check", "--json", "-o", str(last)]
+    if c.get("session"):
+        cmd = ["codex", "exec", "resume", c["session"]] + base + ["-"]
+    else:
+        text = first_prompt(run) + "\n\n---\n\n" + text
+        cmd = ["codex", "exec", "-C", str(run), "-s", "read-only"] + base + ["-"]
+    r = subprocess.run(cmd, input=text, cwd=run, env=env, capture_output=True, text=True)
+    cmds = []
+    for line in r.stdout.splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if e.get("type") == "thread.started":
+            c["session"] = e.get("thread_id")
+        item = e.get("item") or {}
+        if e.get("type") == "item.completed" and item.get("type") == "command_execution":
+            cmds.append(str(item.get("command", "")))
+    if r.returncode != 0 or not last.exists():
+        die(f"backend error (rc {r.returncode}): {r.stderr[-800:]}")
+    return last.read_text(), cmds
+
+
+def main():
+    p = argparse.ArgumentParser(prog="review", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("start"); s.add_argument("text", nargs="*"); s.add_argument("-f", "--file")
+    s = sub.add_parser("send"); s.add_argument("id"); s.add_argument("text", nargs="*"); s.add_argument("-f", "--file")
+    sub.add_parser("list")
+    a = p.parse_args()
+    run = run_dir()
+    if a.cmd == "list":
+        for f in sorted(conv_dir(run).glob("*.json")):
+            c = json.loads(f.read_text())
+            print(f"{c['id']:10} {c['turns']:3} turns  {c['model']}  by {c['by']}  -> reviews/{c['id']}.md")
+        return
+    text = Path(a.file).read_text() if a.file else " ".join(a.text or [])
+    if not text.strip():
+        die("empty message")
+    if a.cmd == "start":
+        team = os.environ.get("AUTOINFER_TEAM") or "human"
+        n = 1 + len(list(conv_dir(run).glob(f"{team}-*.json")))
+        model, effort = config(run)
+        c = {"id": f"{team}-{n}", "team": team, "by": os.environ.get("AUTOINFER_AGENT", "human"),
+             "model": model, "effort": effort, "session": None, "turns": 0,
+             "started": datetime.now(timezone.utc).isoformat()}
+        save(run, c)
+        (conv_dir(run) / f"{c['id']}.md").write_text(
+            f"# Review {c['id']}\n\nby {c['by']} (team {team}); reviewer: codex {model} / {effort}; started {c['started']}\n")
+    else:
+        c = load(run, a.id)
+    log(run, c, c["by"], text)
+    reply, cmds = ask(run, c, text)
+    c["turns"] += 1
+    save(run, c)
+    if cmds:
+        log(run, c, "reviewer's commands", "\n".join(f"- `{x[:300]}`" for x in cmds))
+    log(run, c, "reviewer", reply)
+    print(f"[review {c['id']}, turn {c['turns']}]\n")
+    print(reply)
+    print(f"\n[continue with: review send {c['id']} \"...\"]")
+
+
+if __name__ == "__main__":
+    main()

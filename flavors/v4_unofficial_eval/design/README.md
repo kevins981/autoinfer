@@ -88,3 +88,6 @@ difference 0.74%). So a cached reference is about as good as re-running it.
   saying how to read them. Why: the wrapper's one summary line hid the raw data (a run capped at
   15 of 16 running requests looked normal); rebuilding records from diffs per measurement was
   extra work the official eval already does.
+- 2026-11-15, human: the sparring partner is replaced by a reviewer (design/review.md): a fresh
+  codex agent that reads the run and code and runs CPU commands; leaders decide when to use it
+  (suggested: every record, positive or negative) and are responsible for their team's reviews.

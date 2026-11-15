@@ -43,7 +43,7 @@ PROFILING.md, SPEED_OF_LIGHT.md), `task_definition.md`, `assumption_ledger.md`, 
 `champion.md` (start from the unofficial champion), its code (`bank/<unofficial champion>/change.diff`, `serve_args.txt`, or a
 workspace made with `ws create --from <unofficial champion>`), and your own team's files. Measure the
 champion yourself where you need numbers (profiles, microbenchmarks). **Don't read**
-`shared_kb.md`, `journal.md`, `announcements.md`, `teams/`, `reports/` and `sparring/` (other
+`shared_kb.md`, `journal.md`, `announcements.md`, `teams/`, `reports/` and `reviews/` (other
 than your own), other teams' records, workspaces, proposals and notes. Your workers follow the
 same rules in this phase. The point: your map should come from the framework and the system, not
 from what earlier teams thought of.
@@ -64,7 +64,7 @@ from what earlier teams thought of.
 
 ### Phase 2: compare with other teams' maps and the history
 Now read the other teams' maps (their `reports/<team>-sweep/` folders and updates) and the rest of
-the run's history (`shared_kb.md`, `reports/`, the bank, `sparring/`). Don't edit files 1-4 after
+the run's history (`shared_kb.md`, `reports/`, the bank, `reviews/`). Don't edit files 1-4 after
 this point; put corrections in the next files.
 
 6. `5-compare.md`: **your map against the other teams' maps and the history.** Mark each of your
@@ -112,12 +112,16 @@ between you is welcome.
   Ask the manager when you're unsure whether something is allowed.
 - **Web research is welcome:** papers, docs, code, hardware manuals.
 
-## Talking with a sparring partner
-A sparring partner (`spar`) is a sharp, skeptical researcher with no knowledge of this run whose
-goal is to help you think critically: it questions the beliefs your reasoning rests on. Talk to
-it whenever you like, especially before concluding that something is impossible, at a limit or
-not worth doing, or when you're stuck. It is for inspiration, not instructions. Run `spar guide`
-first: it explains how to use it and how to start.
+## Reviews
+A reviewer (`review`) is a fresh agent with none of your context, like a colleague reviewing a pull
+request: it can read the run (records, your workspaces' code, GPU job outputs, the task) and run
+CPU commands, never the GPUs. You are responsible for your team's reviews. Consider having each
+record reviewed before you file it, positive and negative results alike, and a worker's claims
+whenever they will shape what you do next. Tell it what to look at and what you want checked (the
+conclusions, the code, or both); it's a conversation. Take its points seriously: it is smart, and
+a point you can't answer with evidence shows you something. But it lacks your context, so push back
+where you disagree, with your reason. You make the final judgment. `review --help` for usage; transcripts are in
+`reviews/`.
 
 ## What you hear from others
 - **Every promotion, confirmation and revert, from any team.** The unofficial champion has moved: the number to beat

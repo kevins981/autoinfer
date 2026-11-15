@@ -623,12 +623,12 @@ def scout_decks(run):
 
 def sparring_list(run):
     out = []
-    for f in sorted(glob.glob(str(run / "sparring" / "*.json"))):
+    for f in sorted(glob.glob(str(run / "reviews" / "*.json"))):
         try:
             c = json.loads(open(f).read())
         except (OSError, ValueError):
             continue
-        out.append({k: c.get(k) for k in ("id", "team", "by", "state", "turns", "backend", "model", "effort", "started")})
+        out.append(dict({k: c.get(k) for k in ("id", "team", "by", "turns", "model", "effort", "started")}, state="open", backend="codex"))
     return out
 
 
@@ -842,7 +842,7 @@ async function render(soft){clearTimeout(TIMER);const v=VIEW;const M=$('#main');
  ${T.map(t=>`<tr class="click" onclick='go({k:"team",team:"${t.team}"})'><td><b>${t.team}</b></td><td>${esc(t.type)}${t.slot?' · slot '+t.slot:''}</td>
  <td><span class="pill ${t.status==='open'?'open':''}">${t.status}</span></td><td>${t.models.map(short).join(', ')}</td><td>${t.used.toFixed(1)} / ${t.granted.toFixed(0)}</td><td>${t.jobs}</td><td>${t.records.length}</td><td>$${t.cost.toFixed(2)}</td><td class="muted">${ago(t.opened)}</td></tr>`).join('')}</table></div>
  <h3>Config</h3><div class="card">${md(OV.config)}</div>`}
- else if(v.k==='spar'){M.innerHTML=`<h2>sparring ${esc(v.id)}</h2><div id="sphead"></div><div class="card" id="sptext"></div>`;await pollSpar(true)}
+ else if(v.k==='spar'){M.innerHTML=`<h2>review ${esc(v.id)}</h2><div id="sphead"></div><div class="card" id="sptext"></div>`;await pollSpar(true)}
  else if(v.k==='scout'){M.innerHTML=`<h2>scout ${esc(v.deck)}</h2><div id="schead"></div><div class="tabs"><a class="on">activity</a></div><div class="filters"><label><input type="checkbox" id="fT" checked> messages</label><label><input type="checkbox" id="fU" checked> searches / pages / commands</label><label><input type="checkbox" id="fS" checked> thinking / turn</label><button id="bottom">jump to latest</button></div><div id="evs"></div>`;
   $('#bottom').onclick=()=>M.scrollTop=M.scrollHeight;await pollScout(true)}
  else if(v.k==='timeline'){const h=v.hours??6;const d=await api('/api/timeline',{hours:h});
@@ -938,7 +938,7 @@ function drawTimeline(d){const box=$('#tl');const W=Math.max(700,box.clientWidth
 
 
 async function pollSpar(first){const v=VIEW;if(v.k!=='spar')return;const M=$('#main');const atBottom=first||M.scrollHeight-M.scrollTop-M.clientHeight<80;
- const c=(OV.sparring||[]).find(x=>x.id===v.id)||{};const f=await api('/api/file',{path:'sparring/'+v.id+'.md'});
+ const c=(OV.sparring||[]).find(x=>x.id===v.id)||{};const f=await api('/api/file',{path:'reviews/'+v.id+'.md'});
  $('#sphead').innerHTML=`<div class="card kv"><div><span>team</span><a class="lnk" onclick='go({k:"team",team:"${c.team}"})'>${esc(c.team)}</a></div><div><span>leader</span><a class="lnk" onclick='go({k:"agent",name:"${c.by}"})'>${esc(c.by)}</a></div>
  <div><span>partner</span>${esc(c.backend)} ${esc(c.model)} / ${esc(c.effort)}</div><div><span>state</span>${esc(c.state)}</div><div><span>turns</span>${c.turns}</div><div><span>started</span>${ago(c.started)}</div></div>`;
  const html=(f.text||'').replace(/^## (leader[^\n]*|partner[^\n]*)$/gm,(m,h)=>'\n\n---\n\n### '+(h.startsWith('partner')?'🟣 ':'🔵 ')+h+'\n');

@@ -98,9 +98,9 @@ handle(resync request):                             # a team asks for more GPU t
         #   reverted: a revert counts against the team)                      -> extend (maybe more)
         # nothing new won, but a measured lead the team can name            -> last chance
         # second last chance in a row                                       -> close and replace
-        # the team recommends closing itself: unless its sparring conversations
-        #   (sparring/<team>-*.md) already discussed THESE reasons for closing, offer a sparring
-        #   session first, once per closing decision: one line, no plan. It decides.
+        # the team recommends closing itself: unless its reviews (reviews/<team>-*.md) already
+        #   covered THESE reasons for closing, suggest a review of them first, once per closing
+        #   decision: one line, no plan. It decides.
         #   hard limit hit, or a variant aimed at the cause already tried    -> close and replace
         #   one failed attempt with a fixable cause -> encourage a variant first; if it still
         #   wants to close                                                   -> close and replace

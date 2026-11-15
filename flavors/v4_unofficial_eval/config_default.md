@@ -1,6 +1,6 @@
 # CONFIG (v4_unofficial_eval defaults; copied into each run as config.md, where the human may edit it)
 Mostly free text: the manager reads it. The `models` and `slot` lines are also read by `agent start` and
-`new_run`, the `GPU pool` and `seed grant` lines by `new_run`, and the `sparring` line by `spar`. Keep
+`new_run`, the `GPU pool` and `seed grant` lines by `new_run`, and the `review` line by `review`. Keep
 their format.
 
 - teams: 2 sweep teams open at all times (team ids T1, T2, ...; a closed team is replaced by a new
@@ -18,6 +18,5 @@ their format.
   - worker: claude-sonnet-5-5 / medium
 - model slots:
   - slot A: leader claude-opus-5-5 / medium, worker claude-sonnet-5-5 / medium
-- sparring: codex gpt-6.1-sol / high (the `spar` tool's partner: backend codex|claude, model / effort;
-  for Claude, `claude leader / medium` uses the calling leader's own model)
+- review: codex gpt-6.1-sol / high (the `review` tool's reviewer: model / effort)
 - speed of light: on (the first task points to task/SPEED_OF_LIGHT.md, if the task has one)

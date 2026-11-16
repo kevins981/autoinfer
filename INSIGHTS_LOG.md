@@ -114,3 +114,14 @@ of everything. Newest last.
   - Reviewing the map right after it's written is cheap (CPU only) and catches calibration errors
     before they cost GPU time.
 - Caveat: n=1; T3 also read T1/T2's maps and history in phase 2.
+
+## 2026-11-16 · v4 review-eval: final (908.0 tok/s, +42.8%, 366 GPU-min)
+- What worked: 11 promotions, none reverted; reached the best earlier runs' level (~907-909) with
+  ~100 fewer GPU-min. After the 2-grant cap, fresh teams made 5 of the last 6 wins (T3 x3, T5, T9).
+- Insights:
+  - A reviewed map surfaced a miss the earlier runs had: the reviewer corrected "idle = period - kernel
+    sum" to "period - kernel union" (0.8 -> 2.05 ms/step); that idle became the evidence for
+    TRITON_ATTN (+3.3%).
+  - The manager needs a periodic wake-up: twice a worker answered in plain text and its team stalled;
+    `tick` caught the second stall in 19 min (the first lasted ~1 h).
+- Caveat: n=1; the reviewer backend ran out of quota in the last hour.

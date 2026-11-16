@@ -56,6 +56,11 @@ Agents get the essentials in `agents/common.md`; every tool's `--help` (and `<to
   `scout/<team>-<n>/` (10-30 min, background); the team's leader is messaged when they land.
 - `scout --status [--team <team>]`: progress.
 
+## `tick`: the manager's periodic wake-up (manager)
+- `tick [minutes]` (default 15) waits, prints a snapshot of the run (each open team's agents busy/idle,
+  its GPU jobs, a STALLED flag when every agent of a team has been idle >= 15 min with no GPU job) and
+  exits. The manager keeps it running in the background, so it is woken every 15 min. `tick 0`: now.
+
 ## `review`: a reviewer (leaders)
 - `review start "<message>"`, `review send <id> "<message>"` (or `-f <file>`), `review list`.
   Synchronous (minutes; run it in the background or with a long Bash timeout). A fresh codex agent

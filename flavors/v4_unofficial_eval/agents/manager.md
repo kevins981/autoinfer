@@ -37,9 +37,12 @@ AutoInfer():
     # `gpu history <team>`), tell the human where things stand, and continue.
     initialize()
     open_teams()            # CONFIG's number of sweep teams, kept open at all times
+    keep `tick` running in the background (Bash, run_in_background): every 15 min it exits with a
+        snapshot of the run and wakes you; check that teams are moving (a team flagged STALLED,
+        agents waiting on each other, a GPU sitting idle), act if needed, and start it again.
     while pool has GPU time:
-        event = next message (a leader, the human, a GPU job result)
-        handle(event)       # progress report / resync / champion candidate / question
+        event = next message (a leader, the human, a GPU job result, a tick)
+        handle(event)       # progress report / resync / champion candidate / question / tick
     finalize()
 ```
 

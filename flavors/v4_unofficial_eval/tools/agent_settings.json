@@ -15,7 +15,9 @@
       "Bash(scout *)",
       "Bash(review *)",
       "WebSearch",
-      "WebFetch"
+      "WebFetch",
+      "Bash(tick)",
+      "Bash(tick *)"
     ],
     "deny": [
       "Bash(sudo *)",

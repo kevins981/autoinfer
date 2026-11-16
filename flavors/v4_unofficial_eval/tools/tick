@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""tick: the manager's periodic wake-up. Waits (default 15 min), then prints a snapshot of the run
+and exits. Run it as a background command; when it exits you are woken with its output: look,
+act if something needs it, and start it again.
+
+Usage: tick [minutes]        # default 15; `tick 0` prints the snapshot now
+
+The snapshot: each open team's agents (busy/idle, how long since their last activity), its GPU
+jobs running or queued, and a STALLED flag when every agent of the team has been idle for
+>= 15 min and the team has no GPU job running or queued. Plus the champion and the pool.
+"""
+import json, os, sys, time
+from pathlib import Path
+
+STALL_MIN = 15
+
+
+def run_dir():
+    r = os.environ.get("AUTOINFER_RUN")
+    if not r:
+        sys.exit("tick: AUTOINFER_RUN is not set")
+    return Path(r)
+
+
+def activity(d):
+    """(busy, minutes since last event) from an agent's event log."""
+    ev = d / "events.jsonl"
+    if not ev.exists() or ev.stat().st_size == 0:
+        return False, None
+    age = (time.time() - ev.stat().st_mtime) / 60
+    with open(ev, "rb") as f:
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - 400_000))
+        lines = f.read().decode("utf-8", "replace").splitlines()
+    last = None
+    for line in lines:
+        try:
+            t = json.loads(line).get("type")
+        except ValueError:
+            continue
+        if t in ("assistant", "user", "result"):
+            last = t
+    return last not in (None, "result"), age
+
+
+def alive(meta):
+    try:
+        os.kill(meta["pid"], 0)
+        return not meta.get("stopped")
+    except (KeyError, TypeError, OSError):
+        return False
+
+
+def open_teams(run):
+    teams = {}
+    f = run / "gpu" / "accounts.jsonl"
+    for line in (f.read_text().splitlines() if f.exists() else []):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if e.get("team") in (None, "MGR"):
+            continue
+        if e.get("event") == "open":
+            teams[e["team"]] = True
+        elif e.get("event") == "close":
+            teams.pop(e["team"], None)
+    return list(teams)
+
+
+def team_jobs(run):
+    out = {}
+    for f in list((run / "gpu" / "queue").glob("*.json")) + list((run / "gpu" / "jobs").glob("*/job.json")):
+        try:
+            j = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if j.get("ended"):
+            continue
+        state = "queued" if f.parent.name == "queue" else (j.get("state") or "running")
+        out.setdefault(j.get("team"), {})[j.get("id")] = f"job {j.get('id')} {state} ({j.get('label')})"
+    return {t: list(v.values()) for t, v in out.items()}
+
+
+def main():
+    minutes = float(sys.argv[1]) if len(sys.argv) > 1 else 15
+    if minutes > 0:
+        time.sleep(minutes * 60)
+    run = run_dir()
+    print(f"[tick {time.strftime('%H:%M', time.gmtime())} UTC] run snapshot")
+    champ = run / "champion.md"
+    if champ.exists():
+        for line in champ.read_text().splitlines():
+            if line.startswith("champion:"):
+                print(" ", line[:160])
+    jobs = team_jobs(run)
+    for team in open_teams(run):
+        agents = []
+        for d in sorted((run / "agents").iterdir()):
+            try:
+                meta = json.loads((d / "meta.json").read_text())
+            except (OSError, ValueError):
+                continue
+            if meta.get("team") == team and alive(meta):
+                busy, age = activity(d)
+                agents.append((meta["name"], busy, age))
+        tj = jobs.get(team, [])
+        idle = [a for a in agents if not a[1]]
+        stalled = agents and len(idle) == len(agents) and not tj and all((a[2] or 0) >= STALL_MIN for a in agents)
+        desc = ", ".join(f"{n} {'busy' if b else 'idle'} {age:.0f}m" if age is not None else f"{n} -"
+                         for n, b, age in agents) or "no live agents"
+        print(f"  team {team}{'  ** STALLED: every agent idle >= 15 min, no GPU job **' if stalled else ''}")
+        print(f"    agents: {desc}")
+        print(f"    GPU jobs: {'; '.join(tj) if tj else 'none running or queued'}")
+    print("  (gpu status for the pool; agent list for everyone)")
+
+
+if __name__ == "__main__":
+    main()

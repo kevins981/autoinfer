@@ -101,3 +101,16 @@ of everything. Newest last.
     accepted).
   - The agent who made the change must get to answer: accept and fix (bugs, more performance), or
     push back. The leader lacks the details to judge review points alone.
+
+## 2026-11-16 · v4 review-eval: rotating teams (2-grant cap) + map review
+- What worked: T1 closed at the 2-grant cap (2 wins) and T3 opened at 02:55. T3's fresh map
+  ranked ideas the long-running teams hadn't (L2 weight prefetch under the all-reduce, GDN state
+  writes higher); its map review (T3-1) dropped a mirage #1 (in_proj_ba already overlapped) before
+  any GPU time. Its first record, T3-001 (L2 prefetch, +3.7%), became champion ~1 h after opening:
+  816.6 tok/s, +28.4%, after the run had stalled near +21-24% for ~60 GPU-min.
+- Insights:
+  - New teams help: a fresh map finds directions that long-running teams, anchored on their own
+    rankings, don't revisit.
+  - Reviewing the map right after it's written is cheap (CPU only) and catches calibration errors
+    before they cost GPU time.
+- Caveat: n=1; T3 also read T1/T2's maps and history in phase 2.

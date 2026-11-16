@@ -112,7 +112,17 @@ def ask(run, c, text):
         if e.get("type") == "item.completed" and item.get("type") == "command_execution":
             cmds.append(str(item.get("command", "")))
     if r.returncode != 0 or not last.exists():
-        die(f"backend error (rc {r.returncode}): {r.stderr[-800:]}")
+        errs = []
+        for line in r.stdout.splitlines():        # codex reports API errors (e.g. usage limits) here
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            msg = e.get("message") or (e.get("error") or {}).get("message") if isinstance(e, dict) else None
+            if e.get("type") in ("error", "turn.failed") and msg:
+                errs.append(str(msg))
+        detail = "; ".join(dict.fromkeys(errs)) or r.stderr[-800:]
+        die(f"backend error (rc {r.returncode}): {detail}")
     reply = last.read_text()
     last.unlink()
     return reply, cmds

@@ -77,10 +77,7 @@ this point; put corrections in the next files.
    measured time, each with the condition under which it wins, its riskiest assumption and the
    cheapest test that could show it wrong.
 
-Have the whole map (files 1-6) reviewed once `6-ranking.md` is written (`review`): the framework is
-easy to apply incompletely, and a fresh reader catches what's missing (a node, an edge, a cost the
-napkin doesn't count, a candidate ranked too low). Point the reviewer at the framework folder and
-your `reports/<team>-sweep/` files. Same treatment as any review: you judge.
+Then have the whole map reviewed (see Reviews, case 1).
 
 Then write `reports/<team>-sweep.md` (a short summary linking the six files) and start testing
 the best candidates cheaply, building the ones that survive.
@@ -120,19 +117,27 @@ between you is welcome.
 ## Reviews
 A reviewer (`review`) is a fresh agent with none of your context, like a colleague reviewing a pull
 request: it can read the run (records, your workspaces' code, GPU job outputs, the task) and run
-CPU commands, never the GPUs. You are responsible for your team's reviews. **Have each record
-reviewed before you file it**, positive and negative results alike, and a worker's claims
-whenever they will shape what you do next. Give it the claims as they were made (the worker's report, or your draft record; `review start -f
-<file>` takes a file) and say what you want checked (the
-conclusions, the code, or both). When there is a code change, point it at the code: a review of
-the diff for correctness (races, edge cases, whether it really runs where you think) and for
-performance (what else it could do faster) often finds what the numbers can't. It's a conversation. Its points are a second opinion, not verdicts: it can be wrong, and it
-lacks your team's context. Send its points to the worker who did the work and get their answer
-(they know the details you may not); take that answer back to the reviewer where you disagree
-(`review send <id> "..."` continues the same conversation), and its reply back to the worker:
-as many rounds between them as you see fit.
-Then you make the final judgment: adopt a point, reject it with your reason, or test it. `review --help` for usage; transcripts are in
-`reviews/`.
+CPU commands, never the GPUs. You are responsible for your team's reviews. Its points are a second
+opinion, not verdicts: it can be wrong, and it lacks your team's context. It's a conversation:
+`review send <id> "..."` continues it, for as many rounds as you see fit. You make the final
+judgment on each point: adopt it, reject it with your reason, or test it. There are two cases:
+
+1. **Your map** (files 1-6, once `6-ranking.md` is written). The framework is easy to apply
+   incompletely; a fresh reader catches what's missing (a node, an edge, a cost the napkin doesn't
+   count, a candidate ranked too low). Point it at the framework folder and your
+   `reports/<team>-sweep/` files. You wrote the map, so you answer its points yourself, round by
+   round; where a point concerns something a worker measured for the map, ask that worker.
+2. **An experiment: each record before you file it,** positive and negative results alike, and a
+   worker's claims whenever they will shape what you do next. Give it the claims as they were made
+   (the worker's report, or your draft record; `review start -f <file>`) and say what to check:
+   the conclusions, the code, or both. When there is a code change, point it at the code: a review
+   of the diff for correctness (races, edge cases, whether it really runs where you think) and for
+   performance (what else it could do faster) often finds what the numbers can't. The worker who
+   did the work knows the details you may not: send it the points and get its answer (agree and
+   fix, or disagree with evidence), take that back to the reviewer where they disagree, and its
+   reply back to the worker.
+
+`review --help` for usage; transcripts are in `reviews/`.
 
 ## What you hear from others
 - **Every promotion and revert, from any team.** The champion has moved: the number to beat

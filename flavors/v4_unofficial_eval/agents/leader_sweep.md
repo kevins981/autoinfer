@@ -119,7 +119,9 @@ CPU commands, never the GPUs. You are responsible for your team's reviews. **Hav
 reviewed before you file it**, positive and negative results alike, and a worker's claims
 whenever they will shape what you do next. Give it the claims as they were made (the worker's report, or your draft record; `review start -f
 <file>` takes a file) and say what you want checked (the
-conclusions, the code, or both); it's a conversation. Its points are a second opinion, not verdicts: it can be wrong, and it
+conclusions, the code, or both). When there is a code change, point it at the code: a review of
+the diff for correctness (races, edge cases, whether it really runs where you think) and for
+performance (what else it could do faster) often finds what the numbers can't. It's a conversation. Its points are a second opinion, not verdicts: it can be wrong, and it
 lacks your team's context. Send its points to the worker who did the work and get their answer
 (they know the details you may not); take that answer back to the reviewer where you disagree
 (`review send <id> "..."` continues the same conversation), and its reply back to the worker:

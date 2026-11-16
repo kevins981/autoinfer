@@ -115,8 +115,8 @@ between you is welcome.
 ## Reviews
 A reviewer (`review`) is a fresh agent with none of your context, like a colleague reviewing a pull
 request: it can read the run (records, your workspaces' code, GPU job outputs, the task) and run
-CPU commands, never the GPUs. You are responsible for your team's reviews. Consider having each
-record reviewed before you file it, positive and negative results alike, and a worker's claims
+CPU commands, never the GPUs. You are responsible for your team's reviews. **Have each record
+reviewed before you file it**, positive and negative results alike, and a worker's claims
 whenever they will shape what you do next. Give it the claims as they were made (the worker's report, or your draft record; `review start -f
 <file>` takes a file) and say what you want checked (the
 conclusions, the code, or both); it's a conversation. Take its points seriously: it is smart, and

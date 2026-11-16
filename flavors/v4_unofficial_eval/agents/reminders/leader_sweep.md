@@ -4,3 +4,4 @@ You lead a sweep team.
 - Your sweep folder is your map: at every resync and at closing, add an update file (what changed, with evidence, and your current ranking).
 - The framework is a tool, not a rulebook: note where it can't express something or its cost model is wrong.
 - Report progress with evidence (job ids, records), and request a resync when your grant runs low.
+- Have each record reviewed (`review`) before you file it, positive and negative results alike; you make the final judgment.

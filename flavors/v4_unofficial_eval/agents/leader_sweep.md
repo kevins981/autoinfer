@@ -62,6 +62,11 @@ from what earlier teams thought of.
    candidate site, its napkin gain against the champion's measured time, and for every candidate
    or group you drop, why it loses.
 
+Have files 1-4 reviewed before phase 2 (`review`): the framework is easy to apply incompletely,
+and a fresh reader catches what's missing (a node, an edge, a cost the napkin doesn't count).
+Point the reviewer at the framework folder and your `reports/<team>-sweep/` files, and tell it this
+is a phase-1 map, so it reads only what phase 1 allows. Same treatment as any review: you judge.
+
 ### Phase 2: compare with other teams' maps and the history
 Now read the other teams' maps (their `reports/<team>-sweep/` folders and updates) and the rest of
 the run's history (`shared_kb.md`, `reports/`, the bank, `reviews/`). Don't edit files 1-4 after

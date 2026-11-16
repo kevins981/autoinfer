@@ -90,6 +90,7 @@ handle(resync request):                             # a team asks for more GPU t
     # evidence. Its sweep report (reports/<team>-sweep.md) is its first deliverable; at each
     # resync the team also adds an update to its own map (reports/<team>-sweep/update-<n>.md).
     decide (FUNDING_POLICY table):
+        # the team has had 3 grants (opening + 2 extensions)                 -> close and replace
         # a win (a record promoted to champion; minus any of its promotions that were
         #   reverted: a revert counts against the team)                      -> extend (maybe more)
         # nothing new won, but a measured lead the team can name            -> last chance

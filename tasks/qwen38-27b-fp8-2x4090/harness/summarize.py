@@ -1,5 +1,5 @@
 """Turn an eval output folder into results.json (and print it). With trial<t>/ subfolders, the\nscore and latencies are the mean over trials.
-usage: python summarize.py <output dir> [baseline results.json]"""
+usage: python summarize.py <output dir> [baseline results.json, default: task/baseline/official/results.json]"""
 import json, re, sys
 from pathlib import Path
 
@@ -84,8 +84,10 @@ def main():
     # Gates (TASK.md): GSM8K >= 89.6%; TTFT p99 and TPOT p99 at most 20% worse than BASE.
     if "gsm8k_accuracy" in res:
         res["gate_gsm8k"] = "pass" if res["gsm8k_accuracy"] >= GSM8K_MIN else "FAIL"
-    if len(sys.argv) > 2 and Path(sys.argv[2]).exists() and res.get("output_throughput"):
-        base = json.loads(Path(sys.argv[2]).read_text())
+    # default baseline: the task's shipped BASE result (task/baseline/official/results.json)
+    bpath = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).resolve().parent.parent / "baseline" / "official" / "results.json"
+    if bpath.exists() and bpath.resolve() != (d / "results.json").resolve() and res.get("output_throughput"):
+        base = json.loads(bpath.read_text())
         if base.get("output_throughput"):
             res["vs_baseline_pct"] = round(100 * (res["output_throughput"] / base["output_throughput"] - 1), 2)
         worse = {k: res[k] / base[k] for k in ("p99_ttft_ms", "p99_tpot_ms") if base.get(k) and res.get(k)}

@@ -89,3 +89,15 @@ of everything. Newest last.
     SMs and CPU as resources, contract-dependent compute). These lists agreed across teams,
     including the blind one: the most reliable output for the framework's next version.
 - Caveat: one task near saturation; n=1 for the blind variant.
+
+## 2026-11-16 · v4 review-eval: reviewer loop with the worker who made the change
+- What worked: review T2-5 (T2's fused activation quant). A codex reviewer read the diff; the leader
+  sent each point to the worker who wrote the code; the worker fixed 3 (M=0, a strided-input assert,
+  a stale test) and pushed back on 1 with evidence (scale-floor difference bounded at 2.2e-6/element);
+  the leader took that back to the reviewer (round 2), which accepted it with a disclosure caveat.
+- Insights:
+  - Multi-turn review helps: the second round settled a disagreement on evidence instead of the
+    leader adopting every point by default (before this, all 8 reviews were one round, all points
+    accepted).
+  - The agent who made the change must get to answer: accept and fix (bugs, more performance), or
+    push back. The leader lacks the details to judge review points alone.

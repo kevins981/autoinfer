@@ -121,7 +121,8 @@ whenever they will shape what you do next. Give it the claims as they were made 
 <file>` takes a file) and say what you want checked (the
 conclusions, the code, or both); it's a conversation. Its points are a second opinion, not verdicts: it can be wrong, and it
 lacks your team's context. Send its points to the worker who did the work and get their answer
-(they know the details you may not); take that answer back to the reviewer where you disagree.
+(they know the details you may not); take that answer back to the reviewer where you disagree
+(`review send <id> "..."` continues the same conversation, as many rounds as you need).
 Then you make the final judgment: adopt a point, reject it with your reason, or test it. `review --help` for usage; transcripts are in
 `reviews/`.
 

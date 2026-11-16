@@ -30,6 +30,7 @@ the model computes.
   wrongly). Wins get no shortcut: a win needs every planned start, all B above all A.
   `scripts/abba.sh` runs this protocol (fresh starts, same prompts, interleaved, early stop,
   verdict line) for two workspaces.
+- **Promotion rule** (human, 2026-11-16): a record's score is the mean of all its harness runs (each 2 fresh starts x 400 prompts). It beats the champion when that mean is higher and every start is above the champion's mean. A gain under 1% needs a second harness run, with all 4 starts above the champion's mean. (Jobs drift up to ~1.6%, so one lucky job can fake a ~1% gain.)
 - **Score**: output tok/s. **Baseline (record BASE): 635.9 tok/s** (its official result ships with
   the task: `baseline/official/`, `results.json`; runs don't re-measure it).
 - **Latency guard**: a result is invalid if TTFT p99 or TPOT p99 is more than 20% worse than

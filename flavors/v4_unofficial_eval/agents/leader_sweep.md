@@ -64,8 +64,7 @@ from what earlier teams thought of.
 
 ### Phase 2: compare with other teams' maps and the history
 Now read the other teams' maps (their `reports/<team>-sweep/` folders and updates) and the rest of
-the run's history (`shared_kb.md`, `reports/`, the bank, `reviews/`). Don't edit files 1-4 after
-this point; put corrections in the next files.
+the run's history (`shared_kb.md`, `reports/`, the bank, `reviews/`).
 
 6. `5-compare.md`: **your map against the other teams' maps and the history.** Mark each of your
    candidates as built, tested (by whom, on what code: a result on much older code may not hold
@@ -126,7 +125,8 @@ judgment on each point: adopt it, reject it with your reason, or test it. There 
    incompletely; a fresh reader catches what's missing (a node, an edge, a cost the napkin doesn't
    count, a candidate ranked too low). Point it at the framework folder and your
    `reports/<team>-sweep/` files. You wrote the map, so you answer its points yourself, round by
-   round; where a point concerns something a worker measured for the map, ask that worker.
+   round; where a point concerns something a worker measured for the map, ask that worker. Update
+   the map files with what you adopt.
 2. **An experiment: each record before you file it,** positive and negative results alike, and a
    worker's claims whenever they will shape what you do next. Give it the claims as they were made
    (the worker's report, or your draft record; `review start -f <file>`) and say what to check:

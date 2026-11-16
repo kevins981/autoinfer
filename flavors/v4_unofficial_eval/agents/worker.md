@@ -44,6 +44,9 @@ worker.run(task) -> report:
   each (`task/harness/eval.sh`; see Tools in the common instructions): 2 fresh
   inference-server starts each. The champion's numbers
   are in its bank record: no need to measure it again.
+- **Reviews of your work:** your leader may send you a reviewer's points on your work. Answer each
+  from what you know: agree, disagree with your evidence, or say what test would settle it. The
+  reviewer is a second opinion and can be wrong.
 - **Don't edit a workspace while a GPU job uses it.** Each inference server loads the workspace's
   code when it starts (Python reads the files then), not when you submitted the job: an edit made
   mid-job silently changes what the later inference servers in that job run. To keep working in

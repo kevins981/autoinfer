@@ -1,0 +1,18 @@
+{
+  "id": 54,
+  "pid": 2556221,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "t2:og_dbg",
+  "timeout_min": 3.0,
+  "command": [
+    "agents/leader-2.w1/og/driver.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T03:30:01+00:00",
+  "state": "done",
+  "started": "2026-11-16T03:36:11+00:00",
+  "ended": "2026-11-16T03:36:24+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.203
+}

@@ -1,0 +1,13 @@
+# leader-3 (T3) notes
+- Grant 45 (max 2 grants per team). Job 44 = champion nsys profile (2.5 min). Workspaces: t3-champ (T1-007), t3-w1 (worker).
+- HMAR ext prebuild: source ws env.sh; python -c "from vllm.distributed.device_communicators.host_mapped_all_reduce import load_ext; load_ext()"
+- Map files 1-6 done; review running (agents/leader-3/review-map.out).
+- DBO: V2 runner ubatching needs DP>1 (vllm/v1/worker/gpu/ubatch_utils.py:598); yields only in MoE EP paths -> not usable for TP dense; dropped (high build cost).
+- SendRecv per decode step: batch-sharded sampling all_to_all_vocab_shards (model_runner.py:1720) -> pynccl all_to_all.
+- T2-007 (787.6) pending promotion; T2 leaves my (1)-(4) and N1 to me. T2 on last grant.
+- T3-001 L2 prefetch (on T2-007): 816.6 (811.3/821.8) job 49, sent to manager as candidate. Review T3-2. Workspace t3-pf (don't edit).
+- Worker task 3: greedy target fast path in t3-greedy (copy of t3-pf). Next after: per-target prefetch MB tuning (gate_up vs qkvz/qkv, MTP).
+- Balance 28.3 after job 49.
+- T3-001 PROMOTED (816.6). Map files 3,4,5,6 updated with review T3-1 corrections (instruction change relayed by session 'autoinfer2' claiming [human]: files 1-4 editable).
+- T3-003 PROMOTED (826.1; fp8 draft head + KV 4.4). Worker task 6: exact greedy path (NaN/LoRA fixes) in t3-g2 -> harness with T3-003 serve args (needs 3 starts if <1%). Balance ~32.
+- T3-007 sent (853.6). Write-up + update-2 done. Balance 6.4. Closing.

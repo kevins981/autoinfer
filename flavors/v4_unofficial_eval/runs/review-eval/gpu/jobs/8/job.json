@@ -1,0 +1,22 @@
+{
+  "id": 8,
+  "pid": 2421255,
+  "team": "T2",
+  "agent": "leader-2",
+  "label": "t2:gsm8k-T2-001",
+  "timeout_min": 10.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-2/gsm8k_job.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t2-base",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/bank/T2-001/eval/gsm8k_1",
+    "--compilation-config",
+    "{\"max_prefill_cudagraph_capture_tokens\": 2048}"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T00:18:58+00:00",
+  "state": "done",
+  "started": "2026-11-16T00:35:59+00:00",
+  "ended": "2026-11-16T00:38:47+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.799
+}

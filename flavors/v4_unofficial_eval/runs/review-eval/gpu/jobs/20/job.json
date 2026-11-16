@@ -1,0 +1,23 @@
+{
+  "id": 20,
+  "pid": 2448190,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "eval:t1-stack-kv425",
+  "timeout_min": 17.0,
+  "command": [
+    "env",
+    "STOP_BELOW=689",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/task/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t1-base",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-1/runs/stack_kv425",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-1/runs/stack_kv425_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T00:50:49+00:00",
+  "state": "done",
+  "started": "2026-11-16T01:01:34+00:00",
+  "ended": "2026-11-16T01:09:07+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 7.556
+}

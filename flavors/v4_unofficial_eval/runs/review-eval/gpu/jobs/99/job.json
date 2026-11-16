@@ -1,0 +1,20 @@
+{
+  "id": 99,
+  "pid": 2678902,
+  "team": "T5",
+  "agent": "leader-5.w1",
+  "label": "dl-bisect-nostore",
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-5.w1/dl/bis.sh",
+    "1"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T05:51:34+00:00",
+  "state": "done",
+  "started": "2026-11-16T05:52:44+00:00",
+  "ended": "2026-11-16T05:54:34+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.83
+}

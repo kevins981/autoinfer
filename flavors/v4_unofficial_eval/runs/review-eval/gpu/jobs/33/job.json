@@ -1,0 +1,18 @@
+{
+  "id": 33,
+  "pid": 2487769,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "t1:hmar3-test",
+  "timeout_min": 3.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-1.w1/run_hmar3.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T01:42:30+00:00",
+  "state": "done",
+  "started": "2026-11-16T01:50:16+00:00",
+  "ended": "2026-11-16T01:50:23+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.114
+}

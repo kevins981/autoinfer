@@ -1,0 +1,18 @@
+{
+  "id": 61,
+  "pid": 2571181,
+  "team": "T3",
+  "agent": "leader-3.w1",
+  "label": "t3w1:t4a3",
+  "timeout_min": 5.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-3.w1/run8.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-3.w1",
+  "submitted": "2026-11-16T03:49:04+00:00",
+  "state": "done",
+  "started": "2026-11-16T03:49:04+00:00",
+  "ended": "2026-11-16T03:49:15+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.184
+}

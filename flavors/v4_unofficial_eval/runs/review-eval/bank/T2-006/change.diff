@@ -1,0 +1,1627 @@
+diff --git a/vllm/model_executor/kernels/linear/scaled_mm/BlockScaledMMLinearKernel.py b/vllm/model_executor/kernels/linear/scaled_mm/BlockScaledMMLinearKernel.py
+index 865bebeada..9d634faef8 100644
+--- a/vllm/model_executor/kernels/linear/scaled_mm/BlockScaledMMLinearKernel.py
++++ b/vllm/model_executor/kernels/linear/scaled_mm/BlockScaledMMLinearKernel.py
+@@ -7,10 +7,18 @@ from typing import ClassVar, Self
+ 
+ import torch
+ 
++from vllm.model_executor.layers.fusion.quant_activation import (
++    QuantizedActivation,
++    as_quantized_activation,
++)
+ from vllm.model_executor.layers.quantization.input_quant_fp8 import QuantFP8
+ from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+     process_fp8_weight_block_strategy,
+ )
++from vllm.model_executor.layers.quantization.utils.quant_utils import (
++    QuantKey,
++    kFp8Dynamic128Sym,
++)
+ from vllm.model_executor.utils import replace_parameter
+ 
+ from ..base import (
+@@ -60,6 +68,10 @@ class Fp8BlockScaledMMLinearKernel(
+     # Set to False in subclasses that accept BF16 input directly (e.g. FlashInfer)
+     # and therefore do not need the input quantization step in apply_weights.
+     apply_input_quant: ClassVar[bool] = True
++    # Set to True in subclasses whose GEMM consumes the activation quantized by
++    # an upstream fused producer (per-token-group-128 e4m3, fp32 row-major scales,
++    # identical to this class's own QuantFP8 step; see input_quant_key).
++    accepts_quantized_input: ClassVar[bool] = False
+ 
+     def __init__(self, config: FP8ScaledMMLinearLayerConfig) -> None:
+         super().__init__(config)
+@@ -73,6 +85,19 @@ class Fp8BlockScaledMMLinearKernel(
+         )
+         self.use_triton = False
+ 
++    def input_quant_key(self) -> QuantKey | None:
++        """Dynamic per-token-group-128 e4m3 activations can be produced by an
++        upstream fused kernel (norm / SiLU-mul + quant) and passed in as a
++        QuantizedActivation, skipping the quant op in apply_weights."""
++        if (
++            self.accepts_quantized_input
++            and self.apply_input_quant
++            and self.config.activation_quant_key == kFp8Dynamic128Sym
++            and self.get_output_padding() is None
++        ):
++            return kFp8Dynamic128Sym
++        return None
++
+     @classmethod
+     def can_implement(cls, config: FP8ScaledMMLinearLayerConfig):
+         act_quant_key = config.activation_quant_key
+@@ -100,7 +125,7 @@ class Fp8BlockScaledMMLinearKernel(
+     def apply_weights(
+         self,
+         layer: torch.nn.Module,
+-        x: torch.Tensor,
++        x: torch.Tensor | QuantizedActivation,
+         bias: torch.Tensor | None = None,
+         **kwargs,
+     ) -> torch.Tensor:
+@@ -111,6 +136,22 @@ class Fp8BlockScaledMMLinearKernel(
+         input_scale = params.input_scale
+         scale_up = params.input_scale_ub
+ 
++        qa = as_quantized_activation(x, self.input_quant_key())
++        if qa is not None:
++            # Pre-quantized by an upstream fused producer: same codes/scales
++            # layout as QuantFP8 would produce for this activation.
++            q_input = qa.data.view(-1, qa.data.shape[-1])
++            group_k = self.config.activation_quant_key.scale.group_shape.col
++            input_scale = qa.scale.view(q_input.shape[0], q_input.shape[-1] // group_k)
++            output_shape = [*qa.orig_shape[:-1], weight.shape[0]]
++            output = self.apply_block_scaled_mm(
++                A=q_input, B=weight, As=input_scale, Bs=weight_scale
++            )
++            if bias is not None:
++                output = output + bias
++            return output.to(dtype=out_dtype).view(*output_shape)
++
++        assert isinstance(x, torch.Tensor)
+         # View input as 2D matrix for fp8 methods
+         input_2d = x.view(-1, x.shape[-1])
+         output_shape = [*x.shape[:-1], weight.shape[0]]
+diff --git a/vllm/model_executor/kernels/linear/scaled_mm/triton.py b/vllm/model_executor/kernels/linear/scaled_mm/triton.py
+index cdb00b6127..25941ab5c2 100644
+--- a/vllm/model_executor/kernels/linear/scaled_mm/triton.py
++++ b/vllm/model_executor/kernels/linear/scaled_mm/triton.py
+@@ -192,6 +192,8 @@ class TritonFP8ScaledMMLinearKernel(FP8ScaledMMLinearKernel):
+ 
+ 
+ class TritonFp8BlockScaledMMKernel(Fp8BlockScaledMMLinearKernel):
++    accepts_quantized_input = True
++
+     @classmethod
+     def is_supported(cls, compute_capability=None):
+         if not (current_platform.is_cuda_alike() or current_platform.is_xpu()):
+diff --git a/vllm/model_executor/layers/fusion/fused_act_quant.py b/vllm/model_executor/layers/fusion/fused_act_quant.py
+index 6261a1bdd0..3a039ae8c6 100644
+--- a/vllm/model_executor/layers/fusion/fused_act_quant.py
++++ b/vllm/model_executor/layers/fusion/fused_act_quant.py
+@@ -73,14 +73,15 @@ def _silu_and_mul_fp8_dynamic_block(
+     result = torch.empty((num_tokens, d), dtype=FP8_DTYPE, device=x.device)
+     scales = torch.empty((num_tokens, num_groups), dtype=torch.float32, device=x.device)
+ 
+-    torch.ops._C.silu_and_mul_per_block_quant(
+-        out=result,
+-        input=x,
+-        scales=scales,
+-        group_size=group_size,
+-        scale_ub=None,
+-        is_scale_transposed=False,
+-    )
++    if num_tokens > 0:  # the CUDA kernel cannot launch an empty grid
++        torch.ops._C.silu_and_mul_per_block_quant(
++            out=result,
++            input=x,
++            scales=scales,
++            group_size=group_size,
++            scale_ub=None,
++            is_scale_transposed=False,
++        )
+ 
+     return QuantizedActivation(
+         data=result.view(out_shape),
+diff --git a/vllm/model_executor/layers/quantization/fp8.py b/vllm/model_executor/layers/quantization/fp8.py
+index cf8ba94a74..6bc5920035 100644
+--- a/vllm/model_executor/layers/quantization/fp8.py
++++ b/vllm/model_executor/layers/quantization/fp8.py
+@@ -43,6 +43,7 @@ from vllm.model_executor.layers.quantization.base_config import (
+     QuantizeMethodBase,
+ )
+ from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
++from vllm.model_executor.layers.fusion.quant_activation import expose_input_quant_key
+ from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+     create_fp8_input_scale,
+     create_fp8_scale_parameter,
+@@ -402,6 +403,9 @@ class Fp8LinearMethod(LinearMethodBase):
+             layer.input_scale = None
+ 
+         self.fp8_linear.process_weights_after_loading(layer)
++        # Let upstream fused producers (norm / SiLU-mul + quant) hand this
++        # layer a pre-quantized activation when the kernel can consume it.
++        expose_input_quant_key(layer, self.fp8_linear)
+ 
+     def apply(
+         self,
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..8ed83e390e
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,250 @@
++{
++ "1": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "2": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 3
++ },
++ "4": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "8": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "24": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "32": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "40": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 3
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 3
++ },
++ "56": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "80": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "96": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "112": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "128": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "160": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "192": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "224": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "320": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "384": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "448": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "640": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "768": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "896": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1280": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1536": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1792": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..777cf141cf
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,250 @@
++{
++ "1": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 64,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "2": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "4": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "8": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "24": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "32": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "40": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "56": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "80": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "96": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 4
++ },
++ "112": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "128": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "160": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "192": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "224": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "320": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "384": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "448": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "640": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "768": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "896": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1280": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1536": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1792": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..b3b8fd710d
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,250 @@
++{
++ "1": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 64,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "2": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "4": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "8": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "24": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "32": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "40": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "56": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "80": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 4
++ },
++ "96": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 4
++ },
++ "112": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "128": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "160": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "192": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "224": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "320": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "384": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "448": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "640": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "768": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "896": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1280": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1536": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1792": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..79bc6ea369
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,250 @@
++{
++ "1": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "2": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "4": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "8": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "24": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "32": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "40": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "56": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "80": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "96": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "112": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "128": {
++  "BLOCK_SIZE_M": 128,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "160": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "192": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "224": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "320": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "384": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "448": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "640": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "768": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "896": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1280": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1536": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1792": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..1ca2b65136
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,250 @@
++{
++ "1": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "2": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "4": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "8": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "24": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "32": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "40": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "56": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "80": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "96": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "112": {
++  "BLOCK_SIZE_M": 128,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "128": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "160": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "192": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "224": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "320": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "384": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "448": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "640": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "768": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "896": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1280": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1536": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1792": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/models/qwen3_5/nvidia/model.py b/vllm/models/qwen3_5/nvidia/model.py
+index be483f5a88..3b3c9c2684 100644
+--- a/vllm/models/qwen3_5/nvidia/model.py
++++ b/vllm/models/qwen3_5/nvidia/model.py
+@@ -70,6 +70,7 @@ from vllm.model_executor.layers.quantization.utils.nvfp4_utils import (
+ )
+ from vllm.model_executor.layers.quantization.utils.quant_utils import (
+     QuantKey,
++    kFp8Dynamic128Sym,
+     kFp8StaticTensorSym,
+     kNvfp4Dynamic,
+ )
+@@ -127,7 +128,11 @@ from vllm.tokenizers.registry import cached_tokenizer_from_config
+ 
+ from .ops.fused_allreduce_norm_quant import fused_allreduce_gemma_rms_norm_quant
+ from .ops.fused_gdn_gated_norm import fused_gdn_gated_rms_norm
+-from .ops.fused_norm_quant import FP8_DTYPE, gemma_add_rms_norm_quant
++from .ops.fused_norm_quant import (
++    FP8_DTYPE,
++    gemma_add_rms_norm_dyn128,
++    gemma_add_rms_norm_quant,
++)
+ 
+ logger = init_logger(__name__)
+ 
+@@ -141,6 +146,9 @@ def _norm_quant_key(linear: nn.Module) -> QuantKey | None:
+     key = get_input_quant_key(linear)
+     if key == kFp8StaticTensorSym:
+         return key
++    # Dynamic per-token-group-128 e4m3 (the checkpoint's W8A8 activation scheme).
++    if key == kFp8Dynamic128Sym and linear.input_size_per_partition % 128 == 0:
++        return key
+     # The norm writes block scales for exactly K = hidden_size, in whole
+     # 4-column scale tiles (weights only require K % 32 == 0).
+     if (
+@@ -175,6 +183,17 @@ def _fused_gdn_gated_rms_norm_quant(
+     )
+ 
+ 
++def _dyn128_layout_ok(x: torch.Tensor, residual: torch.Tensor | None) -> bool:
++    """gemma_add_rms_norm_dyn128 indexes rows with stride H: needs 2-D
++    contiguous bf16/fp16 inputs (and a matching contiguous residual)."""
++    return (
++        x.dim() == 2
++        and x.is_contiguous()
++        and x.dtype in (torch.bfloat16, torch.float16)
++        and (residual is None or (residual.shape == x.shape and residual.is_contiguous()))
++    )
++
++
+ class Qwen3_5RMSNorm(nn.Module):
+     """Gemma-style RMS normalization backed by flashinfer kernels.
+ 
+@@ -230,6 +249,8 @@ class Qwen3_5RMSNorm(nn.Module):
+         """
+         allreduce = self.reduce_inputs and residual is not None
+         key = None if linear is None else _norm_quant_key(linear)
++        if key == kFp8Dynamic128Sym and not _dyn128_layout_ok(x, residual):
++            key = None  # unfused fallback for layouts the Triton kernel can't index
+         if key is None:
+             if allreduce:
+                 assert residual is not None
+@@ -239,6 +260,22 @@ class Qwen3_5RMSNorm(nn.Module):
+             return None, *self(x, residual)
+ 
+         assert linear is not None
++        if key == kFp8Dynamic128Sym:
++            if allreduce:
++                assert residual is not None
++                # Explicit all-reduce, then the norm + group-quant kernel.
++                x = tensor_model_parallel_all_reduce(x)
++            q, block_scale, y = gemma_add_rms_norm_dyn128(
++                x, residual, self.weight, self.variance_epsilon, write_y
++            )
++            qa = QuantizedActivation(
++                data=q,
++                scale=block_scale,
++                orig_dtype=x.dtype,
++                orig_shape=x.shape,
++                quant_key=key,
++            )
++            return qa, y, x if residual is None else residual
+         nvfp4 = key == kNvfp4Dynamic
+         scale = linear.input_global_scale_inv if nvfp4 else linear.input_scale
+         if allreduce:
+diff --git a/vllm/models/qwen3_5/nvidia/ops/fused_norm_quant.py b/vllm/models/qwen3_5/nvidia/ops/fused_norm_quant.py
+index 65abf238b8..0dd896bdb2 100644
+--- a/vllm/models/qwen3_5/nvidia/ops/fused_norm_quant.py
++++ b/vllm/models/qwen3_5/nvidia/ops/fused_norm_quant.py
+@@ -214,3 +214,103 @@ def gemma_add_rms_norm_quant(
+         TRIGGER_EARLY=M <= 128,
+     )
+     return q, block_scale, y
++
++
++@triton.jit
++def _gemma_add_rms_norm_dyn128_kernel(
++    x_ptr,
++    res_ptr,
++    w_ptr,
++    q_ptr,
++    s_ptr,
++    y_ptr,
++    eps,
++    H: tl.constexpr,
++    GS: tl.constexpr,
++    HAS_RESIDUAL: tl.constexpr,
++    WRITE_Y: tl.constexpr,
++):
++    """Gemma add-RMSNorm fused with dynamic per-token-group e4m3 quant.
++
++    Same arithmetic as the unfused chain: the norm output is rounded to the
++    activation dtype, then per group of GS columns
++    ``scale = max(absmax, 1e-10) / 448``, ``q = clamp(y * (1 / scale))``
++    (per_token_group_quant_fp8 / QuantFP8 with use_ue8m0=False).
++    """
++    G: tl.constexpr = triton.next_power_of_2(H // GS)
++    row = tl.program_id(0).to(tl.int64)
++    g = tl.arange(0, G)
++    j = tl.arange(0, GS)
++    cols = g[:, None] * GS + j[None, :]
++    mask = cols < H
++
++    x = tl.load(x_ptr + row * H + cols, mask=mask, other=0.0)
++    if HAS_RESIDUAL:
++        r = tl.load(res_ptr + row * H + cols, mask=mask, other=0.0)
++    w = tl.load(w_ptr + cols, mask=mask, other=0.0)
++
++    h = x.to(tl.float32)
++    if HAS_RESIDUAL:
++        h += r.to(tl.float32)
++        # Residual stream: the fp32 sum, like flashinfer's fused_add_rmsnorm.
++        tl.store(res_ptr + row * H + cols, h, mask=mask)
++    var = tl.sum(h * h) / H
++    rstd = tl.rsqrt(var + eps)
++    y = (h * rstd * (1.0 + w.to(tl.float32))).to(x_ptr.dtype.element_ty)
++    if WRITE_Y:
++        tl.store(y_ptr + row * H + cols, y, mask=mask)
++    y = y.to(tl.float32)
++
++    amax = tl.maximum(tl.max(tl.abs(y), axis=1), 1e-10)
++    # Plain fp32 `/` (div.full, fast-math division) reproduces the CUDA
++    # per_token_group_quant kernel, which is compiled with --use_fast_math:
++    # scales and codes were bit-identical to the unfused chain in the unit test
++    # (div_rn did not match: 57% of scales differed by one ulp).
++    scale = amax / 448.0
++    inv = 1.0 / scale
++    q = tl.clamp(y * inv[:, None], -FP8_MAX, FP8_MAX)
++    tl.store(q_ptr + row * H + cols, q, mask=mask)
++    tl.store(s_ptr + row * (H // GS) + g, scale, mask=g < H // GS)
++
++
++def gemma_add_rms_norm_dyn128(
++    x: torch.Tensor,
++    residual: torch.Tensor | None,
++    weight: torch.Tensor,
++    eps: float,
++    write_y: bool = False,
++    group_size: int = 128,
++) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
++    """Gemma RMSNorm of ``x (+ residual)`` quantized to dynamic per-token-group
++    e4m3 for the next linear (the checkpoint's W8A8 activation scheme).
++
++    Returns ``(q, scales, y)``: fp8 data (M, H), fp32 scales (M, H // group_size)
++    row-major, and the bf16 normed activation (or None). ``residual`` is updated
++    in place to x + residual, like gemma_fused_add_rmsnorm.
++    """
++    assert x.dim() == 2 and x.is_contiguous()
++    assert x.dtype in (torch.bfloat16, torch.float16)
++    assert residual is None or (residual.shape == x.shape and residual.is_contiguous())
++    M, H = x.shape
++    assert weight.shape == (H,) and weight.is_contiguous()
++    assert H % group_size == 0
++    q = torch.empty((M, H), dtype=FP8_DTYPE, device=x.device)
++    scales = torch.empty((M, H // group_size), dtype=torch.float32, device=x.device)
++    y = torch.empty_like(x) if write_y else None
++    if M == 0:
++        return q, scales, y
++    _gemma_add_rms_norm_dyn128_kernel[(M,)](
++        x,
++        residual if residual is not None else x,
++        weight,
++        q,
++        scales,
++        y if y is not None else x,
++        eps,
++        H=H,
++        GS=group_size,
++        HAS_RESIDUAL=residual is not None,
++        WRITE_Y=write_y,
++        num_warps=8,
++    )
++    return q, scales, y

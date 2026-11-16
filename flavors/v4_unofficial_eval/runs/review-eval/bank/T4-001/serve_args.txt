@@ -1,0 +1,5 @@
+--compilation-config '{"max_prefill_cudagraph_capture_tokens": 2048}'
+--enable-batch-sharded-sampling
+--speculative-config '{"method":"mtp","num_speculative_tokens":2,"use_local_argmax_reduction":true,"draft_lm_head_quantization":"fp8"}'
+--kernel-config '{"linear_backend_per_quant": {"fp8_block_w8a8": "triton"}}'
+--kv-cache-memory 4724464025

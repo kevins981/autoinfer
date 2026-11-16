@@ -1,0 +1,21 @@
+{
+  "id": 117,
+  "pid": 2720405,
+  "team": "T6",
+  "agent": "leader-6",
+  "label": "eval:t6-hmar768",
+  "timeout_min": 14.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/task/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t6-arbig",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/bank/T6-001/eval/1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/bank/T3-007/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T06:32:20+00:00",
+  "state": "cancelled",
+  "started": "2026-11-16T06:38:57+00:00",
+  "ended": "2026-11-16T06:40:18+00:00",
+  "exit_code": 130,
+  "gpu_minutes": 1.351
+}

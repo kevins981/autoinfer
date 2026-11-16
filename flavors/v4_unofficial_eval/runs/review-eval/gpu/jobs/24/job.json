@@ -1,0 +1,18 @@
+{
+  "id": 24,
+  "pid": 2467305,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "t2:tune2",
+  "timeout_min": 8.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-2.w1/mb/tune2_driver.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T01:16:50+00:00",
+  "state": "done",
+  "started": "2026-11-16T01:19:24+00:00",
+  "ended": "2026-11-16T01:23:19+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.92
+}

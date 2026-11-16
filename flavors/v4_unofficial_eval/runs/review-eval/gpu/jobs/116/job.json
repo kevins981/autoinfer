@@ -1,0 +1,18 @@
+{
+  "id": 116,
+  "pid": 2717811,
+  "team": "T6",
+  "agent": "leader-6.w1",
+  "label": "w1-numchk4",
+  "timeout_min": 3.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-6.w1/numchk.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T06:30:00+00:00",
+  "state": "done",
+  "started": "2026-11-16T06:38:39+00:00",
+  "ended": "2026-11-16T06:38:56+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.289
+}

@@ -1,0 +1,18 @@
+{
+  "id": 82,
+  "pid": 2640522,
+  "team": "T4",
+  "agent": "leader-4.w1",
+  "label": "arn-qprobe",
+  "timeout_min": 3.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-4.w1/qprobe_job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t4-arn",
+  "submitted": "2026-11-16T05:10:22+00:00",
+  "state": "done",
+  "started": "2026-11-16T05:10:22+00:00",
+  "ended": "2026-11-16T05:10:33+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.184
+}

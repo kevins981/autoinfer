@@ -1,0 +1,18 @@
+{
+  "id": 70,
+  "pid": 2606302,
+  "team": "T4",
+  "agent": "leader-4.w1",
+  "label": "rp-bench",
+  "timeout_min": 4.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-4.w1/rp_job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t4-rp",
+  "submitted": "2026-11-16T04:29:59+00:00",
+  "state": "done",
+  "started": "2026-11-16T04:31:01+00:00",
+  "ended": "2026-11-16T04:31:08+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.109
+}

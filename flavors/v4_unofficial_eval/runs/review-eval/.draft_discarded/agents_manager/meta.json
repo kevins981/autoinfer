@@ -1,0 +1,16 @@
+{
+  "name": "manager",
+  "role": "manager",
+  "team": null,
+  "parent": "human",
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "pid": 2400334,
+  "pgid": null,
+  "session_id": null,
+  "model": null,
+  "started": "2026-11-15T23:42:34+00:00",
+  "stopped": null,
+  "registered": true,
+  "last_task": null,
+  "last_task_at": null
+}

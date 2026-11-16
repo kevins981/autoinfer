@@ -1,0 +1,365 @@
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..63fcb5bd9c
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,66 @@
++{
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 3
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "128": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..35a68f7d98
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,66 @@
++{
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "128": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..fa4522befa
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,66 @@
++{
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "128": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..83dbe5605b
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,66 @@
++{
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "128": {
++  "BLOCK_SIZE_M": 128,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..fd87d5d87e
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,66 @@
++{
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "128": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file

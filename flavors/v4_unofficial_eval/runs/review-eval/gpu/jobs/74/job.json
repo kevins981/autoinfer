@@ -1,0 +1,18 @@
+{
+  "id": 74,
+  "pid": 2614156,
+  "team": "T4",
+  "agent": "leader-4.w1",
+  "label": "rp-server",
+  "timeout_min": 9.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-4.w1/srv_job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T04:40:24+00:00",
+  "state": "done",
+  "started": "2026-11-16T04:43:30+00:00",
+  "ended": "2026-11-16T04:47:56+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 4.425
+}

@@ -1,0 +1,19 @@
+{
+  "id": 90,
+  "pid": 2661477,
+  "team": "T5",
+  "agent": "leader-5.w1",
+  "label": "dl-unit",
+  "timeout_min": 5.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-5.w1/dl/run_test.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T05:35:30+00:00",
+  "state": "done",
+  "started": "2026-11-16T05:35:30+00:00",
+  "ended": "2026-11-16T05:35:34+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.071
+}

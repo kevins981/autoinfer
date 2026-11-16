@@ -34,6 +34,9 @@ evals/runs/
 # proposals, reports, official results.json); skip raw per-request outputs, binaries and the task copy
 flavors/*/runs/*/task/
 flavors/*/runs/*/bank/*/official/*/trial*/
+flavors/*/runs/*/bank/*/eval/**/trial*/
+flavors/*/runs/*/bank/*/eval/**/gsm8k.json
+flavors/*/runs/*/bank/*/eval/**/*.log
 flavors/*/runs/*/bank/*/official/*/gsm8k.json
 flavors/*/runs/*/bank/*/accuracy/
 *.pt

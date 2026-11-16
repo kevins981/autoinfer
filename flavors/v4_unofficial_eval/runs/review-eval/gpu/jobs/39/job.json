@@ -1,0 +1,18 @@
+{
+  "id": 39,
+  "pid": 2506085,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "t1:hmar-sweep",
+  "timeout_min": 3.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-1.w1/run_hmar_sweep.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T02:03:44+00:00",
+  "state": "done",
+  "started": "2026-11-16T02:11:56+00:00",
+  "ended": "2026-11-16T02:12:04+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.139
+}

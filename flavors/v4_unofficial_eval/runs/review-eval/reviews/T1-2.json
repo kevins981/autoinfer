@@ -1,0 +1,10 @@
+{
+ "id": "T1-2",
+ "team": "T1",
+ "by": "leader-1",
+ "model": "gpt-6.1-sol",
+ "effort": "high",
+ "session": "01a1e1e7-1c48-74c2-80ce-871e49085d18",
+ "turns": 1,
+ "started": "2026-11-16T01:09:41.833177+00:00"
+}

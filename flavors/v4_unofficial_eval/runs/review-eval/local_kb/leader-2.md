@@ -1,0 +1,17 @@
+# leader-2 local KB
+- 2026-11-16T00:05:08+00:00: received leader-1's split proposal (contained parts of T1's ranking: AR transport/NCCL env + PCIe-IPC, draft lm_head fp8/reduced vocab, k=3; T2 to take W8A8 mixed GEMM) and its retraction, plus manager's note. They arrived in my context right after my write of 4-knobs.md returned (4-knobs.md content was composed before I saw them; see file mtimes). Files 5-6 must be from own work; I will not change 4-knobs.md.
+- Files 1-6 + T2-sweep.md written 00:05-00:10. Split with T1 agreed: T1 = AR transport, draft lm_head fp8/reduced vocab, k=3. T2 = W1 mixed-step graphs, W8A8 mixed GEMM, argmax-before-gather, lm_head kernel choice.
+- T1 AR data (job 1): NCCL default 60us@M42, 205us@M260, Simple same, LL128 worse; FlashInfer IPC AR fails w/o P2P. => mixed-step 481us AR is mostly rank-skew waiting.
+- Job 4 = harness W1 (max_prefill_cudagraph_capture_tokens 2048), out agents/leader-2/w1graphs/eval1.
+- Draft local argmax: speculative-config "use_local_argmax_reduction": true (qwen3_5_mtp has get_top_tokens). Exact (draft side). Target side would need code (rejection sampler).
+- Worker task1 (jobs 2,3): NCCL default already picks Simple from 48 rows; Triton block-W8A8 (default cfg) beats Marlin 25-35% at M>=256, loses at M<=64 (50-120us floor). Can't keep 2 weight layouts -> worker task2: cold-L2 + Triton tuning to see if one plain layout works.
+- Target gather: flag --enable-batch-sharded-sampling (qwen3_5 has compute_logits_local) -> all-to-all instead of all-gather. Draft: speculative-config use_local_argmax_reduction.
+- T2-001 promoted (689.5). T1-001 = fp8 draft head flag (678.4).
+- Worker task2 (job 6): tuned Triton W8A8 (plain layout) beats Marlin at every M cold (GEMM only); +15us quant per GEMM outside graph makes M<=64 a wash; large M per token 94-110 vs 161 us (-35-40%). Configs: agents/leader-2.w1/mb/tuned_configs.
+- Worker task3: T2-001 + kernel-config linear_backend_per_quant triton + tuned configs, harness GATES=long,gsm8k.
+- Job 10 = combo2 (T2-001 + fp8 draft head + batch-sharded sampling + local argmax); T1 job 11 = T2-001+T1-001 reference.
+- Review T2-1: GDN core is @eager_break_during_capture -> still eager in mixed-step replay. Candidate: make GDN chunked-prefill capturable (or cut its python overhead). Records T2-001/002 annotated.
+- T2-003 promoted 707.0; T2-004 (W8A8 tuned Triton) promoted 743.9 (+17% vs BASE). Reviews T2-2, T2-3 applied.
+- Profile T2-003 graph-level (job 19): mixed steps GPU idle 7.65 ms, eager GDN ~7 ms -> N1 worth <=2%. Target lm_head eager ampere 1.59 ms at M=48 -> job 22 lm_head bench.
+- Worker task4: compile mode fusion (job 21).
+- job 22: lm_head per GPU is 1.27 GB (my 3-calibration said 0.635: error, 2x). Target lm_head 1.59 ms = ~800 GB/s; best variant (pre-transposed) ~845-884 GB/s at M=48 (-0.1..0.2 ms). R2' dead. Draft lm_head 1.37 ms at 8-CTA grid also ~930 GB/s -> R2a dead too.

@@ -1,0 +1,22 @@
+{
+  "id": 44,
+  "pid": 2528126,
+  "team": "T3",
+  "agent": "leader-3",
+  "label": "prof:t3-champ-node",
+  "timeout_min": 12.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-3/prof.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t3-champ",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-3/prof1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/bank/T1-007/serve_args.txt",
+    "64"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t3-champ",
+  "submitted": "2026-11-16T02:56:38+00:00",
+  "state": "done",
+  "started": "2026-11-16T02:56:38+00:00",
+  "ended": "2026-11-16T02:59:11+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.544
+}

@@ -1,0 +1,21 @@
+{
+  "id": 119,
+  "pid": 2729119,
+  "team": "T6",
+  "agent": "leader-6",
+  "label": "eval:t6-stack",
+  "timeout_min": 14.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/task/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t6-stack",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-6/ev_stack1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/bank/T5-001/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T06:41:22+00:00",
+  "state": "done",
+  "started": "2026-11-16T06:42:40+00:00",
+  "ended": "2026-11-16T06:50:11+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 7.515
+}

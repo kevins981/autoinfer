@@ -1,0 +1,18 @@
+{
+  "id": 1,
+  "pid": 2405072,
+  "team": "T1",
+  "agent": "leader-1.w1",
+  "label": "w1-ar-bench",
+  "timeout_min": 6.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-1.w1/run.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-15T23:59:46+00:00",
+  "state": "timed out",
+  "started": "2026-11-15T23:59:46+00:00",
+  "ended": "2026-11-16T00:05:46+00:00",
+  "exit_code": 124,
+  "gpu_minutes": 6.0
+}

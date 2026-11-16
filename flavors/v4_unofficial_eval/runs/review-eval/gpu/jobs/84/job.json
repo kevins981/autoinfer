@@ -1,0 +1,18 @@
+{
+  "id": 84,
+  "pid": 2641624,
+  "team": "T4",
+  "agent": "leader-4.w1",
+  "label": "arn-server",
+  "timeout_min": 11.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-4.w1/arn_srv_job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T05:11:54+00:00",
+  "state": "done",
+  "started": "2026-11-16T05:11:54+00:00",
+  "ended": "2026-11-16T05:18:22+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 6.477
+}

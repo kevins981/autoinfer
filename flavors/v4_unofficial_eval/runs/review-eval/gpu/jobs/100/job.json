@@ -1,0 +1,19 @@
+{
+  "id": 100,
+  "pid": 2681585,
+  "team": "T5",
+  "agent": "leader-5.w1",
+  "label": "dl-dbg4",
+  "timeout_min": 6.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-5.w1/dl/dbg.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T05:55:31+00:00",
+  "state": "done",
+  "started": "2026-11-16T05:55:31+00:00",
+  "ended": "2026-11-16T05:56:45+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 1.22
+}

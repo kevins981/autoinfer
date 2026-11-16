@@ -1,0 +1,18 @@
+{
+  "id": 56,
+  "pid": 2560801,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "t2:og_unit3",
+  "timeout_min": 3.0,
+  "command": [
+    "agents/leader-2.w1/og/driver.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T03:36:57+00:00",
+  "state": "done",
+  "started": "2026-11-16T03:43:47+00:00",
+  "ended": "2026-11-16T03:44:00+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.215
+}

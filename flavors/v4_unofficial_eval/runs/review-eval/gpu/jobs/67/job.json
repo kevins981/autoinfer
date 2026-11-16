@@ -1,0 +1,24 @@
+{
+  "id": 67,
+  "pid": 2590771,
+  "team": "T3",
+  "agent": "leader-3",
+  "label": "eval:T3-003-t3",
+  "timeout_min": 10.0,
+  "command": [
+    "env",
+    "TRIALS=1",
+    "GATES=none",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/task/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t3-pf",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/bank/T3-003/eval/2",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/bank/T3-003/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T04:14:35+00:00",
+  "state": "done",
+  "started": "2026-11-16T04:19:05+00:00",
+  "ended": "2026-11-16T04:22:03+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 2.958
+}

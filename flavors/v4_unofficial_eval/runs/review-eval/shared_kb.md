@@ -1,0 +1,2 @@
+
+- KB1: Model snapshot. This run's servers load HF snapshot c3a462c of Qwen/Qwen3.8-27B-FP8; BASE's official result used 017b9c7. Weight blobs and config.json are identical; only chat_template.jinja and tokenizer_config.json differ (generation markers), with the same rendered prompts: benchmark input tokens 104,526 in both. Comparisons against BASE hold. (bank/T1-001/record.md, reviews/T1-1; server.logs of bank/T1-001, bank/T2-001 eval/1 vs task/baseline/official)

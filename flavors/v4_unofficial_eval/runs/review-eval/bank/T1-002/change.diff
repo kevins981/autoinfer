@@ -1,0 +1,98 @@
+diff --git a/vllm/v1/worker/gpu/spec_decode/eagle/utils.py b/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
+index 8cba9af864..806b7a71a9 100644
+--- a/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
++++ b/vllm/v1/worker/gpu/spec_decode/eagle/utils.py
+@@ -1,12 +1,13 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++import os
+ from typing import Literal
+ 
+ import torch
+ import torch.nn as nn
+ 
+ from vllm.config import VllmConfig, replace
+-from vllm.distributed.parallel_state import get_pp_group
++from vllm.distributed.parallel_state import get_pp_group, get_tp_group
+ from vllm.lora.layers.base import BaseLayerWithLoRA
+ from vllm.model_executor.layers.quantization.online.lm_head import (
+     quantized_lm_head_copy,
+@@ -72,6 +73,33 @@ def share_target_lm_head(
+     return head
+ 
+ 
++def build_reduced_draft_head(
++    target_lm_head: nn.Module, num_ids: int
++) -> torch.Tensor | None:
++    """Rows [0, num_ids) of the target lm_head as one replicated bf16/fp16
++    [num_ids, hidden] tensor on every TP rank (all-reduce of zero-padded
++    shards, so rows are copied bit-exactly). None if the head is not a plain
++    16-bit vocab-parallel head."""
++    weight = getattr(target_lm_head, "weight", None)
++    indices = getattr(target_lm_head, "shard_indices", None)
++    if (
++        not isinstance(weight, torch.Tensor)
++        or indices is None
++        or weight.dtype not in (torch.bfloat16, torch.float16)
++        or getattr(target_lm_head, "bias", None) is not None
++    ):
++        return None
++    num_ids = min(num_ids, target_lm_head.org_vocab_size)
++    buf = torch.zeros(num_ids, weight.shape[1], dtype=weight.dtype, device=weight.device)
++    start = indices.org_vocab_start_index
++    end = min(indices.org_vocab_end_index, num_ids)
++    if start < end:
++        buf[start:end] = weight[: end - start]
++    if target_lm_head.tp_size > 1:
++        buf = get_tp_group().all_reduce(buf)
++    return buf
++
++
+ def get_target_lm_head(target_model: nn.Module, target_language_model: nn.Module):
+     """The target's lm_head — from get_language_model() for
+     *ForConditionalGeneration targets, else the top-level module."""
+@@ -159,6 +187,16 @@ def load_eagle_model(target_model: nn.Module, vllm_config: VllmConfig) -> nn.Mod
+                     del sh.head
+                     sh.head = draft_head
+ 
++    # VLLM_MTP_DRAFT_VOCAB=K: greedy drafts come from a replicated head over
++    # token ids [0, K) (identity id map), so no TP logits gather is needed.
++    draft_vocab = int(os.environ.get("VLLM_MTP_DRAFT_VOCAB", "0"))
++    if draft_vocab > 0 and draft_head is not None:
++        reduced = build_reduced_draft_head(
++            get_target_lm_head(target_model, target_language_model), draft_vocab
++        )
++        if reduced is not None:
++            eagle_model.reduced_draft_head = reduced
++
+     # MTP shares topk_indices_buffer with the target model. We update
+     # every module in the draft that holds a buffer reference so that
+     # the per-layer indexer and sparse-attention backends all point to
+diff --git a/vllm/v1/worker/gpu/spec_decode/speculator.py b/vllm/v1/worker/gpu/spec_decode/speculator.py
+index 3040e3306d..1db5f8af9b 100644
+--- a/vllm/v1/worker/gpu/spec_decode/speculator.py
++++ b/vllm/v1/worker/gpu/spec_decode/speculator.py
+@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
+ import numpy as np
+ import torch
+ import torch.nn as nn
++import torch.nn.functional as F
+ 
+ from vllm.config import VllmConfig, get_layers_from_vllm_config
+ from vllm.config.compilation import CUDAGraphMode
+@@ -568,6 +569,15 @@ class DraftModelSpeculator(BaseSpeculator):
+         spec_step_idx: int = 0,
+         num_steps: int = 1,
+     ) -> torch.Tensor:
++        reduced_head = getattr(self.model, "reduced_draft_head", None)
++        if (
++            reduced_head is not None
++            and draft_logits is None
++            and self.acceptance_estimator is None
++            and self.draft_watermarker is None
++        ):
++            # Replicated head over ids [0, K): local matmul + argmax, no gather.
++            return greedy_argmax(F.linear(hidden_states, reduced_head))
+         if draft_logits is None and self.use_local_argmax_reduction:
+             return self.get_draft_top_tokens(hidden_states, spec_step_idx)
+ 

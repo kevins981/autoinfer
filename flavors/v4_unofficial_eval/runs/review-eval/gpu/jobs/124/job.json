@@ -1,0 +1,18 @@
+{
+  "id": 124,
+  "pid": 2753475,
+  "team": "T8",
+  "agent": "leader-8",
+  "label": "mb:t8-f16acc",
+  "timeout_min": 4.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-8/mb/run.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T07:09:08+00:00",
+  "state": "done",
+  "started": "2026-11-16T07:09:08+00:00",
+  "ended": "2026-11-16T07:09:19+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.173
+}

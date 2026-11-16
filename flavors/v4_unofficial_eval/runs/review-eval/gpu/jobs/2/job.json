@@ -1,0 +1,18 @@
+{
+  "id": 2,
+  "pid": 2407155,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "t2:ar_bench",
+  "timeout_min": 5.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-2.w1/mb/ar_driver.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T00:02:29+00:00",
+  "state": "done",
+  "started": "2026-11-16T00:05:48+00:00",
+  "ended": "2026-11-16T00:06:37+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.826
+}

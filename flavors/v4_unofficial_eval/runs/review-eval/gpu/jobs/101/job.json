@@ -1,0 +1,18 @@
+{
+  "id": 101,
+  "pid": 2683329,
+  "team": "T6",
+  "agent": "leader-6.w1",
+  "label": "w1-armicro",
+  "timeout_min": 8.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-6.w1/job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T05:56:46+00:00",
+  "state": "done",
+  "started": "2026-11-16T05:56:46+00:00",
+  "ended": "2026-11-16T05:57:20+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.573
+}

@@ -1,0 +1,22 @@
+{
+  "id": 15,
+  "pid": 2435442,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "eval:t2-w8a8",
+  "timeout_min": 20.0,
+  "command": [
+    "env",
+    "GATES=long,gsm8k",
+    "STOP_BELOW=689",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/task/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t2-w8a8",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-2.w1/w8a8/eval1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-2.w1/w8a8/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T00:40:22+00:00",
+  "state": "refused",
+  "reason": "budget exhausted: 18.1 GPU-min left for team T2, the job asks for up to 20 (lower --timeout, do GPU-free work, or request a resync from the manager)",
+  "ended": "2026-11-16T00:49:07+00:00"
+}

@@ -1,0 +1,18 @@
+{
+  "id": 87,
+  "pid": 2656914,
+  "team": "T4",
+  "agent": "leader-4.w1",
+  "label": "rp2-test",
+  "timeout_min": 3.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-4.w1/rp2_job.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t4-rp2",
+  "submitted": "2026-11-16T05:31:17+00:00",
+  "state": "done",
+  "started": "2026-11-16T05:31:17+00:00",
+  "ended": "2026-11-16T05:31:23+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.096
+}

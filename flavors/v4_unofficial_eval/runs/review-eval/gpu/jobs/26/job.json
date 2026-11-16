@@ -1,0 +1,26 @@
+{
+  "id": 26,
+  "pid": 2471546,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "eval:t1-hmar-on-T2-004",
+  "timeout_min": 12.0,
+  "command": [
+    "env",
+    "STOP_BELOW=744",
+    "VLLM_HOST_MAPPED_AR=1",
+    "VLLM_HMAR_BUILD_DIR=/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-1.w1/hmar_build",
+    "CUDA_HOME=/usr/local/cuda-12.6",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/task/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t1-car",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-1/runs/hmar",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/bank/T2-004/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T01:24:30+00:00",
+  "state": "done",
+  "started": "2026-11-16T01:24:30+00:00",
+  "ended": "2026-11-16T01:32:20+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 7.842
+}

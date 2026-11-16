@@ -1,0 +1,21 @@
+{
+  "id": 4,
+  "pid": 2409779,
+  "team": "T2",
+  "agent": "leader-2",
+  "label": "eval:t2-prefillgraphs2048",
+  "timeout_min": 17.0,
+  "command": [
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/task/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t2-base",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-2/w1graphs/eval1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-2/w1graphs/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T00:05:59+00:00",
+  "state": "done",
+  "started": "2026-11-16T00:06:58+00:00",
+  "ended": "2026-11-16T00:18:03+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 11.093
+}

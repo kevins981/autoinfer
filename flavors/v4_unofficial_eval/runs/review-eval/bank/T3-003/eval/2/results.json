@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "completed": 400.0,
+  "output_throughput": 835.061,
+  "total_token_throughput": 1794.782,
+  "median_ttft_ms": 167.49,
+  "p99_ttft_ms": 963.486,
+  "median_tpot_ms": 17.69,
+  "p99_tpot_ms": 33.462,
+  "median_itl_ms": 31.571,
+  "median_e2el_ms": 3513.906,
+  "mtp_acceptance_length": 2.348,
+  "n_trials": 1,
+  "trials": [
+    {
+      "completed": 400,
+      "output_throughput": 835.0613416760758,
+      "total_token_throughput": 1794.7818641670708,
+      "median_ttft_ms": 167.48953599017113,
+      "p99_ttft_ms": 963.4856651281007,
+      "median_tpot_ms": 17.689535830060667,
+      "p99_tpot_ms": 33.46188411612284,
+      "median_itl_ms": 31.570558960083872,
+      "median_e2el_ms": 3513.905702478951,
+      "mtp_acceptance_length": 2.348,
+      "mtp_acceptance_per_position": [
+        0.782,
+        0.566
+      ]
+    }
+  ],
+  "vs_baseline_pct": 31.31,
+  "p99_vs_baseline": {
+    "p99_ttft_ms": 0.718,
+    "p99_tpot_ms": 0.726
+  },
+  "gate_latency": "pass"
+}

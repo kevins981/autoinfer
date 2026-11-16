@@ -1,0 +1,2216 @@
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..ff9aa96a70 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -2,6 +2,8 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ 
++import os
++
+ import torch
+ from torch.distributed import ProcessGroup
+ 
+@@ -118,6 +120,20 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         self.fi_ar_comm: FlashInferAllReduce | None = None
+         self.fi_pcie_ipc_ar_comm: FlashInferPcieIpcAllReduce | None = None
+         self.aiter_ar_comm: AiterCustomAllreduce | None = None
++        self.hm_ar_comm = None
++        if self.world_size == 2 and unique_name.split(":")[0] == "tp":
++            from vllm.distributed.device_communicators.host_mapped_all_reduce import (
++                HostMappedAllReduce,
++                hm_ar_requested,
++            )
++
++            config = get_current_vllm_config_or_none()
++            # One shared epoch/slot set: never with micro-batch overlap, which
++            # issues collectives from a second (comm) stream.
++            ubatching = config is not None and config.parallel_config.use_ubatching
++            if hm_ar_requested(self.world_size) != "0" and not ubatching:
++                comm = HostMappedAllReduce(self.cpu_group, self.device)
++                self.hm_ar_comm = None if comm.disabled else comm
+         self.use_aiter_ag_rs: bool = False
+ 
+         # cuMem graph buffers cannot be IPC-registered; capture copies them instead.
+@@ -316,6 +332,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         depends on the input tensor.
+         """
+         all_potential_ar_backends = [
++            "HMAR",
+             "FLASHINFER_PCIE_IPC",
+             "FLASHINFER",
+             "NCCL_SYMM_MEM",
+@@ -326,6 +343,8 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             "PYNCCL",
+         ]
+         enabled_ar_backends: list[str] = []
++        if self.hm_ar_comm is not None and not self.hm_ar_comm.disabled:
++            enabled_ar_backends.append("HMAR")  # host-mapped, <= 96 rows bf16
+         if (
+             self.fi_pcie_ipc_ar_comm is not None
+             and not self.fi_pcie_ipc_ar_comm.disabled
+@@ -408,6 +427,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             out = qr_comm.quick_all_reduce(input_)
+             assert out is not None
+             return out
++        hm_ar_comm = self.hm_ar_comm
++        if hm_ar_comm is not None and hm_ar_comm.should_use(input_):
++            return hm_ar_comm.all_reduce(input_)
+         fi_pcie_ipc_ar_comm = self.fi_pcie_ipc_ar_comm
+         if fi_pcie_ipc_ar_comm is not None and fi_pcie_ipc_ar_comm.should_use(input_):
+             return fi_pcie_ipc_ar_comm.all_reduce(input_)
+diff --git a/vllm/distributed/device_communicators/hmar/hmar.cu b/vllm/distributed/device_communicators/hmar/hmar.cu
+new file mode 100644
+index 0000000000..cc43692b92
+--- /dev/null
++++ b/vllm/distributed/device_communicators/hmar/hmar.cu
+@@ -0,0 +1,153 @@
++// Host-mapped TP=2 all-reduce (no P2P): each rank writes its bf16 partial into
++// its own slot of a pinned, mapped host buffer shared by both processes, raises a
++// per-block epoch flag, spins on the peer's flag, reads the peer's slot and sums
++// in fp32, rounding to bf16. Each rank computes local+peer, so the operand order is
++// swapped between ranks; both results are bit-identical because a single fp32
++// addition is commutative (and the same RN rounding follows).
++// Contract: collectives of one communicator are issued in the same order on both
++// ranks from ONE stream (graph replays included); epochs/slots are not safe for
++// concurrent launches. The input pointer must be 16-byte aligned.
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAGuard.h>
++#include <cuda_bf16.h>
++#include <cuda_runtime.h>
++#include <stdint.h>
++
++constexpr int NBLK = 16;            // fixed grid: per-block epochs, per-block regions
++constexpr int NTHR = 512;
++constexpr int FLAG_STRIDE = 64;     // bytes between flags
++constexpr int NSUB = 4;             // flag slots per block (layout kept; only slot 0 is used)
++constexpr int FLAGS_BYTES = 2 * NBLK * NSUB * FLAG_STRIDE;  // 8192
++constexpr int REGION_BYTES = 65536; // per (rank, parity, block): <= 64 KB payload
++// layout: [flags 4096][data: rank(2) x parity(2) x block(16) x REGION_BYTES]
++constexpr size_t TOTAL_BYTES =
++    FLAGS_BYTES + (size_t)2 * 2 * NBLK * REGION_BYTES;
++
++__device__ __forceinline__ uint32_t ld_acquire_sys(const uint32_t* p) {
++  uint32_t v;
++  asm volatile("ld.acquire.sys.global.u32 %0, [%1];" : "=r"(v) : "l"(p) : "memory");
++  return v;
++}
++__device__ __forceinline__ void st_release_sys(uint32_t* p, uint32_t v) {
++  asm volatile("st.release.sys.global.u32 [%0], %1;" ::"l"(p), "r"(v) : "memory");
++}
++__device__ __forceinline__ uint4 ld_vol_v4(const uint4* p) {
++  uint4 v;
++  asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
++               : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w) : "l"(p) : "memory");
++  return v;
++}
++__device__ __forceinline__ void st_v4(uint4* p, uint4 v) {
++  asm volatile("st.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(p), "r"(v.x), "r"(v.y),
++               "r"(v.z), "r"(v.w) : "memory");
++}
++__device__ __forceinline__ uint32_t add_bf16x2(uint32_t a, uint32_t b) {
++  __nv_bfloat162 x = *reinterpret_cast<__nv_bfloat162*>(&a);
++  __nv_bfloat162 y = *reinterpret_cast<__nv_bfloat162*>(&b);
++  float2 fx = __bfloat1622float2(x), fy = __bfloat1622float2(y);
++  __nv_bfloat162 r = __floats2bfloat162_rn(fx.x + fy.x, fx.y + fy.y);
++  return *reinterpret_cast<uint32_t*>(&r);
++}
++
++__global__ void __launch_bounds__(NTHR)
++hmar_kernel(const uint4* __restrict__ in, uint4* __restrict__ out, char* shm,
++            uint32_t* epochs, int rank, int n_vec, int chunk) {
++  const int b = blockIdx.x;
++  __shared__ uint32_t s_epoch;
++  if (threadIdx.x == 0) s_epoch = epochs[b] + 1;
++  __syncthreads();
++  const uint32_t e = s_epoch;
++  const int parity = e & 1;
++  const int peer = 1 - rank;
++  uint32_t* flags = reinterpret_cast<uint32_t*>(shm);
++  uint32_t* my_flag = flags + ((rank * NBLK + b) * NSUB) * (FLAG_STRIDE / 4);
++  const uint32_t* peer_flag = flags + ((peer * NBLK + b) * NSUB) * (FLAG_STRIDE / 4);
++  char* data = shm + FLAGS_BYTES;
++  uint4* my_slot = reinterpret_cast<uint4*>(
++      data + (((size_t)rank * 2 + parity) * NBLK + b) * REGION_BYTES);
++  const uint4* peer_slot = reinterpret_cast<const uint4*>(
++      data + (((size_t)peer * 2 + parity) * NBLK + b) * REGION_BYTES);
++
++  const int lo = b * chunk;
++  const int hi = min(lo + chunk, n_vec);
++  const int cnt = max(hi - lo, 0);
++  // 1. publish my partial
++  for (int i = threadIdx.x; i < cnt; i += NTHR) st_v4(my_slot + i, in[lo + i]);
++  __syncthreads();
++  // 2. release flag, 3. acquire peer flag
++  if (threadIdx.x == 0) {
++    st_release_sys(my_flag, e);
++    long long t0 = clock64();
++    while ((int)(ld_acquire_sys(peer_flag) - e) < 0) {
++      if (clock64() - t0 > 40000000000LL) {  // ~20 s
++        printf("hmar: timeout rank %d block %d epoch %u\n", rank, b, e);
++        __trap();
++      }
++    }
++  }
++  __syncthreads();
++  // 4. read peer's slot (volatile: never served from a stale cache line), sum
++  constexpr int U = 4;
++  for (int base = threadIdx.x; base < cnt; base += NTHR * U) {
++    uint4 pv[U];
++#pragma unroll
++    for (int u = 0; u < U; u++) {
++      int i = base + u * NTHR;
++      if (i < cnt) pv[u] = ld_vol_v4(peer_slot + i);
++    }
++#pragma unroll
++    for (int u = 0; u < U; u++) {
++      int i = base + u * NTHR;
++      if (i < cnt) {
++        uint4 a = in[lo + i], r;
++        r.x = add_bf16x2(a.x, pv[u].x);
++        r.y = add_bf16x2(a.y, pv[u].y);
++        r.z = add_bf16x2(a.z, pv[u].z);
++        r.w = add_bf16x2(a.w, pv[u].w);
++        out[lo + i] = r;
++      }
++    }
++  }
++  if (threadIdx.x == 0) epochs[b] = e;
++}
++
++int64_t total_bytes() { return (int64_t)TOTAL_BYTES; }
++int64_t max_payload_bytes() { return (int64_t)NBLK * REGION_BYTES; }
++
++// Pin + map an existing host range (shared-memory file) into this process's CUDA
++// context; returns the device pointer.
++int64_t register_host(int64_t ptr, int64_t nbytes) {
++  void* p = reinterpret_cast<void*>(ptr);
++  cudaError_t err = cudaHostRegister(p, nbytes, cudaHostRegisterMapped | cudaHostRegisterPortable);
++  TORCH_CHECK(err == cudaSuccess, "cudaHostRegister: ", cudaGetErrorString(err));
++  void* d = nullptr;
++  err = cudaHostGetDevicePointer(&d, p, 0);
++  TORCH_CHECK(err == cudaSuccess, "cudaHostGetDevicePointer: ", cudaGetErrorString(err));
++  return reinterpret_cast<int64_t>(d);
++}
++void unregister_host(int64_t ptr) { cudaHostUnregister(reinterpret_cast<void*>(ptr)); }
++
++void allreduce(torch::Tensor inp, torch::Tensor out, int64_t shm_dev, torch::Tensor epochs,
++               int64_t rank) {
++  const at::cuda::OptionalCUDAGuard guard(inp.device());
++  int64_t nbytes = inp.numel() * inp.element_size();
++  TORCH_CHECK(nbytes % 16 == 0 && nbytes <= max_payload_bytes());
++  TORCH_CHECK(reinterpret_cast<uintptr_t>(inp.data_ptr()) % 16 == 0, "hmar: unaligned input");
++  int n_vec = nbytes / 16;
++  int chunk = (n_vec + NBLK - 1) / NBLK;
++  auto* i = reinterpret_cast<const uint4*>(inp.data_ptr());
++  auto* o = reinterpret_cast<uint4*>(out.data_ptr());
++  auto* sh = reinterpret_cast<char*>(shm_dev);
++  auto* ep = reinterpret_cast<uint32_t*>(epochs.data_ptr());
++  auto stream = at::cuda::getCurrentCUDAStream();
++  hmar_kernel<<<NBLK, NTHR, 0, stream>>>(i, o, sh, ep, (int)rank, n_vec, chunk);
++}
++
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("total_bytes", &total_bytes);
++  m.def("max_payload_bytes", &max_payload_bytes);
++  m.def("register_host", &register_host);
++  m.def("unregister_host", &unregister_host);
++  m.def("allreduce", &allreduce);
++}
+diff --git a/vllm/distributed/device_communicators/host_mapped_all_reduce.py b/vllm/distributed/device_communicators/host_mapped_all_reduce.py
+new file mode 100644
+index 0000000000..5440bfbdfd
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_mapped_all_reduce.py
+@@ -0,0 +1,217 @@
++# SPDX-License-Identifier: Apache-2.0
++"""TP=2 all-reduce through host-mapped pinned memory, for GPUs without P2P.
++
++Each rank writes its bf16 partial into a pinned host buffer shared by both
++worker processes (zero-copy over PCIe), raises an epoch flag, waits for the
++peer's flag and sums both partials in fp32 (see hmar/hmar.cu). Bitwise equal
++to NCCL's 2-rank bf16 sum. Small tensors only; anything else falls through to
++the next backend.
++
++VLLM_HOST_MAPPED_AR: unset = on when TP=2 and the two GPUs cannot do P2P;
++"1" = force on; "0" = off. VLLM_HOST_MAPPED_AR_STATS=<path> writes the
++number of kernel launches (epoch flag read from the host mapping, no CUDA call) to <path>.rank<r> every
++2 s, for counting launches per decode step. Build the extension before the first run (no GPU needed):
++    python -m vllm.distributed.device_communicators.host_mapped_all_reduce
++"""
++
++import ctypes
++import hashlib
++import mmap
++import os
++import shutil
++import uuid
++
++import torch
++import torch.distributed as dist
++from torch.distributed import ProcessGroup
++
++from vllm.logger import init_logger
++from vllm.platforms import current_platform
++
++logger = init_logger(__name__)
++
++_EXT = None
++MAX_ROWS = 96
++MAX_ROW_BYTES = 5120 * 2
++
++
++def load_ext():
++    """Build (cached under TORCH_EXTENSIONS_DIR) and import the CUDA extension."""
++    global _EXT
++    if _EXT is None:
++        from torch.utils.cpp_extension import load
++
++        if "CUDA_HOME" not in os.environ and (nvcc := shutil.which("nvcc")):
++            os.environ["CUDA_HOME"] = os.path.dirname(os.path.dirname(nvcc))
++        os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "8.9")
++        src = os.path.join(os.path.dirname(__file__), "hmar", "hmar.cu")
++        # Name keyed on the source: an edited kernel gets a fresh build dir and
++        # can never overwrite the .so another running process has loaded.
++        with open(src, "rb") as f:
++            tag = hashlib.sha1(f.read()).hexdigest()[:8]
++        _EXT = load(
++            name=f"vllm_hmar_ext_{tag}",
++            sources=[src],
++            extra_cuda_cflags=["-O3"],
++            verbose=False,
++        )
++    return _EXT
++
++
++def hm_ar_requested(world_size: int) -> str:
++    """'0' off, '1' forced on, 'auto' on only without P2P."""
++    val = os.environ.get("VLLM_HOST_MAPPED_AR", "auto")
++    return val if world_size == 2 else "0"
++
++
++class HostMappedAllReduce:
++    def __init__(self, group: ProcessGroup, device: int | str | torch.device):
++        """Collective over `group` (gloo): every rank takes the same decision,
++        so a failure on one rank disables the backend on both."""
++        self.disabled = True
++        self.group = group
++        self.device = torch.device(device)
++        self.world_size = dist.get_world_size(group)
++        self.rank = dist.get_rank(group)
++        self._mm = None
++        mode = hm_ar_requested(self.world_size)
++        if mode == "0":
++            return
++        err = None
++        try:
++            self.ext = load_ext()
++        except Exception as ex:  # noqa: BLE001
++            err = f"extension unavailable: {ex!r}"
++        # Collective on every rank (never skipped by a local failure).
++        p2p = self._peer_p2p_ok() if mode == "auto" else False
++        if err is None and p2p:
++            err = "GPUs support P2P, leaving it to NCCL"
++        if not self._all_ok(err is None):
++            if err is not None and "P2P" not in err:
++                logger.warning("Host-mapped all-reduce disabled: %s", err)
++            return
++        total = self.ext.total_bytes()
++        name = None
++        try:
++            if self.rank == 0:
++                name = f"/dev/shm/vllm_hmar_{uuid.uuid4().hex}"
++                with open(name, "wb") as f:
++                    f.truncate(total)  # zero-filled: all flags start at epoch 0
++        except Exception as ex:  # noqa: BLE001
++            err, name = f"shm create failed: {ex!r}", None
++        objs = [name]
++        dist.broadcast_object_list(
++            objs, src=dist.get_process_group_ranks(group)[0], group=group
++        )
++        name = objs[0]
++        shm_dev = 0
++        try:
++            if name is None:
++                raise RuntimeError(err or "rank 0 could not create the shm file")
++            fd = os.open(name, os.O_RDWR)
++            self._mm = mmap.mmap(fd, total, mmap.MAP_SHARED)
++            os.close(fd)
++            self._addr = ctypes.addressof(ctypes.c_char.from_buffer(self._mm))
++            torch.cuda.set_device(self.device)
++            shm_dev = self.ext.register_host(self._addr, total)
++            self.epochs = torch.zeros(16, dtype=torch.int32, device=self.device)
++            err = None
++        except Exception as ex:  # noqa: BLE001
++            err = f"setup failed: {ex!r}"
++        ok = self._all_ok(err is None)
++        if self.rank == 0 and name is not None:
++            try:
++                os.unlink(name)  # every rank has opened it (agreement above)
++            except OSError:
++                pass
++        if not ok:
++            logger.warning("Host-mapped all-reduce disabled: %s", err or "peer failed")
++            self._mm = None
++            return
++        self.shm_dev = shm_dev
++        self.max_bytes = min(MAX_ROWS * MAX_ROW_BYTES, self.ext.max_payload_bytes())
++        self.disabled = False
++        logger.info(
++            "Host-mapped all-reduce enabled (rank %d, %d MiB pinned).",
++            self.rank,
++            total >> 20,
++        )
++        stats = os.environ.get("VLLM_HOST_MAPPED_AR_STATS")
++        if stats:
++            self._start_stats_thread(f"{stats}.rank{self.rank}")
++
++    def _start_stats_thread(self, path: str) -> None:
++        """Debug: dump the launch count every 2 s. Pure host code, no CUDA call
++        from this thread (a CUDA call during another thread's graph capture is
++        an error): the kernel publishes its epoch to this rank's block-0 flag
++        in the shared host buffer, which is read straight from the mmap."""
++        import struct
++        import threading
++        import time
++
++        mm = self._mm
++        offset = (self.rank * 16 * 4) * 64  # flag (rank, block 0, sub 0), 64 B stride
++
++        def run() -> None:
++            while True:
++                time.sleep(2.0)
++                count = struct.unpack_from("<I", mm, offset)[0]
++                with open(path, "w") as f:
++                    f.write(f"{count}\n")
++
++        threading.Thread(target=run, daemon=True, name="hmar-stats").start()
++
++    def _peer_p2p_ok(self) -> bool:
++        """True if the GPUs of the group can access each other (then NCCL P2P /
++        custom all-reduce is the better path)."""
++        try:
++            mine = current_platform.logical_device_id_to_visible_device_id(
++                self.device.index
++            )
++        except Exception:  # noqa: BLE001
++            mine = self.device.index
++        ids = [None] * self.world_size
++        dist.all_gather_object(ids, mine, group=self.group)
++        try:
++            return all(
++                torch.cuda.can_device_access_peer(ids[self.rank], ids[r])
++                for r in range(self.world_size)
++                if r != self.rank
++            )
++        except Exception:  # noqa: BLE001
++            return False
++
++    def _all_ok(self, ok: bool) -> bool:
++        flag = torch.tensor([1 if ok else 0], dtype=torch.int32)
++        dist.all_reduce(flag, op=dist.ReduceOp.MIN, group=self.group)
++        return bool(flag.item())
++
++    def should_use(self, inp: torch.Tensor) -> bool:
++        return (
++            not self.disabled
++            and inp.dtype == torch.bfloat16
++            and inp.is_cuda
++            and inp.is_contiguous()
++            and inp.data_ptr() % 16 == 0
++            and (inp.numel() * 2) % 16 == 0
++            and inp.numel() * 2 <= self.max_bytes
++        )
++
++    def all_reduce(self, inp: torch.Tensor) -> torch.Tensor:
++        out = torch.empty_like(inp)
++        from vllm.distributed.device_communicators import l2_prefetch
++
++        target = l2_prefetch.take()
++        if target is None:
++            self.ext.allreduce(inp, out, self.shm_dev, self.epochs, self.rank)
++            return out
++        cur = torch.cuda.current_stream()
++        side = l2_prefetch.launch_on_side(target, cur)
++        self.ext.allreduce(inp, out, self.shm_dev, self.epochs, self.rank)
++        cur.wait_stream(side)
++        return out
++
++
++if __name__ == "__main__":
++    load_ext()
++    print("hmar extension built")
+diff --git a/vllm/distributed/device_communicators/l2_prefetch.py b/vllm/distributed/device_communicators/l2_prefetch.py
+new file mode 100644
+index 0000000000..68240308ce
+--- /dev/null
++++ b/vllm/distributed/device_communicators/l2_prefetch.py
+@@ -0,0 +1,78 @@
++# SPDX-License-Identifier: Apache-2.0
++"""T3: prefetch the next GEMM's weight into L2 while a (latency-bound) hmar
++all-reduce runs. The model sets a pending target (weight pointer + bytes)
++before the block whose TP all-reduce follows; HostMappedAllReduce.all_reduce
++takes it, runs a small persistent read kernel on a side stream concurrently
++with the all-reduce, then joins. Reads only: results are unchanged.
++
++VLLM_T3_L2_PREFETCH=0/1 (default 1), VLLM_T3_L2_PREFETCH_MB (default 16),
++VLLM_T3_L2_PREFETCH_PROGS (default 32 programs, so the 16-block AR still fits).
++"""
++import os
++
++import torch
++import triton
++import triton.language as tl
++
++ENABLED = os.environ.get("VLLM_T3_L2_PREFETCH", "1") == "1"
++MB = float(os.environ.get("VLLM_T3_L2_PREFETCH_MB", "16"))
++PROGS = int(os.environ.get("VLLM_T3_L2_PREFETCH_PROGS", "32"))
++BLOCK = 8192
++
++_pending: tuple[torch.Tensor, int] | None = None
++_side: dict[int, torch.cuda.Stream] = {}
++_dummy: dict[int, torch.Tensor] = {}
++
++
++@triton.jit
++def _prefetch_k(p_ptr, n, dummy, NPROG, BLOCK: tl.constexpr):
++    acc = 0
++    for base in range(tl.program_id(0) * BLOCK, n, NPROG * BLOCK):
++        o = base + tl.arange(0, BLOCK)
++        v = tl.load(p_ptr + o, mask=o < n, other=0, eviction_policy="evict_last")
++        acc += tl.sum(v)
++    tl.store(dummy, acc, mask=acc == 123456789)
++
++
++def set_target(weight: torch.Tensor | None) -> None:
++    """Next hmar all-reduce prefetches the head of `weight` (contiguous)."""
++    global _pending
++    if not ENABLED or weight is None:
++        _pending = None
++        return
++    if not (weight.is_contiguous() or weight.t().is_contiguous()):
++        _pending = None
++        return
++    nbytes = weight.numel() * weight.element_size()
++    flat = weight.as_strided((nbytes // weight.element_size(),), (1,))
++    flat = flat.view(torch.uint8).view(torch.int32) if nbytes % 4 == 0 else None
++    if flat is None:
++        _pending = None
++        return
++    _pending = (flat, min(flat.numel(), int(MB * 2**20) // 4))
++
++
++def clear() -> None:
++    global _pending
++    _pending = None
++
++
++def take():
++    global _pending
++    t, _pending = _pending, None
++    return t
++
++
++def launch_on_side(target, cur: torch.cuda.Stream):
++    """Fork a side stream from `cur`, launch the prefetch there, return it.
++    Caller runs the all-reduce on `cur`, then cur.wait_stream(side)."""
++    dev = torch.cuda.current_device()
++    side = _side.get(dev)
++    if side is None:
++        side = _side[dev] = torch.cuda.Stream()
++        _dummy[dev] = torch.zeros(1, dtype=torch.int32, device="cuda")
++    side.wait_stream(cur)
++    flat, n = target
++    with torch.cuda.stream(side):
++        _prefetch_k[(PROGS,)](flat, n, _dummy[dev], PROGS, BLOCK=BLOCK, num_warps=8)
++    return side
+diff --git a/vllm/model_executor/kernels/linear/scaled_mm/BlockScaledMMLinearKernel.py b/vllm/model_executor/kernels/linear/scaled_mm/BlockScaledMMLinearKernel.py
+index 865bebeada..9d634faef8 100644
+--- a/vllm/model_executor/kernels/linear/scaled_mm/BlockScaledMMLinearKernel.py
++++ b/vllm/model_executor/kernels/linear/scaled_mm/BlockScaledMMLinearKernel.py
+@@ -7,10 +7,18 @@ from typing import ClassVar, Self
+ 
+ import torch
+ 
++from vllm.model_executor.layers.fusion.quant_activation import (
++    QuantizedActivation,
++    as_quantized_activation,
++)
+ from vllm.model_executor.layers.quantization.input_quant_fp8 import QuantFP8
+ from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+     process_fp8_weight_block_strategy,
+ )
++from vllm.model_executor.layers.quantization.utils.quant_utils import (
++    QuantKey,
++    kFp8Dynamic128Sym,
++)
+ from vllm.model_executor.utils import replace_parameter
+ 
+ from ..base import (
+@@ -60,6 +68,10 @@ class Fp8BlockScaledMMLinearKernel(
+     # Set to False in subclasses that accept BF16 input directly (e.g. FlashInfer)
+     # and therefore do not need the input quantization step in apply_weights.
+     apply_input_quant: ClassVar[bool] = True
++    # Set to True in subclasses whose GEMM consumes the activation quantized by
++    # an upstream fused producer (per-token-group-128 e4m3, fp32 row-major scales,
++    # identical to this class's own QuantFP8 step; see input_quant_key).
++    accepts_quantized_input: ClassVar[bool] = False
+ 
+     def __init__(self, config: FP8ScaledMMLinearLayerConfig) -> None:
+         super().__init__(config)
+@@ -73,6 +85,19 @@ class Fp8BlockScaledMMLinearKernel(
+         )
+         self.use_triton = False
+ 
++    def input_quant_key(self) -> QuantKey | None:
++        """Dynamic per-token-group-128 e4m3 activations can be produced by an
++        upstream fused kernel (norm / SiLU-mul + quant) and passed in as a
++        QuantizedActivation, skipping the quant op in apply_weights."""
++        if (
++            self.accepts_quantized_input
++            and self.apply_input_quant
++            and self.config.activation_quant_key == kFp8Dynamic128Sym
++            and self.get_output_padding() is None
++        ):
++            return kFp8Dynamic128Sym
++        return None
++
+     @classmethod
+     def can_implement(cls, config: FP8ScaledMMLinearLayerConfig):
+         act_quant_key = config.activation_quant_key
+@@ -100,7 +125,7 @@ class Fp8BlockScaledMMLinearKernel(
+     def apply_weights(
+         self,
+         layer: torch.nn.Module,
+-        x: torch.Tensor,
++        x: torch.Tensor | QuantizedActivation,
+         bias: torch.Tensor | None = None,
+         **kwargs,
+     ) -> torch.Tensor:
+@@ -111,6 +136,22 @@ class Fp8BlockScaledMMLinearKernel(
+         input_scale = params.input_scale
+         scale_up = params.input_scale_ub
+ 
++        qa = as_quantized_activation(x, self.input_quant_key())
++        if qa is not None:
++            # Pre-quantized by an upstream fused producer: same codes/scales
++            # layout as QuantFP8 would produce for this activation.
++            q_input = qa.data.view(-1, qa.data.shape[-1])
++            group_k = self.config.activation_quant_key.scale.group_shape.col
++            input_scale = qa.scale.view(q_input.shape[0], q_input.shape[-1] // group_k)
++            output_shape = [*qa.orig_shape[:-1], weight.shape[0]]
++            output = self.apply_block_scaled_mm(
++                A=q_input, B=weight, As=input_scale, Bs=weight_scale
++            )
++            if bias is not None:
++                output = output + bias
++            return output.to(dtype=out_dtype).view(*output_shape)
++
++        assert isinstance(x, torch.Tensor)
+         # View input as 2D matrix for fp8 methods
+         input_2d = x.view(-1, x.shape[-1])
+         output_shape = [*x.shape[:-1], weight.shape[0]]
+diff --git a/vllm/model_executor/kernels/linear/scaled_mm/triton.py b/vllm/model_executor/kernels/linear/scaled_mm/triton.py
+index cdb00b6127..25941ab5c2 100644
+--- a/vllm/model_executor/kernels/linear/scaled_mm/triton.py
++++ b/vllm/model_executor/kernels/linear/scaled_mm/triton.py
+@@ -192,6 +192,8 @@ class TritonFP8ScaledMMLinearKernel(FP8ScaledMMLinearKernel):
+ 
+ 
+ class TritonFp8BlockScaledMMKernel(Fp8BlockScaledMMLinearKernel):
++    accepts_quantized_input = True
++
+     @classmethod
+     def is_supported(cls, compute_capability=None):
+         if not (current_platform.is_cuda_alike() or current_platform.is_xpu()):
+diff --git a/vllm/model_executor/layers/fusion/fused_act_quant.py b/vllm/model_executor/layers/fusion/fused_act_quant.py
+index 6261a1bdd0..3a039ae8c6 100644
+--- a/vllm/model_executor/layers/fusion/fused_act_quant.py
++++ b/vllm/model_executor/layers/fusion/fused_act_quant.py
+@@ -73,14 +73,15 @@ def _silu_and_mul_fp8_dynamic_block(
+     result = torch.empty((num_tokens, d), dtype=FP8_DTYPE, device=x.device)
+     scales = torch.empty((num_tokens, num_groups), dtype=torch.float32, device=x.device)
+ 
+-    torch.ops._C.silu_and_mul_per_block_quant(
+-        out=result,
+-        input=x,
+-        scales=scales,
+-        group_size=group_size,
+-        scale_ub=None,
+-        is_scale_transposed=False,
+-    )
++    if num_tokens > 0:  # the CUDA kernel cannot launch an empty grid
++        torch.ops._C.silu_and_mul_per_block_quant(
++            out=result,
++            input=x,
++            scales=scales,
++            group_size=group_size,
++            scale_ub=None,
++            is_scale_transposed=False,
++        )
+ 
+     return QuantizedActivation(
+         data=result.view(out_shape),
+diff --git a/vllm/model_executor/layers/quantization/fp8.py b/vllm/model_executor/layers/quantization/fp8.py
+index cf8ba94a74..6bc5920035 100644
+--- a/vllm/model_executor/layers/quantization/fp8.py
++++ b/vllm/model_executor/layers/quantization/fp8.py
+@@ -43,6 +43,7 @@ from vllm.model_executor.layers.quantization.base_config import (
+     QuantizeMethodBase,
+ )
+ from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
++from vllm.model_executor.layers.fusion.quant_activation import expose_input_quant_key
+ from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+     create_fp8_input_scale,
+     create_fp8_scale_parameter,
+@@ -402,6 +403,9 @@ class Fp8LinearMethod(LinearMethodBase):
+             layer.input_scale = None
+ 
+         self.fp8_linear.process_weights_after_loading(layer)
++        # Let upstream fused producers (norm / SiLU-mul + quant) hand this
++        # layer a pre-quantized activation when the kernel can consume it.
++        expose_input_quant_key(layer, self.fp8_linear)
+ 
+     def apply(
+         self,
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..8ed83e390e
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,250 @@
++{
++ "1": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "2": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 3
++ },
++ "4": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "8": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "24": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "32": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "40": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 3
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 3
++ },
++ "56": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "80": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "96": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "112": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "128": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "160": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "192": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "224": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "320": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "384": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "448": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "640": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "768": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "896": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1280": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1536": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1792": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..777cf141cf
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,250 @@
++{
++ "1": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 64,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "2": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "4": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "8": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "24": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "32": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "40": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "56": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "80": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "96": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 4
++ },
++ "112": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "128": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "160": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "192": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "224": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "320": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "384": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "448": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "640": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "768": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "896": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1280": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1536": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1792": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..b3b8fd710d
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,250 @@
++{
++ "1": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 64,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "2": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "4": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "8": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "24": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "32": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "40": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "56": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "80": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 4
++ },
++ "96": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 4
++ },
++ "112": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "128": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "160": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "192": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "224": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "320": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "384": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "448": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "640": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "768": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "896": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1280": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1536": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1792": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..79bc6ea369
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,250 @@
++{
++ "1": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "2": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "4": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "8": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "24": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "32": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "40": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "56": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "80": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "96": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "112": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "128": {
++  "BLOCK_SIZE_M": 128,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "160": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "192": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "224": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "320": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "384": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "448": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "640": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "768": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "896": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1280": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1536": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1792": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..1ca2b65136
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,250 @@
++{
++ "1": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "2": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "4": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "8": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "24": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "32": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "40": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "56": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "80": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "96": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "112": {
++  "BLOCK_SIZE_M": 128,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "128": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "160": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "192": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "224": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "320": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "384": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "448": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "640": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "768": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "896": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1280": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1536": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1792": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/models/qwen3_5/nvidia/model.py b/vllm/models/qwen3_5/nvidia/model.py
+index be483f5a88..b3bbea1ad9 100644
+--- a/vllm/models/qwen3_5/nvidia/model.py
++++ b/vllm/models/qwen3_5/nvidia/model.py
+@@ -70,6 +70,7 @@ from vllm.model_executor.layers.quantization.utils.nvfp4_utils import (
+ )
+ from vllm.model_executor.layers.quantization.utils.quant_utils import (
+     QuantKey,
++    kFp8Dynamic128Sym,
+     kFp8StaticTensorSym,
+     kNvfp4Dynamic,
+ )
+@@ -127,7 +128,11 @@ from vllm.tokenizers.registry import cached_tokenizer_from_config
+ 
+ from .ops.fused_allreduce_norm_quant import fused_allreduce_gemma_rms_norm_quant
+ from .ops.fused_gdn_gated_norm import fused_gdn_gated_rms_norm
+-from .ops.fused_norm_quant import FP8_DTYPE, gemma_add_rms_norm_quant
++from .ops.fused_norm_quant import (
++    FP8_DTYPE,
++    gemma_add_rms_norm_dyn128,
++    gemma_add_rms_norm_quant,
++)
+ 
+ logger = init_logger(__name__)
+ 
+@@ -141,6 +146,9 @@ def _norm_quant_key(linear: nn.Module) -> QuantKey | None:
+     key = get_input_quant_key(linear)
+     if key == kFp8StaticTensorSym:
+         return key
++    # Dynamic per-token-group-128 e4m3 (the checkpoint's W8A8 activation scheme).
++    if key == kFp8Dynamic128Sym and linear.input_size_per_partition % 128 == 0:
++        return key
+     # The norm writes block scales for exactly K = hidden_size, in whole
+     # 4-column scale tiles (weights only require K % 32 == 0).
+     if (
+@@ -175,6 +183,20 @@ def _fused_gdn_gated_rms_norm_quant(
+     )
+ 
+ 
++def _dyn128_layout_ok(x: torch.Tensor, residual: torch.Tensor | None) -> bool:
++    """gemma_add_rms_norm_dyn128 indexes rows with stride H: needs 2-D
++    contiguous bf16/fp16 inputs (and a matching contiguous residual)."""
++    return (
++        x.dim() == 2
++        and x.is_contiguous()
++        and x.dtype in (torch.bfloat16, torch.float16)
++        and (residual is None or (residual.shape == x.shape and residual.is_contiguous()))
++    )
++
++
++from vllm.distributed.device_communicators import l2_prefetch as _l2_pf  # noqa: E402
++
++
+ class Qwen3_5RMSNorm(nn.Module):
+     """Gemma-style RMS normalization backed by flashinfer kernels.
+ 
+@@ -230,6 +252,8 @@ class Qwen3_5RMSNorm(nn.Module):
+         """
+         allreduce = self.reduce_inputs and residual is not None
+         key = None if linear is None else _norm_quant_key(linear)
++        if key == kFp8Dynamic128Sym and not _dyn128_layout_ok(x, residual):
++            key = None  # unfused fallback for layouts the Triton kernel can't index
+         if key is None:
+             if allreduce:
+                 assert residual is not None
+@@ -239,6 +263,22 @@ class Qwen3_5RMSNorm(nn.Module):
+             return None, *self(x, residual)
+ 
+         assert linear is not None
++        if key == kFp8Dynamic128Sym:
++            if allreduce:
++                assert residual is not None
++                # Explicit all-reduce, then the norm + group-quant kernel.
++                x = tensor_model_parallel_all_reduce(x)
++            q, block_scale, y = gemma_add_rms_norm_dyn128(
++                x, residual, self.weight, self.variance_epsilon, write_y
++            )
++            qa = QuantizedActivation(
++                data=q,
++                scale=block_scale,
++                orig_dtype=x.dtype,
++                orig_shape=x.shape,
++                quant_key=key,
++            )
++            return qa, y, x if residual is None else residual
+         nvfp4 = key == kNvfp4Dynamic
+         scale = linear.input_global_scale_inv if nvfp4 else linear.input_scale
+         if allreduce:
+@@ -412,12 +452,16 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+         is_gdn = self.layer_type == "linear_attention"
+         in_proj = self.linear_attn.in_proj_qkvz if is_gdn else self.self_attn.qkv_proj
+         # GDN's in_proj_ba reads the unquantized normed activation.
++        # T3: the all-reduce absorbed by this norm (previous MLP's) hides the
++        # L2 prefetch of the weight the next GEMM reads.
++        _l2_pf.set_target(in_proj.weight if residual is not None else None)
+         in_proj_input, hidden_states, residual = self.input_layernorm.forward_fused(
+             hidden_states,
+             residual,
+             in_proj,
+             write_y=is_gdn,
+         )
++        _l2_pf.clear()
+         if is_gdn:
+             hidden_states = self.linear_attn.forward_cuda(
+                 hidden_states, qkvz_input=in_proj_input
+@@ -440,11 +484,13 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+ 
+         # The MoE router needs the unquantized activation.
+         gate_up = self.mlp.gate_up_proj if isinstance(self.mlp, Qwen3NextMLP) else None
++        _l2_pf.set_target(gate_up.weight if gate_up is not None else None)
+         mlp_input, hidden_states, residual = (
+             self.post_attention_layernorm.forward_fused(
+                 hidden_states, residual, gate_up
+             )
+         )
++        _l2_pf.clear()
+         hidden_states = self.mlp(hidden_states if mlp_input is None else mlp_input)
+ 
+         if self.layer_scale:
+diff --git a/vllm/models/qwen3_5/nvidia/ops/fused_norm_quant.py b/vllm/models/qwen3_5/nvidia/ops/fused_norm_quant.py
+index 65abf238b8..0dd896bdb2 100644
+--- a/vllm/models/qwen3_5/nvidia/ops/fused_norm_quant.py
++++ b/vllm/models/qwen3_5/nvidia/ops/fused_norm_quant.py
+@@ -214,3 +214,103 @@ def gemma_add_rms_norm_quant(
+         TRIGGER_EARLY=M <= 128,
+     )
+     return q, block_scale, y
++
++
++@triton.jit
++def _gemma_add_rms_norm_dyn128_kernel(
++    x_ptr,
++    res_ptr,
++    w_ptr,
++    q_ptr,
++    s_ptr,
++    y_ptr,
++    eps,
++    H: tl.constexpr,
++    GS: tl.constexpr,
++    HAS_RESIDUAL: tl.constexpr,
++    WRITE_Y: tl.constexpr,
++):
++    """Gemma add-RMSNorm fused with dynamic per-token-group e4m3 quant.
++
++    Same arithmetic as the unfused chain: the norm output is rounded to the
++    activation dtype, then per group of GS columns
++    ``scale = max(absmax, 1e-10) / 448``, ``q = clamp(y * (1 / scale))``
++    (per_token_group_quant_fp8 / QuantFP8 with use_ue8m0=False).
++    """
++    G: tl.constexpr = triton.next_power_of_2(H // GS)
++    row = tl.program_id(0).to(tl.int64)
++    g = tl.arange(0, G)
++    j = tl.arange(0, GS)
++    cols = g[:, None] * GS + j[None, :]
++    mask = cols < H
++
++    x = tl.load(x_ptr + row * H + cols, mask=mask, other=0.0)
++    if HAS_RESIDUAL:
++        r = tl.load(res_ptr + row * H + cols, mask=mask, other=0.0)
++    w = tl.load(w_ptr + cols, mask=mask, other=0.0)
++
++    h = x.to(tl.float32)
++    if HAS_RESIDUAL:
++        h += r.to(tl.float32)
++        # Residual stream: the fp32 sum, like flashinfer's fused_add_rmsnorm.
++        tl.store(res_ptr + row * H + cols, h, mask=mask)
++    var = tl.sum(h * h) / H
++    rstd = tl.rsqrt(var + eps)
++    y = (h * rstd * (1.0 + w.to(tl.float32))).to(x_ptr.dtype.element_ty)
++    if WRITE_Y:
++        tl.store(y_ptr + row * H + cols, y, mask=mask)
++    y = y.to(tl.float32)
++
++    amax = tl.maximum(tl.max(tl.abs(y), axis=1), 1e-10)
++    # Plain fp32 `/` (div.full, fast-math division) reproduces the CUDA
++    # per_token_group_quant kernel, which is compiled with --use_fast_math:
++    # scales and codes were bit-identical to the unfused chain in the unit test
++    # (div_rn did not match: 57% of scales differed by one ulp).
++    scale = amax / 448.0
++    inv = 1.0 / scale
++    q = tl.clamp(y * inv[:, None], -FP8_MAX, FP8_MAX)
++    tl.store(q_ptr + row * H + cols, q, mask=mask)
++    tl.store(s_ptr + row * (H // GS) + g, scale, mask=g < H // GS)
++
++
++def gemma_add_rms_norm_dyn128(
++    x: torch.Tensor,
++    residual: torch.Tensor | None,
++    weight: torch.Tensor,
++    eps: float,
++    write_y: bool = False,
++    group_size: int = 128,
++) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
++    """Gemma RMSNorm of ``x (+ residual)`` quantized to dynamic per-token-group
++    e4m3 for the next linear (the checkpoint's W8A8 activation scheme).
++
++    Returns ``(q, scales, y)``: fp8 data (M, H), fp32 scales (M, H // group_size)
++    row-major, and the bf16 normed activation (or None). ``residual`` is updated
++    in place to x + residual, like gemma_fused_add_rmsnorm.
++    """
++    assert x.dim() == 2 and x.is_contiguous()
++    assert x.dtype in (torch.bfloat16, torch.float16)
++    assert residual is None or (residual.shape == x.shape and residual.is_contiguous())
++    M, H = x.shape
++    assert weight.shape == (H,) and weight.is_contiguous()
++    assert H % group_size == 0
++    q = torch.empty((M, H), dtype=FP8_DTYPE, device=x.device)
++    scales = torch.empty((M, H // group_size), dtype=torch.float32, device=x.device)
++    y = torch.empty_like(x) if write_y else None
++    if M == 0:
++        return q, scales, y
++    _gemma_add_rms_norm_dyn128_kernel[(M,)](
++        x,
++        residual if residual is not None else x,
++        weight,
++        q,
++        scales,
++        y if y is not None else x,
++        eps,
++        H=H,
++        GS=group_size,
++        HAS_RESIDUAL=residual is not None,
++        WRITE_Y=write_y,
++        num_warps=8,
++    )
++    return q, scales, y
+diff --git a/vllm/v1/attention/backends/triton_attn.py b/vllm/v1/attention/backends/triton_attn.py
+index afc957f89a..35bb7d1907 100644
+--- a/vllm/v1/attention/backends/triton_attn.py
++++ b/vllm/v1/attention/backends/triton_attn.py
+@@ -5,6 +5,7 @@
+ from dataclasses import dataclass, replace
+ from typing import ClassVar
+ 
++import os
+ import torch
+ 
+ import vllm.envs as envs
+@@ -553,7 +554,14 @@ class TritonAttentionImpl(AttentionImpl):
+             )
+         self.use_alibi_sqrt = use_alibi_sqrt
+         self.chunk_lookback = chunk_lookback
+-        self.supports_quant_query_input = current_platform.is_cuda()
++        # T3: keep the query in the model dtype (bf16) by default, so with an
++        # FP8 KV cache the kernel dequantizes K/V to bf16 and P stays bf16:
++        # the same attention precision as FlashInfer's bf16-Q path. Opt back
++        # into FP8 query (and FP8 P) with VLLM_TRITON_ATTN_FP8_QUERY=1.
++        self.supports_quant_query_input = (
++            current_platform.is_cuda()
++            and os.environ.get("VLLM_TRITON_ATTN_FP8_QUERY", "0") == "1"
++        )
+         if current_platform.is_rocm():
+             # Enable GPUs with fp8 MMA support
+             from vllm.platforms.rocm import on_gfx11, on_gfx90a

@@ -1,0 +1,19 @@
+{
+  "id": 92,
+  "pid": 2665221,
+  "team": "T5",
+  "agent": "leader-5.w1",
+  "label": "dl-exact",
+  "timeout_min": 12.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-5.w1/dl/smoke2.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T05:38:43+00:00",
+  "state": "done",
+  "started": "2026-11-16T05:38:43+00:00",
+  "ended": "2026-11-16T05:42:26+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 3.719
+}

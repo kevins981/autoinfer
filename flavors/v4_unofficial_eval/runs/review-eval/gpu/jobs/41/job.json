@@ -1,0 +1,24 @@
+{
+  "id": 41,
+  "pid": 2510637,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "eval:t1-hmar5",
+  "timeout_min": 12.0,
+  "command": [
+    "env",
+    "STOP_BELOW=760",
+    "VLLM_HOST_MAPPED_AR_STATS=/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-1/runs/hmar5_stats/epochs",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/task/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t1-car5",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-1/runs/hmar5",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/bank/T2-004/serve_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T02:12:32+00:00",
+  "state": "done",
+  "started": "2026-11-16T02:12:32+00:00",
+  "ended": "2026-11-16T02:19:54+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 7.369
+}

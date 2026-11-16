@@ -1,0 +1,32 @@
+{"t": "2026-11-15T23:42:27+00:00", "event": "open", "team": "MGR", "type": "manager", "by": "human"}
+{"t": "2026-11-15T23:55:44+00:00", "event": "open", "team": "T1", "type": "sweep", "by": "manager"}
+{"t": "2026-11-15T23:55:44+00:00", "event": "grant", "team": "T1", "kind": "seed", "minutes": 45.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-15T23:55:44+00:00", "event": "open", "team": "T2", "type": "sweep", "by": "manager"}
+{"t": "2026-11-15T23:55:44+00:00", "event": "grant", "team": "T2", "kind": "seed", "minutes": 45.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-16T00:50:23+00:00", "event": "grant", "team": "T2", "kind": "extension", "minutes": 45.0, "by": "manager", "note": "resync 1: win T2-001 (promoted, +8.4% vs BASE)"}
+{"t": "2026-11-16T01:24:24+00:00", "event": "grant", "team": "T1", "kind": "extension", "minutes": 45.0, "by": "manager", "note": "resync 1: win T1-001 (promoted, +6.7% vs BASE)"}
+{"t": "2026-11-16T02:55:19+00:00", "event": "close", "team": "T1", "by": "manager", "note": "resync 2: 2-grant cap reached (human policy); 2 wins (T1-001, T1-007 champion); write-up reports/T1-writeup.md"}
+{"t": "2026-11-16T02:55:20+00:00", "event": "open", "team": "T3", "type": "sweep", "by": "manager"}
+{"t": "2026-11-16T02:55:20+00:00", "event": "grant", "team": "T3", "kind": "seed", "minutes": 45.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-16T03:44:51+00:00", "event": "grant", "team": "T3", "kind": "extension", "minutes": 45.0, "by": "manager", "note": "resync 1: win T3-001 (promoted, +3.7% vs T2-007); 2nd and last grant under the cap"}
+{"t": "2026-11-16T04:10:46+00:00", "event": "close", "team": "T2", "by": "manager", "note": "resync 2 (final): 2-grant cap; 4 wins (T2-001, T2-003, T2-004, T2-007); write-up reports/T2-writeup.md"}
+{"t": "2026-11-16T04:10:47+00:00", "event": "open", "team": "T4", "type": "sweep", "by": "manager"}
+{"t": "2026-11-16T04:10:47+00:00", "event": "grant", "team": "T4", "kind": "seed", "minutes": 45.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-16T04:58:11+00:00", "event": "close", "team": "T3", "by": "manager", "note": "resync 2 (final): 2-grant cap; 3 wins (T3-001, T3-003, T3-007 champion); write-up reports/T3-writeup.md"}
+{"t": "2026-11-16T04:58:11+00:00", "event": "open", "team": "T5", "type": "sweep", "by": "manager"}
+{"t": "2026-11-16T04:58:11+00:00", "event": "grant", "team": "T5", "kind": "seed", "minutes": 45.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-16T05:48:13+00:00", "event": "close", "team": "T4", "by": "manager", "note": "team asked to close: no win; T4-001/002 screen negative, T4-003 stopped after 1 start, T4-004 OOM at graph capture; write-up reports/T4-writeup.md"}
+{"t": "2026-11-16T05:48:13+00:00", "event": "open", "team": "T6", "type": "sweep", "by": "manager"}
+{"t": "2026-11-16T05:48:13+00:00", "event": "grant", "team": "T6", "kind": "seed", "minutes": 45.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-16T06:10:27+00:00", "event": "grant", "team": "T5", "kind": "last-chance", "minutes": 45.0, "by": "manager", "note": "resync 1: no win; measured lead: GDN DeltaLog (bitwise unit test pass, kernel 120->62 us, c=1 identical; c=16 bug localized by bisect + review T5-2)"}
+{"t": "2026-11-16T06:59:05+00:00", "event": "close", "team": "T5", "by": "manager", "note": "2-grant cap; team recommended closing; win T5-001 (champion); write-up reports/T5-writeup.md"}
+{"t": "2026-11-16T06:59:06+00:00", "event": "open", "team": "T7", "type": "sweep", "by": "manager"}
+{"t": "2026-11-16T06:59:06+00:00", "event": "grant", "team": "T7", "kind": "seed", "minutes": 45.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-16T07:04:21+00:00", "event": "close", "team": "T6", "by": "manager", "note": "team recommended closing after closing review T6-3; no win; T6-004 898.5 mean but start 3 below champion"}
+{"t": "2026-11-16T07:04:21+00:00", "event": "open", "team": "T8", "type": "sweep", "by": "manager"}
+{"t": "2026-11-16T07:04:21+00:00", "event": "grant", "team": "T8", "kind": "seed", "minutes": 45.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-16T07:07:57+00:00", "event": "close", "team": "T7", "by": "manager", "note": "team recommended closing; no win (T7-001 k=3 stopped after 1 start, -0.7%); closing review not possible (review tool backend error)"}
+{"t": "2026-11-16T07:07:58+00:00", "event": "open", "team": "T9", "type": "sweep", "by": "manager"}
+{"t": "2026-11-16T07:07:58+00:00", "event": "grant", "team": "T9", "kind": "seed", "minutes": 45.0, "by": "manager", "note": "automatic seed"}
+{"t": "2026-11-16T07:15:08+00:00", "event": "close", "team": "T8", "by": "manager", "note": "team recommended closing; no win; T8-001 not allowed (fp16 accumulate), T8-002 mixed-step profile"}
+{"t": "2026-11-16T07:26:44+00:00", "event": "close", "team": "T9", "by": "manager", "note": "team recommended closing; win T9-001 (champion, 908.0)"}

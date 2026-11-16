@@ -1,0 +1,799 @@
+diff --git a/vllm/distributed/device_communicators/cuda_communicator.py b/vllm/distributed/device_communicators/cuda_communicator.py
+index 56c9e33ee4..ff9aa96a70 100644
+--- a/vllm/distributed/device_communicators/cuda_communicator.py
++++ b/vllm/distributed/device_communicators/cuda_communicator.py
+@@ -2,6 +2,8 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ 
++import os
++
+ import torch
+ from torch.distributed import ProcessGroup
+ 
+@@ -118,6 +120,20 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         self.fi_ar_comm: FlashInferAllReduce | None = None
+         self.fi_pcie_ipc_ar_comm: FlashInferPcieIpcAllReduce | None = None
+         self.aiter_ar_comm: AiterCustomAllreduce | None = None
++        self.hm_ar_comm = None
++        if self.world_size == 2 and unique_name.split(":")[0] == "tp":
++            from vllm.distributed.device_communicators.host_mapped_all_reduce import (
++                HostMappedAllReduce,
++                hm_ar_requested,
++            )
++
++            config = get_current_vllm_config_or_none()
++            # One shared epoch/slot set: never with micro-batch overlap, which
++            # issues collectives from a second (comm) stream.
++            ubatching = config is not None and config.parallel_config.use_ubatching
++            if hm_ar_requested(self.world_size) != "0" and not ubatching:
++                comm = HostMappedAllReduce(self.cpu_group, self.device)
++                self.hm_ar_comm = None if comm.disabled else comm
+         self.use_aiter_ag_rs: bool = False
+ 
+         # cuMem graph buffers cannot be IPC-registered; capture copies them instead.
+@@ -316,6 +332,7 @@ class CudaCommunicator(DeviceCommunicatorBase):
+         depends on the input tensor.
+         """
+         all_potential_ar_backends = [
++            "HMAR",
+             "FLASHINFER_PCIE_IPC",
+             "FLASHINFER",
+             "NCCL_SYMM_MEM",
+@@ -326,6 +343,8 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             "PYNCCL",
+         ]
+         enabled_ar_backends: list[str] = []
++        if self.hm_ar_comm is not None and not self.hm_ar_comm.disabled:
++            enabled_ar_backends.append("HMAR")  # host-mapped, <= 96 rows bf16
+         if (
+             self.fi_pcie_ipc_ar_comm is not None
+             and not self.fi_pcie_ipc_ar_comm.disabled
+@@ -408,6 +427,9 @@ class CudaCommunicator(DeviceCommunicatorBase):
+             out = qr_comm.quick_all_reduce(input_)
+             assert out is not None
+             return out
++        hm_ar_comm = self.hm_ar_comm
++        if hm_ar_comm is not None and hm_ar_comm.should_use(input_):
++            return hm_ar_comm.all_reduce(input_)
+         fi_pcie_ipc_ar_comm = self.fi_pcie_ipc_ar_comm
+         if fi_pcie_ipc_ar_comm is not None and fi_pcie_ipc_ar_comm.should_use(input_):
+             return fi_pcie_ipc_ar_comm.all_reduce(input_)
+diff --git a/vllm/distributed/device_communicators/hmar/hmar.cu b/vllm/distributed/device_communicators/hmar/hmar.cu
+new file mode 100644
+index 0000000000..cc43692b92
+--- /dev/null
++++ b/vllm/distributed/device_communicators/hmar/hmar.cu
+@@ -0,0 +1,153 @@
++// Host-mapped TP=2 all-reduce (no P2P): each rank writes its bf16 partial into
++// its own slot of a pinned, mapped host buffer shared by both processes, raises a
++// per-block epoch flag, spins on the peer's flag, reads the peer's slot and sums
++// in fp32, rounding to bf16. Each rank computes local+peer, so the operand order is
++// swapped between ranks; both results are bit-identical because a single fp32
++// addition is commutative (and the same RN rounding follows).
++// Contract: collectives of one communicator are issued in the same order on both
++// ranks from ONE stream (graph replays included); epochs/slots are not safe for
++// concurrent launches. The input pointer must be 16-byte aligned.
++#include <torch/extension.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <c10/cuda/CUDAGuard.h>
++#include <cuda_bf16.h>
++#include <cuda_runtime.h>
++#include <stdint.h>
++
++constexpr int NBLK = 16;            // fixed grid: per-block epochs, per-block regions
++constexpr int NTHR = 512;
++constexpr int FLAG_STRIDE = 64;     // bytes between flags
++constexpr int NSUB = 4;             // flag slots per block (layout kept; only slot 0 is used)
++constexpr int FLAGS_BYTES = 2 * NBLK * NSUB * FLAG_STRIDE;  // 8192
++constexpr int REGION_BYTES = 65536; // per (rank, parity, block): <= 64 KB payload
++// layout: [flags 4096][data: rank(2) x parity(2) x block(16) x REGION_BYTES]
++constexpr size_t TOTAL_BYTES =
++    FLAGS_BYTES + (size_t)2 * 2 * NBLK * REGION_BYTES;
++
++__device__ __forceinline__ uint32_t ld_acquire_sys(const uint32_t* p) {
++  uint32_t v;
++  asm volatile("ld.acquire.sys.global.u32 %0, [%1];" : "=r"(v) : "l"(p) : "memory");
++  return v;
++}
++__device__ __forceinline__ void st_release_sys(uint32_t* p, uint32_t v) {
++  asm volatile("st.release.sys.global.u32 [%0], %1;" ::"l"(p), "r"(v) : "memory");
++}
++__device__ __forceinline__ uint4 ld_vol_v4(const uint4* p) {
++  uint4 v;
++  asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];"
++               : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w) : "l"(p) : "memory");
++  return v;
++}
++__device__ __forceinline__ void st_v4(uint4* p, uint4 v) {
++  asm volatile("st.global.v4.u32 [%0], {%1,%2,%3,%4};" ::"l"(p), "r"(v.x), "r"(v.y),
++               "r"(v.z), "r"(v.w) : "memory");
++}
++__device__ __forceinline__ uint32_t add_bf16x2(uint32_t a, uint32_t b) {
++  __nv_bfloat162 x = *reinterpret_cast<__nv_bfloat162*>(&a);
++  __nv_bfloat162 y = *reinterpret_cast<__nv_bfloat162*>(&b);
++  float2 fx = __bfloat1622float2(x), fy = __bfloat1622float2(y);
++  __nv_bfloat162 r = __floats2bfloat162_rn(fx.x + fy.x, fx.y + fy.y);
++  return *reinterpret_cast<uint32_t*>(&r);
++}
++
++__global__ void __launch_bounds__(NTHR)
++hmar_kernel(const uint4* __restrict__ in, uint4* __restrict__ out, char* shm,
++            uint32_t* epochs, int rank, int n_vec, int chunk) {
++  const int b = blockIdx.x;
++  __shared__ uint32_t s_epoch;
++  if (threadIdx.x == 0) s_epoch = epochs[b] + 1;
++  __syncthreads();
++  const uint32_t e = s_epoch;
++  const int parity = e & 1;
++  const int peer = 1 - rank;
++  uint32_t* flags = reinterpret_cast<uint32_t*>(shm);
++  uint32_t* my_flag = flags + ((rank * NBLK + b) * NSUB) * (FLAG_STRIDE / 4);
++  const uint32_t* peer_flag = flags + ((peer * NBLK + b) * NSUB) * (FLAG_STRIDE / 4);
++  char* data = shm + FLAGS_BYTES;
++  uint4* my_slot = reinterpret_cast<uint4*>(
++      data + (((size_t)rank * 2 + parity) * NBLK + b) * REGION_BYTES);
++  const uint4* peer_slot = reinterpret_cast<const uint4*>(
++      data + (((size_t)peer * 2 + parity) * NBLK + b) * REGION_BYTES);
++
++  const int lo = b * chunk;
++  const int hi = min(lo + chunk, n_vec);
++  const int cnt = max(hi - lo, 0);
++  // 1. publish my partial
++  for (int i = threadIdx.x; i < cnt; i += NTHR) st_v4(my_slot + i, in[lo + i]);
++  __syncthreads();
++  // 2. release flag, 3. acquire peer flag
++  if (threadIdx.x == 0) {
++    st_release_sys(my_flag, e);
++    long long t0 = clock64();
++    while ((int)(ld_acquire_sys(peer_flag) - e) < 0) {
++      if (clock64() - t0 > 40000000000LL) {  // ~20 s
++        printf("hmar: timeout rank %d block %d epoch %u\n", rank, b, e);
++        __trap();
++      }
++    }
++  }
++  __syncthreads();
++  // 4. read peer's slot (volatile: never served from a stale cache line), sum
++  constexpr int U = 4;
++  for (int base = threadIdx.x; base < cnt; base += NTHR * U) {
++    uint4 pv[U];
++#pragma unroll
++    for (int u = 0; u < U; u++) {
++      int i = base + u * NTHR;
++      if (i < cnt) pv[u] = ld_vol_v4(peer_slot + i);
++    }
++#pragma unroll
++    for (int u = 0; u < U; u++) {
++      int i = base + u * NTHR;
++      if (i < cnt) {
++        uint4 a = in[lo + i], r;
++        r.x = add_bf16x2(a.x, pv[u].x);
++        r.y = add_bf16x2(a.y, pv[u].y);
++        r.z = add_bf16x2(a.z, pv[u].z);
++        r.w = add_bf16x2(a.w, pv[u].w);
++        out[lo + i] = r;
++      }
++    }
++  }
++  if (threadIdx.x == 0) epochs[b] = e;
++}
++
++int64_t total_bytes() { return (int64_t)TOTAL_BYTES; }
++int64_t max_payload_bytes() { return (int64_t)NBLK * REGION_BYTES; }
++
++// Pin + map an existing host range (shared-memory file) into this process's CUDA
++// context; returns the device pointer.
++int64_t register_host(int64_t ptr, int64_t nbytes) {
++  void* p = reinterpret_cast<void*>(ptr);
++  cudaError_t err = cudaHostRegister(p, nbytes, cudaHostRegisterMapped | cudaHostRegisterPortable);
++  TORCH_CHECK(err == cudaSuccess, "cudaHostRegister: ", cudaGetErrorString(err));
++  void* d = nullptr;
++  err = cudaHostGetDevicePointer(&d, p, 0);
++  TORCH_CHECK(err == cudaSuccess, "cudaHostGetDevicePointer: ", cudaGetErrorString(err));
++  return reinterpret_cast<int64_t>(d);
++}
++void unregister_host(int64_t ptr) { cudaHostUnregister(reinterpret_cast<void*>(ptr)); }
++
++void allreduce(torch::Tensor inp, torch::Tensor out, int64_t shm_dev, torch::Tensor epochs,
++               int64_t rank) {
++  const at::cuda::OptionalCUDAGuard guard(inp.device());
++  int64_t nbytes = inp.numel() * inp.element_size();
++  TORCH_CHECK(nbytes % 16 == 0 && nbytes <= max_payload_bytes());
++  TORCH_CHECK(reinterpret_cast<uintptr_t>(inp.data_ptr()) % 16 == 0, "hmar: unaligned input");
++  int n_vec = nbytes / 16;
++  int chunk = (n_vec + NBLK - 1) / NBLK;
++  auto* i = reinterpret_cast<const uint4*>(inp.data_ptr());
++  auto* o = reinterpret_cast<uint4*>(out.data_ptr());
++  auto* sh = reinterpret_cast<char*>(shm_dev);
++  auto* ep = reinterpret_cast<uint32_t*>(epochs.data_ptr());
++  auto stream = at::cuda::getCurrentCUDAStream();
++  hmar_kernel<<<NBLK, NTHR, 0, stream>>>(i, o, sh, ep, (int)rank, n_vec, chunk);
++}
++
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("total_bytes", &total_bytes);
++  m.def("max_payload_bytes", &max_payload_bytes);
++  m.def("register_host", &register_host);
++  m.def("unregister_host", &unregister_host);
++  m.def("allreduce", &allreduce);
++}
+diff --git a/vllm/distributed/device_communicators/host_mapped_all_reduce.py b/vllm/distributed/device_communicators/host_mapped_all_reduce.py
+new file mode 100644
+index 0000000000..de8bb3db84
+--- /dev/null
++++ b/vllm/distributed/device_communicators/host_mapped_all_reduce.py
+@@ -0,0 +1,208 @@
++# SPDX-License-Identifier: Apache-2.0
++"""TP=2 all-reduce through host-mapped pinned memory, for GPUs without P2P.
++
++Each rank writes its bf16 partial into a pinned host buffer shared by both
++worker processes (zero-copy over PCIe), raises an epoch flag, waits for the
++peer's flag and sums both partials in fp32 (see hmar/hmar.cu). Bitwise equal
++to NCCL's 2-rank bf16 sum. Small tensors only; anything else falls through to
++the next backend.
++
++VLLM_HOST_MAPPED_AR: unset = on when TP=2 and the two GPUs cannot do P2P;
++"1" = force on; "0" = off. VLLM_HOST_MAPPED_AR_STATS=<path> writes the
++number of kernel launches (epoch flag read from the host mapping, no CUDA call) to <path>.rank<r> every
++2 s, for counting launches per decode step. Build the extension before the first run (no GPU needed):
++    python -m vllm.distributed.device_communicators.host_mapped_all_reduce
++"""
++
++import ctypes
++import hashlib
++import mmap
++import os
++import shutil
++import uuid
++
++import torch
++import torch.distributed as dist
++from torch.distributed import ProcessGroup
++
++from vllm.logger import init_logger
++from vllm.platforms import current_platform
++
++logger = init_logger(__name__)
++
++_EXT = None
++MAX_ROWS = 96
++MAX_ROW_BYTES = 5120 * 2
++
++
++def load_ext():
++    """Build (cached under TORCH_EXTENSIONS_DIR) and import the CUDA extension."""
++    global _EXT
++    if _EXT is None:
++        from torch.utils.cpp_extension import load
++
++        if "CUDA_HOME" not in os.environ and (nvcc := shutil.which("nvcc")):
++            os.environ["CUDA_HOME"] = os.path.dirname(os.path.dirname(nvcc))
++        os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "8.9")
++        src = os.path.join(os.path.dirname(__file__), "hmar", "hmar.cu")
++        # Name keyed on the source: an edited kernel gets a fresh build dir and
++        # can never overwrite the .so another running process has loaded.
++        with open(src, "rb") as f:
++            tag = hashlib.sha1(f.read()).hexdigest()[:8]
++        _EXT = load(
++            name=f"vllm_hmar_ext_{tag}",
++            sources=[src],
++            extra_cuda_cflags=["-O3"],
++            verbose=False,
++        )
++    return _EXT
++
++
++def hm_ar_requested(world_size: int) -> str:
++    """'0' off, '1' forced on, 'auto' on only without P2P."""
++    val = os.environ.get("VLLM_HOST_MAPPED_AR", "auto")
++    return val if world_size == 2 else "0"
++
++
++class HostMappedAllReduce:
++    def __init__(self, group: ProcessGroup, device: int | str | torch.device):
++        """Collective over `group` (gloo): every rank takes the same decision,
++        so a failure on one rank disables the backend on both."""
++        self.disabled = True
++        self.group = group
++        self.device = torch.device(device)
++        self.world_size = dist.get_world_size(group)
++        self.rank = dist.get_rank(group)
++        self._mm = None
++        mode = hm_ar_requested(self.world_size)
++        if mode == "0":
++            return
++        err = None
++        try:
++            self.ext = load_ext()
++        except Exception as ex:  # noqa: BLE001
++            err = f"extension unavailable: {ex!r}"
++        # Collective on every rank (never skipped by a local failure).
++        p2p = self._peer_p2p_ok() if mode == "auto" else False
++        if err is None and p2p:
++            err = "GPUs support P2P, leaving it to NCCL"
++        if not self._all_ok(err is None):
++            if err is not None and "P2P" not in err:
++                logger.warning("Host-mapped all-reduce disabled: %s", err)
++            return
++        total = self.ext.total_bytes()
++        name = None
++        try:
++            if self.rank == 0:
++                name = f"/dev/shm/vllm_hmar_{uuid.uuid4().hex}"
++                with open(name, "wb") as f:
++                    f.truncate(total)  # zero-filled: all flags start at epoch 0
++        except Exception as ex:  # noqa: BLE001
++            err, name = f"shm create failed: {ex!r}", None
++        objs = [name]
++        dist.broadcast_object_list(
++            objs, src=dist.get_process_group_ranks(group)[0], group=group
++        )
++        name = objs[0]
++        shm_dev = 0
++        try:
++            if name is None:
++                raise RuntimeError(err or "rank 0 could not create the shm file")
++            fd = os.open(name, os.O_RDWR)
++            self._mm = mmap.mmap(fd, total, mmap.MAP_SHARED)
++            os.close(fd)
++            self._addr = ctypes.addressof(ctypes.c_char.from_buffer(self._mm))
++            torch.cuda.set_device(self.device)
++            shm_dev = self.ext.register_host(self._addr, total)
++            self.epochs = torch.zeros(16, dtype=torch.int32, device=self.device)
++            err = None
++        except Exception as ex:  # noqa: BLE001
++            err = f"setup failed: {ex!r}"
++        ok = self._all_ok(err is None)
++        if self.rank == 0 and name is not None:
++            try:
++                os.unlink(name)  # every rank has opened it (agreement above)
++            except OSError:
++                pass
++        if not ok:
++            logger.warning("Host-mapped all-reduce disabled: %s", err or "peer failed")
++            self._mm = None
++            return
++        self.shm_dev = shm_dev
++        self.max_bytes = min(MAX_ROWS * MAX_ROW_BYTES, self.ext.max_payload_bytes())
++        self.disabled = False
++        logger.info(
++            "Host-mapped all-reduce enabled (rank %d, %d MiB pinned).",
++            self.rank,
++            total >> 20,
++        )
++        stats = os.environ.get("VLLM_HOST_MAPPED_AR_STATS")
++        if stats:
++            self._start_stats_thread(f"{stats}.rank{self.rank}")
++
++    def _start_stats_thread(self, path: str) -> None:
++        """Debug: dump the launch count every 2 s. Pure host code, no CUDA call
++        from this thread (a CUDA call during another thread's graph capture is
++        an error): the kernel publishes its epoch to this rank's block-0 flag
++        in the shared host buffer, which is read straight from the mmap."""
++        import struct
++        import threading
++        import time
++
++        mm = self._mm
++        offset = (self.rank * 16 * 4) * 64  # flag (rank, block 0, sub 0), 64 B stride
++
++        def run() -> None:
++            while True:
++                time.sleep(2.0)
++                count = struct.unpack_from("<I", mm, offset)[0]
++                with open(path, "w") as f:
++                    f.write(f"{count}\n")
++
++        threading.Thread(target=run, daemon=True, name="hmar-stats").start()
++
++    def _peer_p2p_ok(self) -> bool:
++        """True if the GPUs of the group can access each other (then NCCL P2P /
++        custom all-reduce is the better path)."""
++        try:
++            mine = current_platform.logical_device_id_to_visible_device_id(
++                self.device.index
++            )
++        except Exception:  # noqa: BLE001
++            mine = self.device.index
++        ids = [None] * self.world_size
++        dist.all_gather_object(ids, mine, group=self.group)
++        try:
++            return all(
++                torch.cuda.can_device_access_peer(ids[self.rank], ids[r])
++                for r in range(self.world_size)
++                if r != self.rank
++            )
++        except Exception:  # noqa: BLE001
++            return False
++
++    def _all_ok(self, ok: bool) -> bool:
++        flag = torch.tensor([1 if ok else 0], dtype=torch.int32)
++        dist.all_reduce(flag, op=dist.ReduceOp.MIN, group=self.group)
++        return bool(flag.item())
++
++    def should_use(self, inp: torch.Tensor) -> bool:
++        return (
++            not self.disabled
++            and inp.dtype == torch.bfloat16
++            and inp.is_cuda
++            and inp.is_contiguous()
++            and inp.data_ptr() % 16 == 0
++            and (inp.numel() * 2) % 16 == 0
++            and inp.numel() * 2 <= self.max_bytes
++        )
++
++    def all_reduce(self, inp: torch.Tensor) -> torch.Tensor:
++        out = torch.empty_like(inp)
++        self.ext.allreduce(inp, out, self.shm_dev, self.epochs, self.rank)
++        return out
++
++
++if __name__ == "__main__":
++    load_ext()
++    print("hmar extension built")
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..63fcb5bd9c
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,66 @@
++{
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 2,
++  "num_stages": 3
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "128": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..35a68f7d98
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,66 @@
++{
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "128": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..fa4522befa
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,66 @@
++{
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "128": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..83dbe5605b
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,66 @@
++{
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 5
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "128": {
++  "BLOCK_SIZE_M": 128,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file
+diff --git a/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+new file mode 100644
+index 0000000000..fd87d5d87e
+--- /dev/null
++++ b/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_GeForce_RTX_4090,dtype=fp8_w8a8,block_shape=[128,128].json
+@@ -0,0 +1,66 @@
++{
++ "16": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 32,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "48": {
++  "BLOCK_SIZE_M": 16,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "64": {
++  "BLOCK_SIZE_M": 32,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "128": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 64,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 4
++ },
++ "256": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "512": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "1024": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ },
++ "2048": {
++  "BLOCK_SIZE_M": 64,
++  "BLOCK_SIZE_N": 128,
++  "BLOCK_SIZE_K": 128,
++  "GROUP_SIZE_M": 8,
++  "num_warps": 4,
++  "num_stages": 3
++ }
++}
+\ No newline at end of file

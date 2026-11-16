@@ -1,0 +1,24 @@
+{
+  "id": 85,
+  "pid": 2647409,
+  "team": "T5",
+  "agent": "leader-5.w1",
+  "label": "ncu:gdn",
+  "timeout_min": 14.0,
+  "command": [
+    "bash",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-5.w1/ncu_gdn.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t5-champ",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-5.w1/ncu_gdn",
+    "gdn_decode_post_conv_mtp",
+    "30",
+    "6"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T05:18:19+00:00",
+  "state": "done",
+  "started": "2026-11-16T05:18:23+00:00",
+  "ended": "2026-11-16T05:24:05+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 5.71
+}

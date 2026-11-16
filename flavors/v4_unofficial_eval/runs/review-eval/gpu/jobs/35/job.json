@@ -1,0 +1,20 @@
+{
+  "id": 35,
+  "pid": 2493652,
+  "team": "T2",
+  "agent": "leader-2.w1",
+  "label": "t2:fq_unitB_fixes",
+  "timeout_min": 3.0,
+  "command": [
+    "env",
+    "FQ_WS=t2-fq.b",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-2.w1/fq/unitB_driver.sh"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T01:51:05+00:00",
+  "state": "done",
+  "started": "2026-11-16T01:52:19+00:00",
+  "ended": "2026-11-16T01:52:33+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.226
+}

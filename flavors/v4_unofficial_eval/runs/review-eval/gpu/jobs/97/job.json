@@ -1,0 +1,17 @@
+{
+  "id": 97,
+  "pid": 2676044,
+  "team": "T6",
+  "agent": "leader-6",
+  "label": "prof:t6-champ",
+  "timeout_min": 12.0,
+  "command": [
+    "bash",
+    "-c",
+    "cd /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t6-champ; bash /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/task/scripts/profile_nsys.sh /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t6-champ /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-6/prof1 64 $(cat /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/bank/T3-007/serve_args.txt | tr '\\n' ' ' | sed 's/x/x/')"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T05:49:16+00:00",
+  "state": "cancelled",
+  "ended": "2026-11-16T05:49:24+00:00"
+}

@@ -1,0 +1,20 @@
+{
+  "id": 122,
+  "pid": 2746122,
+  "team": "T7",
+  "agent": "leader-7",
+  "label": "eval:t7-ns3",
+  "timeout_min": 16.0,
+  "command": [
+    "env",
+    "STOP_BELOW=880",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/task/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t7-ns3",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-7/eval_ns3/1",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-7/serve_args_ns3.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/reports/T7-sweep",
+  "submitted": "2026-11-16T07:01:07+00:00",
+  "state": "cancelled",
+  "ended": "2026-11-16T07:02:00+00:00"
+}

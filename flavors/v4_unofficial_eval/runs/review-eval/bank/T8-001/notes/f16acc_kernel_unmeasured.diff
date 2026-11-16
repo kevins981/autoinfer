@@ -1,0 +1,90 @@
+--- workspaces/t8-champ/vllm/vllm/model_executor/layers/quantization/utils/fp8_utils.py	2026-11-16 07:10:56.483892857 +0000
++++ agents/leader-8/mb/fp8_utils_f16acc.py	2026-11-16 07:10:56.471892674 +0000
+@@ -868,6 +868,7 @@
+     BLOCK_SIZE_N: tl.constexpr,
+     BLOCK_SIZE_K: tl.constexpr,
+     GROUP_SIZE_M: tl.constexpr,
++    F16_ACC: tl.constexpr = False,
+ ):
+     """Triton-accelerated function used to perform linear operations (dot
+     product) on input tensors `A` and `B` with block-wise quantization, and
+@@ -894,6 +895,15 @@
+     Bs_ptrs = Bs + offs_bsn * stride_Bs_n
+ 
+     accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
++    a_ptrs0 = a_ptrs
++    b_ptrs0 = b_ptrs
++    # T8: F16_ACC uses the FP8 tensor cores' fp16 accumulator inside each
++    # 128-element K-block (one group_k block per iteration; BLOCK_SIZE_K ==
++    # group_k is required by the caller); the block's partial sum is then
++    # scaled and accumulated in fp32 across K-blocks exactly as before. If any
++    # fp16 partial sum of the tile is not finite or exceeds the fp16 range,
++    # the whole tile is recomputed below with the fp32 accumulator.
++    bad = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.int1)
+     for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
+         a = tl.load(a_ptrs, mask=offs_k[None, :] < K - k * BLOCK_SIZE_K, other=0.0)
+         b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_SIZE_K, other=0.0)
+@@ -903,10 +913,35 @@
+         a_s = tl.load(As_ptrs + offs_ks * stride_As_k)
+         b_s = tl.load(Bs_ptrs + offs_ks * stride_Bs_k)
+ 
+-        accumulator += tl.dot(a, b) * a_s[:, None] * b_s[None, :]
++        if F16_ACC:
++            p16 = tl.dot(a, b, out_dtype=tl.float16)
++            p = p16.to(tl.float32)
++            bad = bad | (~(tl.abs(p) <= 65504.0))
++            accumulator += p * a_s[:, None] * b_s[None, :]
++        else:
++            accumulator += tl.dot(a, b) * a_s[:, None] * b_s[None, :]
+         a_ptrs += BLOCK_SIZE_K * stride_ak
+         b_ptrs += BLOCK_SIZE_K * stride_bk
+ 
++    if F16_ACC:
++        if tl.max(bad.to(tl.int32)) > 0:
++            accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
++            a_ptrs = a_ptrs0
++            b_ptrs = b_ptrs0
++            for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
++                a = tl.load(
++                    a_ptrs, mask=offs_k[None, :] < K - k * BLOCK_SIZE_K, other=0.0
++                )
++                b = tl.load(
++                    b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_SIZE_K, other=0.0
++                )
++                offs_ks = (k * BLOCK_SIZE_K) // group_k
++                a_s = tl.load(As_ptrs + offs_ks * stride_As_k)
++                b_s = tl.load(Bs_ptrs + offs_ks * stride_Bs_k)
++                accumulator += tl.dot(a, b) * a_s[:, None] * b_s[None, :]
++                a_ptrs += BLOCK_SIZE_K * stride_ak
++                b_ptrs += BLOCK_SIZE_K * stride_bk
++
+     if C.dtype.element_ty == tl.bfloat16:
+         c = accumulator.to(tl.bfloat16)
+     elif C.dtype.element_ty == tl.float16:
+@@ -921,6 +956,12 @@
+     tl.store(c_ptrs, c, mask=c_mask)
+ 
+ 
++# T8: fp16 accumulation inside each 128-K block for compute-bound sizes
++# (prefill / mixed steps). 0 disables. Decode-size GEMMs are memory-bound and
++# keep the fp32 accumulator.
++_T8_F16_ACC_MIN_M = int(os.environ.get("VLLM_T8_F16_ACC_MIN_M", "256"))
++
++
+ @functools.lru_cache
+ def get_w8a8_block_fp8_configs(
+     N: int, K: int, block_n: int, block_k: int
+@@ -1087,6 +1128,13 @@
+         As.stride(-1),
+         Bs.stride(1),
+         Bs.stride(0),
++        F16_ACC=(
++            _T8_F16_ACC_MIN_M > 0
++            and M >= _T8_F16_ACC_MIN_M
++            and config["BLOCK_SIZE_K"] == block_k
++            and A.dtype == torch.float8_e4m3fn
++            and current_platform.is_cuda()
++        ),
+         **config,
+     )
+ 

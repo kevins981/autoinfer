@@ -1,0 +1,20 @@
+{
+  "id": 22,
+  "pid": 2457132,
+  "team": "T2",
+  "agent": "leader-2",
+  "label": "t2:lmhead-bench",
+  "timeout_min": 4.0,
+  "command": [
+    "bash",
+    "-c",
+    "source /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t2-base/env.sh; python /scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-2/lmhead_bench.py"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T01:02:02+00:00",
+  "state": "done",
+  "started": "2026-11-16T01:15:45+00:00",
+  "ended": "2026-11-16T01:15:49+00:00",
+  "exit_code": 0,
+  "gpu_minutes": 0.076
+}

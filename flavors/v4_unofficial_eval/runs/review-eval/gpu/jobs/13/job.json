@@ -1,0 +1,20 @@
+{
+  "id": 13,
+  "pid": 2431613,
+  "team": "T1",
+  "agent": "leader-1",
+  "label": "eval:t1-k3-stack",
+  "timeout_min": 17.0,
+  "command": [
+    "env",
+    "STOP_BELOW=685",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/task/harness/eval.sh",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/workspaces/t1-base",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-1/runs/k3stack",
+    "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval/agents/leader-1/runs/k3_args.txt"
+  ],
+  "cwd": "/scratch/kevinsong/learning/autoinfer/flavors/v4_unofficial_eval/runs/review-eval",
+  "submitted": "2026-11-16T00:36:40+00:00",
+  "state": "cancelled",
+  "ended": "2026-11-16T00:40:55+00:00"
+}

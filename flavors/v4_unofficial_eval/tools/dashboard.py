@@ -622,13 +622,17 @@ def scout_decks(run):
 
 
 def sparring_list(run):
+    """Reviews (reviews/, v4) and sparring conversations (sparring/, earlier flavors)."""
     out = []
-    for f in sorted(glob.glob(str(run / "reviews" / "*.json"))):
-        try:
-            c = json.loads(open(f).read())
-        except (OSError, ValueError):
-            continue
-        out.append(dict({k: c.get(k) for k in ("id", "team", "by", "turns", "model", "effort", "started")}, state="open", backend="codex"))
+    for kind, sub in (("review", "reviews"), ("sparring", "sparring")):
+        for f in sorted(glob.glob(str(run / sub / "*.json"))):
+            try:
+                c = json.loads(open(f).read())
+            except (OSError, ValueError):
+                continue
+            d = {k: c.get(k) for k in ("id", "team", "by", "state", "turns", "backend", "model", "effort", "started")}
+            d.update(kind=kind, path=f"{sub}/{c.get('id')}.md", key=f"{sub}/{c.get('id')}", state=d["state"] or "open")
+            out.append(d)
     return out
 
 
@@ -828,7 +832,7 @@ function navRender(){const T=OV.teams;const open=T.filter(t=>t.status==='open'),
  const a=(v,label,meta='',cls='')=>{const on=JSON.stringify({...v,run:RUN})===JSON.stringify({...VIEW,run:RUN});return `<a class="${cls} ${on?'on':''}" onclick='go(${JSON.stringify({...v,run:RUN})})'>${label}${meta?`<span class="meta">${meta}</span>`:''}</a>`};
  const team=t=>{let s=a({k:'team',team:t.team},`<b>${t.team}</b> <span class="muted">${esc(t.type||'')}${t.slot?' · slot '+t.slot:''}</span>`,t.used.toFixed(0)+'/'+t.granted.toFixed(0)+' min');
    if(t.status==='open'||t.agents.some(x=>x.state==='alive'))for(const ag of t.agents.filter(x=>x.state==='alive'||true).sort((x,y)=>x.name.localeCompare(y.name)))s+=a({k:'agent',name:ag.name},`<span class="dot ${state(ag)}"></span>${esc(ag.name)}`,ag.cost_usd?'$'+ag.cost_usd.toFixed(0):'','sub');
-   for(const c of (OV.sparring||[]).filter(x=>x.team===t.team))s+=a({k:'spar',id:c.id},`<span class="dot ${c.state==='open'?'busy':'stopped'}"></span>sparring ${esc(c.id)}`,c.turns+' turns','sub');
+   for(const c of (OV.sparring||[]).filter(x=>x.team===t.team))s+=a({k:'spar',id:c.key},`<span class="dot ${c.state==='open'?'busy':'stopped'}"></span>${c.kind} ${esc(c.id)}`,c.turns+' turns','sub');
    for(const sc of (OV.scouts||[]).filter(x=>x.team===t.team))s+=a({k:'scout',deck:sc.deck},`<span class="dot ${sc.state==='running'?'busy':sc.state==='done'?'stopped':'idle'}"></span>scout ${esc(sc.deck)}`,sc.state==='running'?(sc.cards_so_far||0)+' files':(sc.cards||0)+' cards','sub');return s};
  const m=OV.manager;
  $('#nav').innerHTML=`<div class="sec">Run</div>${a({k:'overview'},'Overview')}${a({k:'timeline'},'Timeline')}${a({k:'gpu'},'GPU jobs')}${a({k:'file',path:'journal.md',title:'Journal'},'Journal')}
@@ -842,7 +846,7 @@ async function render(soft){clearTimeout(TIMER);const v=VIEW;const M=$('#main');
  ${T.map(t=>`<tr class="click" onclick='go({k:"team",team:"${t.team}"})'><td><b>${t.team}</b></td><td>${esc(t.type)}${t.slot?' · slot '+t.slot:''}</td>
  <td><span class="pill ${t.status==='open'?'open':''}">${t.status}</span></td><td>${t.models.map(short).join(', ')}</td><td>${t.used.toFixed(1)} / ${t.granted.toFixed(0)}</td><td>${t.jobs}</td><td>${t.records.length}</td><td>$${t.cost.toFixed(2)}</td><td class="muted">${ago(t.opened)}</td></tr>`).join('')}</table></div>
  <h3>Config</h3><div class="card">${md(OV.config)}</div>`}
- else if(v.k==='spar'){M.innerHTML=`<h2>review ${esc(v.id)}</h2><div id="sphead"></div><div class="card" id="sptext"></div>`;await pollSpar(true)}
+ else if(v.k==='spar'){M.innerHTML=`<h2>${esc(v.id)}</h2><div id="sphead"></div><div class="card" id="sptext"></div>`;await pollSpar(true)}
  else if(v.k==='scout'){M.innerHTML=`<h2>scout ${esc(v.deck)}</h2><div id="schead"></div><div class="tabs"><a class="on">activity</a></div><div class="filters"><label><input type="checkbox" id="fT" checked> messages</label><label><input type="checkbox" id="fU" checked> searches / pages / commands</label><label><input type="checkbox" id="fS" checked> thinking / turn</label><button id="bottom">jump to latest</button></div><div id="evs"></div>`;
   $('#bottom').onclick=()=>M.scrollTop=M.scrollHeight;await pollScout(true)}
  else if(v.k==='timeline'){const h=v.hours??6;const d=await api('/api/timeline',{hours:h});
@@ -938,7 +942,7 @@ function drawTimeline(d){const box=$('#tl');const W=Math.max(700,box.clientWidth
 
 
 async function pollSpar(first){const v=VIEW;if(v.k!=='spar')return;const M=$('#main');const atBottom=first||M.scrollHeight-M.scrollTop-M.clientHeight<80;
- const c=(OV.sparring||[]).find(x=>x.id===v.id)||{};const f=await api('/api/file',{path:'reviews/'+v.id+'.md'});
+ const c=(OV.sparring||[]).find(x=>x.key===v.id)||{};const f=await api('/api/file',{path:c.path||(v.id+'.md')});
  $('#sphead').innerHTML=`<div class="card kv"><div><span>team</span><a class="lnk" onclick='go({k:"team",team:"${c.team}"})'>${esc(c.team)}</a></div><div><span>leader</span><a class="lnk" onclick='go({k:"agent",name:"${c.by}"})'>${esc(c.by)}</a></div>
  <div><span>partner</span>${esc(c.backend)} ${esc(c.model)} / ${esc(c.effort)}</div><div><span>state</span>${esc(c.state)}</div><div><span>turns</span>${c.turns}</div><div><span>started</span>${ago(c.started)}</div></div>`;
  const html=(f.text||'').replace(/^## (leader[^\n]*|partner[^\n]*)$/gm,(m,h)=>'\n\n---\n\n### '+(h.startsWith('partner')?'🟣 ':'🔵 ')+h+'\n');

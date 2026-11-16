@@ -62,11 +62,6 @@ from what earlier teams thought of.
    candidate site, its napkin gain against the champion's measured time, and for every candidate
    or group you drop, why it loses.
 
-Have files 1-4 reviewed before phase 2 (`review`): the framework is easy to apply incompletely,
-and a fresh reader catches what's missing (a node, an edge, a cost the napkin doesn't count).
-Point the reviewer at the framework folder and your `reports/<team>-sweep/` files, and tell it this
-is a phase-1 map, so it reads only what phase 1 allows. Same treatment as any review: you judge.
-
 ### Phase 2: compare with other teams' maps and the history
 Now read the other teams' maps (their `reports/<team>-sweep/` folders and updates) and the rest of
 the run's history (`shared_kb.md`, `reports/`, the bank, `reviews/`). Don't edit files 1-4 after
@@ -81,6 +76,11 @@ this point; put corrections in the next files.
 7. `6-ranking.md`: **the promising candidates, ranked** by napkin gain against the champion's
    measured time, each with the condition under which it wins, its riskiest assumption and the
    cheapest test that could show it wrong.
+
+Have the whole map (files 1-6) reviewed once `6-ranking.md` is written (`review`): the framework is
+easy to apply incompletely, and a fresh reader catches what's missing (a node, an edge, a cost the
+napkin doesn't count, a candidate ranked too low). Point the reviewer at the framework folder and
+your `reports/<team>-sweep/` files. Same treatment as any review: you judge.
 
 Then write `reports/<team>-sweep.md` (a short summary linking the six files) and start testing
 the best candidates cheaply, building the ones that survive.

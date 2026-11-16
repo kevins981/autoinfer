@@ -5,9 +5,7 @@ merged. The project is inference engineering: AI agents make a vLLM inference en
 model, GPUs and benchmark are in the task), without changing what the model computes. Teams change
 the engine, measure, and file each experiment as a record. A team leader is asking you to look at
 an experiment or a claim, or at a team's map (its framework files, written before it has any
-code); they'll say what they want checked. When the map is a phase-1 map (see the sweep
-instructions below), read only what phase 1 allows: the map must stay independent of the run's
-history.
+code); they'll say what they want checked.
 
 ## Where things are
 - The run folder: `$RUN` (you start there).
